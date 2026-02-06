@@ -222,32 +222,50 @@ Different channels have different knowledge access. Enforced by **Linux file per
 | **Family Group** | Shared with family | Family + shared only |
 | **Critical Group** | Safety - full context | All public/ folders (for safety decisions) |
 
+### Channel Model
+
+**Simple rule:** DM = Private, Group = Shared
+
+| Signal Conversation | Channel Type | Linux User |
+|---------------------|--------------|------------|
+| DM with Joi | Private | joi-{recipient}-private |
+| Group: Owner + Joi | Owner public | joi-owner-public |
+| Group: Family | Family | joi-family |
+| Group: Critical | Critical | joi-critical |
+
+No mode switching. The conversation type IS the mode.
+
 ### Directory Structure
 
 ```
 /var/lib/joi/
 ├── knowledge/
 │   ├── owner/
-│   │   ├── private/        # 700 joi-owner-private
-│   │   └── public/         # 750 joi-owner-public:joi-owner-access
+│   │   └── private/            # 700 joi-owner-private (DM only)
 │   ├── partner/
-│   │   ├── private/        # 700 joi-partner-private
-│   │   └── public/         # 750 joi-partner-public:joi-partner-access
-│   ├── family_group/
-│   │   └── public/         # 750 joi-family:joi-family-access
-│   └── shared/
-│       └── public/         # 755 world-readable
+│   │   └── private/            # 700 joi-partner-private (DM only)
+│   ├── group/
+│   │   ├── owner_public/       # 750 joi-owner-public:joi-owner-readers
+│   │   ├── partner_public/     # 750 joi-partner-public:joi-partner-readers
+│   │   └── family/             # 750 joi-family:joi-family-readers
+│   ├── critical/               # Top level - special status
+│   │   └── safety/             # 750 joi-critical:joi-critical
+│   └── shared/                 # 755 world-readable
+│       └── common/
 └── data/
     ├── owner/
-    │   ├── private.db      # 600 joi-owner-private
-    │   └── public.db       # 640 joi-owner-public:joi-owner-access
+    │   ├── private.db          # 600 joi-owner-private
+    │   └── public.db           # 640 joi-owner-public:joi-owner-readers
     ├── partner/
-    │   ├── private.db      # 600 joi-partner-private
-    │   └── public.db       # 640 joi-partner-public:joi-partner-access
-    ├── family.db           # 640 joi-family:joi-family-access
-    ├── critical.db         # 600 joi-critical
-    └── shared.db           # 644 world-readable
+    │   ├── private.db          # 600 joi-partner-private
+    │   └── public.db           # 640 joi-partner-public:joi-partner-readers
+    ├── group/
+    │   └── family.db           # 640 joi-family:joi-family-readers
+    ├── critical.db             # 600 joi-critical
+    └── shared.db               # 644 world-readable
 ```
+
+**Why critical/ at top level?** Critical is special - it reads from all public folders for safety decisions. Top-level placement makes this explicit.
 
 ### Linux Users (One Per Channel)
 
@@ -260,15 +278,60 @@ useradd -r -s /sbin/nologin joi-partner-public
 useradd -r -s /sbin/nologin joi-family
 useradd -r -s /sbin/nologin joi-critical
 
-# Access groups (for shared access)
-groupadd joi-owner-access      # critical can read owner public
-groupadd joi-partner-access    # critical can read partner public
-groupadd joi-family-access     # critical can read family
+# Reader groups (for folder sharing)
+groupadd joi-owner-readers      # Who can read owner's public knowledge
+groupadd joi-partner-readers    # Who can read partner's public knowledge
+groupadd joi-family-readers     # Who can read family knowledge
+```
 
-# Critical gets added to all access groups
-usermod -aG joi-owner-access joi-critical
-usermod -aG joi-partner-access joi-critical
-usermod -aG joi-family-access joi-critical
+### Whole-Folder Sharing (Set Up at Registration)
+
+Sharing is configured once when a recipient is registered. Entire folders are shared, not individual files.
+
+```bash
+# Example: Set up owner's public folder
+chown -R joi-owner-public:joi-owner-readers /var/lib/joi/knowledge/group/owner_public/
+chmod -R 750 /var/lib/joi/knowledge/group/owner_public/
+
+# Critical always gets access to all public folders
+usermod -aG joi-owner-readers joi-critical
+usermod -aG joi-partner-readers joi-critical
+usermod -aG joi-family-readers joi-critical
+
+# Optional: Family can read owner's public knowledge
+usermod -aG joi-owner-readers joi-family
+```
+
+### Sharing Configuration
+
+```yaml
+# /etc/joi/recipients.yaml
+# Configured once at registration, no runtime changes
+
+recipients:
+  owner:
+    private_user: joi-owner-private
+    public_user: joi-owner-public
+    public_readers:
+      - joi-critical      # Always (safety needs full context)
+      - joi-family        # Owner shares with family
+
+  partner:
+    private_user: joi-partner-private
+    public_user: joi-partner-public
+    public_readers:
+      - joi-critical      # Always
+      # Partner not sharing with family
+
+groups:
+  family:
+    user: joi-family
+    readers:
+      - joi-critical      # Always
+
+  critical:
+    user: joi-critical
+    # Critical reads from everywhere, has its own folder for safety procedures
 ```
 
 ### Whitelist-Only Access Control
@@ -332,14 +395,17 @@ joi ALL=(joi-critical) NOPASSWD: /usr/local/bin/joi-retrieve
 
 ### Access Matrix
 
-| Resource | owner-private | owner-public | partner-private | critical |
-|----------|---------------|--------------|-----------------|----------|
-| owner/private/ | ✅ | ❌ | ❌ | ❌ |
-| owner/public/ | ✅ | ✅ | ❌ | ✅ |
-| partner/private/ | ❌ | ❌ | ✅ | ❌ |
-| partner/public/ | ❌ | ❌ | ✅ | ✅ |
-| family_group/public/ | ❌ | ✅ | ✅ | ✅ |
-| shared/public/ | ✅ | ✅ | ✅ | ✅ |
+| Resource | owner-private | owner-public | partner-private | family | critical |
+|----------|---------------|--------------|-----------------|--------|----------|
+| owner/private/ | ✅ | ❌ | ❌ | ❌ | ❌ |
+| group/owner_public/ | ❌ | ✅ | ❌ | ✅* | ✅ |
+| partner/private/ | ❌ | ❌ | ✅ | ❌ | ❌ |
+| group/partner_public/ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| group/family/ | ❌ | ❌ | ❌ | ✅ | ✅ |
+| critical/ | ❌ | ❌ | ❌ | ❌ | ✅ |
+| shared/ | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+*If owner configured sharing with family at registration
 
 ### Example: Attempted Unauthorized Access
 
