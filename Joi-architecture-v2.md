@@ -209,6 +209,148 @@ gpu_health:
 - Integrity checks (checksums, append-only log).
 - Retention policies and automatic pruning.
 
+## Channel-Based Knowledge Isolation
+
+Different channels have different knowledge access. Enforced by **Linux file permissions**, not application logic.
+
+### Channel Types
+
+| Channel | Purpose | Knowledge Access |
+|---------|---------|------------------|
+| **Private DM** | Sensitive, never shared | Everything including private/ |
+| **Regular DM** | Normal assistant | Public + family + shared |
+| **Family Group** | Shared with family | Family + shared only |
+| **Critical Group** | Safety - full context | All public/ folders (for safety decisions) |
+
+### Directory Structure
+
+```
+/var/lib/joi/
+├── knowledge/
+│   ├── owner/
+│   │   ├── private/        # 700 joi-owner-private
+│   │   └── public/         # 750 joi-owner-public:joi-owner-access
+│   ├── partner/
+│   │   ├── private/        # 700 joi-partner-private
+│   │   └── public/         # 750 joi-partner-public:joi-partner-access
+│   ├── family_group/
+│   │   └── public/         # 750 joi-family:joi-family-access
+│   └── shared/
+│       └── public/         # 755 world-readable
+└── data/
+    ├── owner/
+    │   ├── private.db      # 600 joi-owner-private
+    │   └── public.db       # 640 joi-owner-public:joi-owner-access
+    ├── partner/
+    │   ├── private.db      # 600 joi-partner-private
+    │   └── public.db       # 640 joi-partner-public:joi-partner-access
+    ├── family.db           # 640 joi-family:joi-family-access
+    ├── critical.db         # 600 joi-critical
+    └── shared.db           # 644 world-readable
+```
+
+### Linux Users (One Per Channel)
+
+```bash
+# Channel-specific users
+useradd -r -s /sbin/nologin joi-owner-private
+useradd -r -s /sbin/nologin joi-owner-public
+useradd -r -s /sbin/nologin joi-partner-private
+useradd -r -s /sbin/nologin joi-partner-public
+useradd -r -s /sbin/nologin joi-family
+useradd -r -s /sbin/nologin joi-critical
+
+# Access groups (for shared access)
+groupadd joi-owner-access      # critical can read owner public
+groupadd joi-partner-access    # critical can read partner public
+groupadd joi-family-access     # critical can read family
+
+# Critical gets added to all access groups
+usermod -aG joi-owner-access joi-critical
+usermod -aG joi-partner-access joi-critical
+usermod -aG joi-family-access joi-critical
+```
+
+### Whitelist-Only Access Control
+
+```yaml
+# /etc/joi/channel_users.yaml
+# If channel not in this list → DENIED (default deny)
+allowed_channel_users:
+  owner_private_dm: joi-owner-private
+  owner_regular_dm: joi-owner-public
+  partner_private_dm: joi-partner-private
+  partner_regular_dm: joi-partner-public
+  family_group: joi-family
+  critical_group: joi-critical
+```
+
+**No blacklist.** If it's not in the whitelist, it's denied. No gray zones.
+
+### Process Execution Model
+
+```
+Message arrives (sender=owner, channel=private_dm)
+    ↓
+Lookup: allowed_channel_users["owner_private_dm"]
+    ↓
+Not found? → DENY (security error, logged)
+    ↓
+Found: joi-owner-private
+    ↓
+Spawn knowledge retrieval subprocess as that user
+    ↓
+Linux kernel enforces file access
+    ↓
+Only permitted files/databases readable
+    ↓
+Results returned to main Joi process
+```
+
+### Sudoers Configuration
+
+```sudoers
+# /etc/sudoers.d/joi
+# Main joi process can switch to channel users for knowledge retrieval
+joi ALL=(joi-owner-private) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-owner-public) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-partner-private) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-partner-public) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-family) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-critical) NOPASSWD: /usr/local/bin/joi-retrieve
+```
+
+### Why Linux Permissions?
+
+| Benefit | Explanation |
+|---------|-------------|
+| Defense in depth | Even if app logic has bug, kernel blocks access |
+| No SQL auth needed | File permissions = database auth |
+| Auditable | `ls -la` shows exactly who can access what |
+| Battle-tested | Linux permission model is decades old |
+| Simple | No tokens, no passwords, just users and groups |
+
+### Access Matrix
+
+| Resource | owner-private | owner-public | partner-private | critical |
+|----------|---------------|--------------|-----------------|----------|
+| owner/private/ | ✅ | ❌ | ❌ | ❌ |
+| owner/public/ | ✅ | ✅ | ❌ | ✅ |
+| partner/private/ | ❌ | ❌ | ✅ | ❌ |
+| partner/public/ | ❌ | ❌ | ✅ | ✅ |
+| family_group/public/ | ❌ | ✅ | ✅ | ✅ |
+| shared/public/ | ✅ | ✅ | ✅ | ✅ |
+
+### Example: Attempted Unauthorized Access
+
+```python
+# Process running as joi-owner-public tries to read partner's private data
+open("/var/lib/joi/knowledge/partner/private/secrets.md")
+# → PermissionError: [Errno 13] Permission denied
+
+# Even if application has a bug, Linux blocks it
+```
+
 ## Secrets Management
 
 ### SQLCipher Key (joi VM)
