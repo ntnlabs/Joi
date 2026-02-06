@@ -81,7 +81,9 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ## License
 
-MIT
+GPL-3.0 - See [LICENSE](LICENSE) for details.
+
+This means you can use, modify, and distribute this project, but any derivative work must also be open source under GPL-3.0.
 
 ## Contributing
 
