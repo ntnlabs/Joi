@@ -197,6 +197,107 @@ gpu_health:
 - Audit logs are anonymized and stored locally only.
 - Nebula certificates stored securely; rotate annually or on compromise.
 
+### Mesh Integrity Monitoring
+
+Joi monitors mesh health via heartbeat. If mesh appears compromised, joi shuts down.
+
+**Principle:** Never trust mesh to monitor itself. Mesh collects data, joi validates it.
+
+**Heartbeat Protocol:**
+
+```
+mesh-watchdog (every 60s) ────► joi-verifier
+   │                              │
+   │ Sends:                       │ Validates:
+   │ - Process status             │ - Hashes match known-good
+   │ - Binary hashes              │ - All processes running
+   │ - Config hashes              │ - Heartbeat received on time
+   │ - Timestamp + nonce          │
+```
+
+**mesh-watchdog collects:**
+```json
+{
+  "timestamp": 1707350400000,
+  "nonce": "random-per-request",
+  "processes": {
+    "nebula": {"running": true, "pid": 1234, "user": "root"},
+    "signal-cli": {"running": true, "pid": 2345, "user": "signal"},
+    "mesh-proxy": {"running": true, "pid": 3456, "user": "mesh-proxy"}
+  },
+  "hashes": {
+    "/usr/local/bin/mesh-proxy": "sha256:abc123...",
+    "/usr/local/bin/signal-cli": "sha256:def456...",
+    "/etc/mesh-proxy/config.yaml": "sha256:789abc..."
+  }
+}
+```
+
+**joi-verifier checks:**
+- Hashes match known-good (stored on joi, immutable)
+- All expected processes running with correct user
+- Heartbeat received within timeout (90 seconds)
+- Nonce is fresh (prevents replay)
+
+**Compromise Response:**
+
+| Condition | Action |
+|-----------|--------|
+| Hash mismatch | **joi shuts down immediately** |
+| Process not running / wrong user | **joi shuts down immediately** |
+| 3+ missed heartbeats | **joi shuts down immediately** |
+| Nonce replay detected | **joi shuts down immediately** |
+
+**Why shutdown instead of alerting?**
+- openhab is read-only (cannot send alerts through it)
+- If mesh is compromised, attacker controls Signal (cannot alert through it)
+- Shutdown is: easy, safe, detectable
+- Owner notices joi offline → investigates via Proxmox console
+
+**LUKS makes shutdown a security lockout:**
+- joi disk is LUKS-encrypted
+- Shutdown = disk locked
+- Attacker cannot power joi back up (no LUKS passphrase)
+- Only owner can unlock via Proxmox console
+- This is a one-way trip for the attacker
+
+**Known-Good Hashes (stored on joi):**
+```yaml
+# /etc/joi/mesh-baseline.yaml
+# Updated only during legitimate mesh updates
+# File is immutable (chattr +i)
+
+mesh_binaries:
+  /usr/local/bin/mesh-proxy: "sha256:..."
+  /usr/local/bin/signal-cli: "sha256:..."
+
+mesh_configs:
+  /etc/mesh-proxy/config.yaml: "sha256:..."
+  /etc/mesh-proxy/identities.yaml: "sha256:..."
+  /etc/nebula/config.yaml: "sha256:..."
+
+expected_processes:
+  - name: nebula
+    user: root
+  - name: signal-cli
+    user: signal
+  - name: mesh-proxy
+    user: mesh-proxy
+```
+
+**Updating Baseline After Legitimate Changes:**
+```bash
+# On mesh: regenerate hashes
+mesh-watchdog --export-hashes > /tmp/new-hashes.yaml
+
+# Transfer to joi securely (via Proxmox console or direct)
+# On joi: update baseline
+chattr -i /etc/joi/mesh-baseline.yaml
+cp /tmp/new-hashes.yaml /etc/joi/mesh-baseline.yaml
+chattr +i /etc/joi/mesh-baseline.yaml
+systemctl restart joi
+```
+
 ## LLM Safety and Validation
 - Never pass raw openhab events to LLM; use structured templates.
 - Output validation and allowlists for outbound messages.
