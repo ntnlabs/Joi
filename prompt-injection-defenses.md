@@ -625,7 +625,8 @@ def test_injection_resistance():
 # prompt-security.yaml
 
 input_sanitization:
-  signal_max_length: 4096
+  signal_transport_limit: 1500   # Enforced at mesh (user-facing Signal limit)
+  signal_api_max_length: 4096    # API payload limit (includes metadata)
   event_description_max_length: 200
   normalize_unicode: true
 

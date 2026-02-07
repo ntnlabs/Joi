@@ -96,8 +96,16 @@ Priority: CRITICAL (overrides quiet hours)
 Trigger: openhab alert with priority=high
 Examples: Storm warning, smoke detector, security alert
 Action: Immediately notify user (+0.5 impulse instant, bypasses all suppression)
-Rate Limit: Max 5 critical alerts per hour (prevent alert storms)
-Note: Safety first - critical alerts ALWAYS get through, even at 3am
+Rate Limit: See split below
+Note: Safety first - true critical events ALWAYS get through, even at 3am
+
+Rate Limit Split (aligns with api-contracts.md):
+- Event-triggered critical (openhab smoke/fire/security): UNLIMITED
+- LLM-escalated critical (Joi judges something urgent): 120/hr
+
+Why the split?
+- Event-triggered alerts come from sensors - we trust them, never block safety
+- LLM-escalated could be manipulated by prompt injection - rate limit as defense
 ```
 
 ### 3. Significant Event (Contextual, Maybe Proactive)
@@ -476,7 +484,8 @@ If context state is invalid:
 ### Rate Limit Hit (Direct Channel Only)
 
 ```
-Rate limits apply to direct (DM) channel only - critical alerts are NEVER rate limited.
+Rate limits apply to direct (DM) channel only.
+Critical channel: event-triggered unlimited, LLM-escalated 120/hr (see above).
 
 If direct channel rate limit (60/hour) approached:
 1. At 50 messages: Reduce proactive impulse by 50%

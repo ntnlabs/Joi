@@ -24,9 +24,30 @@ Content-Type: application/json
 X-Request-ID: <uuid>           # For tracing/deduplication
 X-Timestamp: <unix-epoch-ms>   # Sender's timestamp
 X-Nonce: <uuid>                # Replay protection (mesh ↔ joi only)
+X-HMAC-SHA256: <hex>           # Defense-in-depth (mesh ↔ joi only, see below)
 ```
 
 > **Content-Type Enforcement:** Servers MUST reject requests with `Content-Type` other than `application/json` with HTTP 415 (Unsupported Media Type). This prevents parser confusion attacks from malformed content types.
+
+### HMAC Defense-in-Depth (mesh ↔ joi only)
+
+Nebula provides certificate-based authentication. HMAC adds a second layer of defense:
+
+```
+X-HMAC-SHA256: HMAC-SHA256(X-Nonce + X-Timestamp + body, shared_secret)
+```
+
+**Validation:**
+1. Verify Nebula certificate (primary auth)
+2. Verify HMAC matches (secondary auth)
+3. Verify nonce not seen before (replay protection)
+4. Verify timestamp within 5 minutes (freshness)
+
+**Shared secret location:** See `Joi-architecture-v2.md` → "Challenge-Response Shared Secret"
+
+> **Why both Nebula AND HMAC?** Defense-in-depth. If Nebula has a vulnerability, HMAC
+> still protects. If HMAC key leaks, Nebula certs still protect. Both must be
+> compromised for an attacker to forge requests.
 
 ## Common Response Format
 
@@ -129,10 +150,14 @@ POST https://joi:8443/api/v1/message/inbound
 
 - `sender.id` must match allowed canonical identity (see Security Invariants)
 - `sender.transport_id` must match registered transport identifier for that `sender.id`
-- `content.text` max length: 4096 characters
+- `content.text` max length: 4096 characters (API limit)
+- **Signal transport limit:** 1500 characters (enforced at mesh before forwarding)
 - `content.type` must be one of: `text`, `voice`, `image`, `file`, `reaction`
 - `timestamp` must be within 5 minutes of current time
 - If `type` == `voice`: mesh transcribes via STT before forwarding
+
+> **Size limit hierarchy:** Signal messages are capped at 1500 chars at mesh (user-facing).
+> The 4096 API limit accommodates metadata/headers in the internal payload.
 
 ---
 

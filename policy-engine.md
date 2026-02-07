@@ -257,9 +257,12 @@ content:
   # Input content rules
   input:
     signal:
-      max_length: 4096
-      allow_media: false      # Text only for now
+      max_length: 4096          # API payload limit (includes metadata)
+      transport_limit: 1500     # Signal transport limit (mesh enforces, see Joi-architecture-v2.md)
+      allow_media: false        # Text only for now
       normalize_unicode: true
+      # Note: transport_limit (1500) is enforced at mesh before forwarding
+      # max_length (4096) is the API payload limit including headers/metadata
 
     openhab:
       max_event_size_bytes: 10240
@@ -997,8 +1000,12 @@ rate_limits:
 
   inbound:
     signal:
-      max_per_hour: 120
-      max_per_minute: 20
+      owner:
+        max_per_hour: null      # Owner is NEVER rate limited inbound
+        max_per_minute: null    # Trust the owner completely
+      others:
+        max_per_hour: 120       # Non-owner users
+        max_per_minute: 20
     openhab:
       presence: { max_per_hour: 60 }
       sensors: { max_per_hour: 24 }
