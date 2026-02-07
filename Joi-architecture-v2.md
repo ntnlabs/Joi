@@ -72,7 +72,28 @@ Before enabling Slovak mode, the model must pass these tests:
 - Local memory store (short-term + long-term).
 - Policy engine enforcing read-only rules and outbound restrictions.
 - Circuit breaker for agent actions and outbound messaging.
-- **Emergency Stop:** Shutdown mesh VM via Proxmox mobile app (cuts communication).
+- **Emergency Stop:** Multiple options to cut communication (see below).
+
+**Emergency Stop Options (in order of preference):**
+
+| Method | Access Required | Speed | Notes |
+|--------|-----------------|-------|-------|
+| Proxmox mobile app | Phone + Proxmox account | Seconds | Shutdown mesh VM |
+| Proxmox web UI | Browser + LAN/VPN | Seconds | Shutdown mesh or joi VM |
+| SSH to Proxmox host | SSH key + network | Seconds | `qm stop <vmid>` |
+| Physical power button | Physical access | Seconds | NUC power button (hard stop) |
+| Network switch | Physical access | Seconds | Unplug vmbr1 uplink |
+| Router firewall | Router admin access | Minutes | Block mesh VM's WAN access |
+
+> **If you don't have mobile app access:**
+> Bookmark Proxmox web UI on your phone's browser. Add to home screen for quick access.
+> Test emergency stop procedure quarterly to ensure you can execute it under stress.
+
+**What each stop method achieves:**
+- Shutdown mesh VM → Cuts all Signal communication (joi isolated)
+- Shutdown joi VM → Stops AI completely (LUKS locks disk)
+- Physical power off → Everything stops, requires LUKS unlock to restart
+- Network disconnect → Isolates but doesn't stop (joi continues running locally)
 
 **GPU Failure Handling:**
 
@@ -483,6 +504,17 @@ Joi has multiple layers of memory with different persistence and management.
 - Not affected by reset
 - Managed through configuration or file updates
 
+> **Shared knowledge writability:**
+> - `shared/` folder is **admin-write only** (not writable by joi service)
+> - Contains: common reference data, shared procedures, household info
+> - Updates: Admin places files via Proxmox console or SSH
+> - Joi can READ shared/ but CANNOT WRITE to it (defense against LLM manipulation)
+> - Owner: `root:joi-all-channels`, mode `750` (read-only for joi users)
+>
+> If Joi needs to save something for all users, admin must manually move it
+> from a user's folder to shared/. This prevents LLM-driven pollution of
+> shared knowledge.
+
 ### Reset Command
 
 ```
@@ -575,6 +607,38 @@ systemctl reload joi
 - Session data cleared on reset
 - Uploaded files deleted after processing or on reset
 
+> **Context Summary Validation (Security Gap):**
+>
+> Context summaries are LLM-generated and fed back as context. Current validation
+> uses a **blocklist** of suspicious patterns (see `memory-store-schema.md`).
+>
+> **Problem:** Blocklists are bypassable. An attacker can craft prompt injections
+> that avoid known patterns but still influence behavior.
+>
+> **Recommended improvement (post-PoC):**
+> - Use **allowlist** validation: summaries should only contain factual statements
+> - Structure validation: enforce summary format (bullet points, no imperatives)
+> - Length limits: cap summary size to prevent payload injection
+> - Semantic validation: flag summaries that contain instruction-like language
+>
+> ```python
+> # Improved validation (allowlist approach)
+> def validate_summary_strict(summary: str) -> bool:
+>     # Must be structured as bullet points or short paragraphs
+>     if re.search(r'(you must|you should|always|never|important:)', summary, re.I):
+>         return False  # Instruction-like language not allowed in summaries
+>
+>     # Must not contain code or special characters
+>     if re.search(r'[<>{}\\`]', summary):
+>         return False
+>
+>     # Must be reasonable length
+>     if len(summary) > 2000:
+>         return False
+>
+>     return True
+> ```
+
 ### Uploaded Data Handling
 
 Users can send files to Joi. Validation is split between mesh (security) and joi (policy).
@@ -636,12 +700,36 @@ uploads:
 > - [ ] OR switch to memory-safe parser (pdf-rs, pdf.js server-side)
 > - [ ] Add quarterly CVE monitoring for chosen parser
 
-| Extension | Expected Magic | Notes |
-|-----------|----------------|-------|
-| .txt | (none) | UTF-8 text validation |
-| .csv | (none) | UTF-8 text, comma-separated |
-| .json | `{` or `[` | Valid JSON structure |
-| .md | (none) | UTF-8 text |
+| Extension | Validation | Notes |
+|-----------|------------|-------|
+| .txt | UTF-8 + no binary | Reject if contains NUL bytes or invalid UTF-8 |
+| .csv | UTF-8 + structure | Must have consistent column count, reject embedded NUL |
+| .json | Parse + validate | Must parse as valid JSON, reject on syntax error |
+| .md | UTF-8 + no binary | Same as .txt, reject if contains NUL bytes |
+
+> **Text file validation (no magic bytes available):**
+> Files without magic bytes (.txt, .csv, .md) use content validation instead:
+> ```python
+> def validate_text_file(content: bytes) -> bool:
+>     # 1. Reject binary content (NUL bytes indicate binary)
+>     if b'\x00' in content:
+>         return False
+>
+>     # 2. Must be valid UTF-8
+>     try:
+>         content.decode('utf-8')
+>     except UnicodeDecodeError:
+>         return False
+>
+>     # 3. Reject suspiciously high ratio of control characters
+>     text = content.decode('utf-8')
+>     control_chars = sum(1 for c in text if ord(c) < 32 and c not in '\n\r\t')
+>     if len(text) > 0 and control_chars / len(text) > 0.1:
+>         return False
+>
+>     return True
+> ```
+> This catches attempts to disguise binary files (executables, archives) as text.
 
 Mesh does NOT have per-user limits - it only does universal security checks.
 
@@ -1240,7 +1328,11 @@ Query JSON (validated):
   - Max length: 4096 bytes
   - Must be valid JSON
   - No path components allowed (no /, .., ~)
-  - Only alphanumeric + limited punctuation
+  - Allowed characters (allowlist):
+    - Alphanumeric: a-z A-Z 0-9
+    - Punctuation: . , : ; ? ! ' " - _ @ # ( ) [ ]
+    - Whitespace: space, tab, newline
+    - DENIED: / \ .. ~ $ ` { } < > | & * ^
   - Document IDs must be UUIDv4 format (prevents enumeration)
 ```
 
@@ -2112,8 +2204,62 @@ The Nebula CA private key (`ca.key`) is the root of trust.
 5. Nodes only need `ca.crt` (public) + their own cert/key
 
 **Compromise Response:**
-- If `ca.key` is compromised: generate new CA, re-sign all nodes
-- If node key is compromised: revoke cert (add to blocklist), generate new
+
+**If node key is compromised:**
+1. Add compromised cert fingerprint to blocklist on all nodes
+2. Generate new cert for that node with `nebula-cert sign`
+3. Deploy new cert to affected node
+4. Restart Nebula on all nodes to reload blocklist
+
+**If CA key (`ca.key`) is compromised - FULL RECOVERY REQUIRED:**
+
+> **This is a critical incident.** An attacker with the CA key can sign rogue
+> certificates and join the mesh as any node. Full replacement required.
+
+```bash
+# NEBULA CA COMPROMISE RECOVERY PROCEDURE
+# Estimated time: 30-60 minutes (requires Proxmox console access to all VMs)
+
+# 1. IMMEDIATE: Shut down all Nebula-connected VMs
+#    This prevents attacker from using rogue certs
+proxmox-console: shutdown joi mesh openhab
+
+# 2. On air-gapped machine: Generate NEW CA
+nebula-cert ca -name "homelab.example-v2"
+# Output: ca.crt (new), ca.key (new)
+
+# 3. Sign new certs for ALL nodes
+nebula-cert sign -ca-crt ca.crt -ca-key ca.key \
+    -name "mesh" -ip "10.42.0.1/24" -groups "gateway"
+nebula-cert sign -ca-crt ca.crt -ca-key ca.key \
+    -name "joi" -ip "10.42.0.10/24" -groups "ai"
+nebula-cert sign -ca-crt ca.crt -ca-key ca.key \
+    -name "openhab" -ip "10.42.0.20/24" -groups "openhab"
+
+# 4. Deploy new certs to each VM (via Proxmox console, NOT network)
+#    For each VM:
+#    - Copy new ca.crt, <node>.crt, <node>.key
+#    - Replace /etc/nebula/ca.crt, host.crt, host.key
+#    - Clear any cached sessions: rm /var/lib/nebula/*
+
+# 5. Move NEW ca.key to offline storage
+shred -u ca.key  # Or move to encrypted USB
+
+# 6. Restart VMs and verify mesh connectivity
+proxmox-console: start mesh  # Lighthouse first
+proxmox-console: start joi openhab
+# Verify: ping 10.42.0.10 from mesh
+
+# 7. Regenerate HMAC shared secret (may also be compromised)
+#    See "Challenge-Response Shared Secret" section
+
+# 8. Review logs for attacker activity during compromise window
+```
+
+**Post-Recovery:**
+- Rotate all secrets that traversed the mesh during compromise window
+- Review audit logs for unauthorized access
+- Consider how CA key was compromised and prevent recurrence
 
 ## Logging Strategy
 - Joi VM logs are stored locally only; no off-site log strategy.
@@ -2209,6 +2355,26 @@ server 10.99.0.254 iburst prefer  # Gateway IP (adjust as needed)
 - Alert if clock offset exceeds 30 seconds
 - Log NTP sync failures
 
+> **NTP Attack Vector:**
+> If an attacker compromises the gateway (NTP source), they could:
+> - Set clocks far in future → all cached nonces appear valid for replay
+> - Set clocks far in past → all timestamps rejected, denial of service
+> - Slowly drift clocks → gradual timestamp manipulation
+>
+> **Mitigations:**
+> 1. **Rate limit clock changes:** chrony's `makestep` limits sudden jumps
+>    ```bash
+>    # /etc/chrony/chrony.conf
+>    makestep 1 3    # Allow 1s step only in first 3 updates after boot
+>    maxchange 100 1 1  # Log and exit if offset > 100s after 1 update
+>    ```
+> 2. **Monotonic nonces:** Use strictly increasing nonce (not just random) so replays
+>    of old challenges are rejected even if clock is manipulated
+> 3. **Cross-check mesh/joi clocks:** During heartbeat, compare joi and mesh timestamps.
+>    If delta > 60 seconds, alert (possible NTP compromise or network issue)
+> 4. **Gateway is trusted:** Gateway compromise = network compromise anyway.
+>    NTP spoofing is lower priority than other gateway-level attacks.
+
 ## Open Questions / Next Decisions
 - ✓ RESOLVED: mesh ↔ joi auth uses Nebula certificates (annual rotation recommended).
 - ✓ RESOLVED: Nebula lighthouse runs on mesh.homelab.example.
@@ -2224,6 +2390,63 @@ Security improvements deferred from PoC phase:
 | **Kernel-enforced write isolation** | Writes via main joi process (app-level checks) | Separate `joi-write` binary per channel via sudo, mirroring read isolation | High - eliminates write path bugs |
 | **Centralized logging** | All logs local to joi VM | Dedicated log server (not joi, not mesh) receives forwarded logs | Medium - tamper evidence |
 | **Binary hash verification** | Immutable flag only | AIDE/Tripwire integration for cryptographic verification | Low - detects maintenance tampering |
+
+### Supply Chain Security
+
+> **Threat:** Compromised dependencies (Python packages, npm modules, system packages)
+> could introduce backdoors, credential theft, or remote access into joi or mesh VMs.
+
+**Current Dependencies (audit quarterly):**
+
+| Component | VM | Package Source | Risk Level |
+|-----------|-----|----------------|------------|
+| Python + pip packages | joi | PyPI | High - large attack surface |
+| Ollama | joi | GitHub releases | Medium - single binary |
+| signal-cli | mesh | GitHub releases | High - handles credentials |
+| Nebula | all | GitHub releases | Medium - critical but small |
+| System packages | all | Ubuntu/Rocky repos | Low - distro-signed |
+
+**Mitigation Strategy:**
+
+1. **Pin versions:** Lock all dependency versions in requirements.txt / package-lock.json
+   ```bash
+   # Example: requirements.txt with hashes
+   requests==2.31.0 --hash=sha256:abc123...
+   ```
+
+2. **Verify signatures:** For GitHub releases, verify GPG signatures where available
+   ```bash
+   # signal-cli releases are signed
+   gpg --verify signal-cli-X.Y.Z.tar.gz.asc
+   ```
+
+3. **Minimal dependencies:** Prefer standard library over third-party packages
+   - Use `subprocess` not third-party process managers
+   - Use `json` not third-party JSON libraries
+   - Use `sqlite3` (built-in) for simple storage
+
+4. **Airgap updates:** Download updates on separate machine, verify, transfer via USB
+   ```bash
+   # On trusted machine with internet
+   pip download -d ./packages -r requirements.txt
+   sha256sum ./packages/* > checksums.txt
+
+   # Transfer to joi VM via Proxmox console upload
+   # Verify checksums match
+   pip install --no-index --find-links=./packages -r requirements.txt
+   ```
+
+5. **Dependency scanning:** Run `pip-audit` or `safety` before updates (on trusted machine)
+
+**Known High-Risk Dependencies:**
+- `pdftotext`/`pdfplumber`: Disabled in PoC (CVE risk)
+- `signal-cli`: JVM + many transitive deps (monitor for CVEs)
+- Any ML/AI libraries: Large, complex, many native extensions
+
+**Update Schedule:**
+- Security patches: Apply within 7 days of disclosure
+- Minor versions: Monthly review, apply if needed
+- Major versions: Quarterly review, test before deployment
 
 ## Nebula Mesh Configuration
 - **Nodes:** mesh.homelab.example (lighthouse + node), Joi VM (node)
