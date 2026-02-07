@@ -868,11 +868,26 @@ UMask=0027  # New files: 640, new dirs: 750
 Automated checks to prevent misconfiguration.
 
 **Validation Script:** `/usr/local/bin/joi-validate-config`
+
+**Script Security (who watches the watchmen?):**
+```bash
+# Script must be root-owned and immutable
+chown root:root /usr/local/bin/joi-validate-config
+chmod 755 /usr/local/bin/joi-validate-config
+chattr +i /usr/local/bin/joi-validate-config
+```
+
 ```bash
 #!/bin/bash
 # Run on startup and after any config change
 
 ERRORS=0
+
+# 0. Self-check: verify this script hasn't been tampered with
+if [[ $(stat -c %U:%G "$0") != "root:root" ]]; then
+    echo "CRITICAL: Validation script not owned by root:root!"
+    exit 1
+fi
 
 # 1. Verify joi-retrieve binary
 if [[ ! -f /usr/local/bin/joi-retrieve ]]; then
