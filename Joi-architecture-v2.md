@@ -220,41 +220,67 @@ Joi monitors mesh health via heartbeat. If mesh appears compromised, joi shuts d
 
 **Principle:** Never trust mesh to monitor itself. Mesh collects data, joi validates it.
 
-**Heartbeat Protocol:**
+**Heartbeat Protocol (Challenge-Response):**
 
 ```
-mesh-watchdog (every 60s) ────► joi-verifier
-   │                              │
-   │ Sends:                       │ Validates:
-   │ - Process status             │ - Hashes match known-good
-   │ - Binary hashes              │ - All processes running
-   │ - Config hashes              │ - Heartbeat received on time
-   │ - Timestamp + nonce          │
+joi-challenger (every 30s) ────► mesh-watchdog
+   │                                │
+   │ Challenge:                     │ Must respond within 10s:
+   │ - nonce (random)               │ - challenge_response (HMAC)
+   │                                │ - process status
+                                    │ - binary hashes
+                                    │ - config hashes
+                                    ▼
+                            joi-verifier
+                              │
+                              │ Validates:
+                              │ - HMAC matches (proves mesh has secret)
+                              │ - Hashes match known-good
+                              │ - All processes running
+                              │ - Response within 10s timeout
 ```
 
-**mesh-watchdog collects:**
+**Challenge from joi:**
 ```json
 {
-  "timestamp": 1707350400000,
-  "nonce": "random-per-request",
+  "challenge": "random-nonce-from-joi",
+  "timestamp": 1707350400000
+}
+```
+
+**Response from mesh (within 10 seconds):**
+```json
+{
+  "challenge_response": "hmac-sha256(challenge + shared_secret)",
+  "timestamp": 1707350400500,
   "processes": {
     "nebula": {"running": true, "pid": 1234, "user": "root"},
     "signal-cli": {"running": true, "pid": 2345, "user": "signal"},
-    "mesh-proxy": {"running": true, "pid": 3456, "user": "mesh-proxy"}
+    "mesh-proxy": {"running": true, "pid": 3456, "user": "mesh-proxy"},
+    "mesh-watchdog": {"running": true, "pid": 4567, "user": "root"}
   },
   "hashes": {
     "/usr/local/bin/mesh-proxy": "sha256:abc123...",
     "/usr/local/bin/signal-cli": "sha256:def456...",
-    "/etc/mesh-proxy/config.yaml": "sha256:789abc..."
+    "/usr/local/bin/mesh-watchdog": "sha256:ghi789...",
+    "/etc/mesh-proxy/config.yaml": "sha256:jkl012..."
   }
 }
 ```
 
 **joi-verifier checks:**
+- Challenge response HMAC is correct (proves mesh has shared secret)
+- Response received within 10 seconds
 - Hashes match known-good (stored on joi, immutable)
-- All expected processes running with correct user
-- Heartbeat received within timeout (90 seconds)
-- Nonce is fresh (prevents replay)
+- All expected processes running with correct user (including mesh-watchdog itself)
+
+**Attack Window:**
+- Old design: 90 seconds (3 missed heartbeats)
+- New design: ~10 seconds max (challenge timeout)
+- Attacker cannot predict when challenge comes (joi-initiated)
+
+> **Limitation:** Automated attacks can complete in <5 seconds. This protects against
+> manual/slower attacks. Real-time intrusion detection is a post-PoC consideration.
 
 **Compromise Response:**
 
@@ -262,8 +288,9 @@ mesh-watchdog (every 60s) ────► joi-verifier
 |-----------|--------|
 | Hash mismatch | **joi shuts down immediately** |
 | Process not running / wrong user | **joi shuts down immediately** |
-| 3+ missed heartbeats | **joi shuts down immediately** |
-| Nonce replay detected | **joi shuts down immediately** |
+| Challenge response timeout (>10s) | **joi shuts down immediately** |
+| Challenge response HMAC invalid | **joi shuts down immediately** |
+| mesh-watchdog not in process list | **joi shuts down immediately** |
 
 **Why shutdown instead of alerting?**
 - openhab is read-only (cannot send alerts through it)
