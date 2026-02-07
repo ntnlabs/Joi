@@ -597,12 +597,24 @@ NoNewPrivileges=true
 def retrieve_knowledge(channel_user: str, query: dict) -> dict:
     """Execute knowledge retrieval in sandboxed subprocess."""
 
-    # 1. Validate query (before subprocess)
+    # 1. Validate and re-serialize query BEFORE subprocess
+    #    This ensures joi-retrieve only receives known-safe JSON
+    #    Any parser exploit would run as main joi user, not channel user
     if not validate_query(query):
         raise SecurityError("Invalid query format")
 
-    # 2. Serialize query (no shell metacharacters possible)
-    query_json = json.dumps(query)
+    # 2. Re-serialize to canonical JSON (eliminates malformed input)
+    try:
+        canonical = {
+            "type": str(query.get("type", "")),
+            "q": str(query.get("q", ""))[:1000],
+            "limit": min(int(query.get("limit", 10)), 100),
+            "id": str(query.get("id", "")) if "id" in query else None
+        }
+        query_json = json.dumps(canonical, ensure_ascii=True)
+    except (TypeError, ValueError) as e:
+        raise SecurityError(f"Query serialization failed: {e}")
+
     if len(query_json) > 4096:
         raise SecurityError("Query too large")
 
@@ -955,7 +967,11 @@ pkill -u "joi-${RECIPIENT}-public" 2>/dev/null
 usermod -L "joi-${RECIPIENT}-private"
 usermod -L "joi-${RECIPIENT}-public"
 
-# 5. Remove from identities.yaml (manual step - prints instructions)
+# 5. Invalidate joi's in-memory cache (reload config)
+systemctl reload joi 2>/dev/null || kill -HUP $(pidof joi-agent) 2>/dev/null
+echo "Joi config cache invalidated"
+
+# 6. Remove from identities.yaml (manual step - prints instructions)
 echo ""
 echo "MANUAL STEPS REQUIRED:"
 echo "1. Edit /etc/mesh-proxy/identities.yaml - remove $RECIPIENT entry"
@@ -967,7 +983,7 @@ echo "OPTIONAL: Archive or delete knowledge folders:"
 echo "  /var/lib/joi/knowledge/${RECIPIENT}/"
 echo "  /var/lib/joi/data/${RECIPIENT}/"
 
-# 6. Run validation
+# 7. Run validation
 /usr/local/bin/joi-validate-config
 ```
 
