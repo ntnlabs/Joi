@@ -494,6 +494,7 @@ Query JSON (validated):
   - Must be valid JSON
   - No path components allowed (no /, .., ~)
   - Only alphanumeric + limited punctuation
+  - Document IDs must be UUIDv4 format (prevents enumeration)
 ```
 
 **Example:**
@@ -516,7 +517,7 @@ sudo -u joi-owner-private /usr/local/bin/joi-retrieve search '{"path":"/etc/shad
   "status": "ok",
   "results": [
     {
-      "id": "doc-123",
+      "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
       "title": "Password Policy",
       "snippet": "...",
       "source": "owner/private/security.md",
@@ -583,8 +584,11 @@ MemoryMax=256M
 CPUQuota=50%
 TimeoutSec=30
 PrivateTmp=true
+PrivateNetwork=true          # No network access (only loopback)
 ProtectSystem=strict
 ProtectHome=true
+ProtectKernelTunables=true   # No /proc/sys, /sys modifications
+ProtectKernelModules=true    # No module loading
 NoNewPrivileges=true
 ```
 
@@ -867,7 +871,7 @@ if [[ $(stat -c %U:%G /usr/local/bin/joi-retrieve) != "root:root" ]]; then
     echo "ERROR: joi-retrieve not owned by root:root"
     ERRORS=$((ERRORS+1))
 fi
-if ! lsattr /usr/local/bin/joi-retrieve | grep -q '^....i'; then
+if ! lsattr /usr/local/bin/joi-retrieve 2>/dev/null | cut -d' ' -f1 | grep -q 'i'; then
     echo "WARNING: joi-retrieve not immutable (chattr +i)"
 fi
 
@@ -943,11 +947,15 @@ done
 # 2. Remove recipient's own groups
 groupdel "joi-${RECIPIENT}-readers" 2>/dev/null
 
-# 3. Lock channel users (don't delete - preserve audit trail)
+# 3. Kill any active processes for these users
+pkill -u "joi-${RECIPIENT}-private" 2>/dev/null
+pkill -u "joi-${RECIPIENT}-public" 2>/dev/null
+
+# 4. Lock channel users (don't delete - preserve audit trail)
 usermod -L "joi-${RECIPIENT}-private"
 usermod -L "joi-${RECIPIENT}-public"
 
-# 4. Remove from identities.yaml (manual step - prints instructions)
+# 5. Remove from identities.yaml (manual step - prints instructions)
 echo ""
 echo "MANUAL STEPS REQUIRED:"
 echo "1. Edit /etc/mesh-proxy/identities.yaml - remove $RECIPIENT entry"
@@ -959,7 +967,7 @@ echo "OPTIONAL: Archive or delete knowledge folders:"
 echo "  /var/lib/joi/knowledge/${RECIPIENT}/"
 echo "  /var/lib/joi/data/${RECIPIENT}/"
 
-# 5. Run validation
+# 6. Run validation
 /usr/local/bin/joi-validate-config
 ```
 
