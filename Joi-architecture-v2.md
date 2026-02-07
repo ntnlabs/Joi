@@ -532,6 +532,14 @@ Uploads inherit channel permissions - Linux access control works automatically.
 | .csv | Parse to structured data | Python csv |
 | .json | Parse and validate | Python json |
 
+> **Security Note (PDF parsing):** pdftotext (poppler) and pdfplumber have had CVEs
+> (buffer overflows, malformed font handling). Consider:
+> - Running parser in sandboxed subprocess (seccomp, minimal syscalls)
+> - Evaluating safer alternatives (pdf2image + OCR, or Rust-based parsers)
+> - Keeping parser tools updated (add to quarterly maintenance)
+>
+> This is a known risk area - document for post-PoC hardening.
+
 **Safe Extraction (tmpfs isolation):**
 
 Extraction happens in tmpfs to protect main filesystem from zip-bomb style attacks.
@@ -563,6 +571,8 @@ extraction:
   tmpfs_path: /var/lib/joi/extract
   max_extracted_size_mb: 50       # Absolute cap per file
   max_ratio: 10                   # Max 10x inflation (1MB input → 10MB max output)
+  timeout_seconds: 30             # Kill extraction if takes too long
+  lock_file: /var/run/joi-extract.lock
 ```
 
 **Garbage Collection:**
@@ -583,8 +593,14 @@ cleanup:
 ```bash
 #!/bin/bash
 EXTRACT_DIR="/var/lib/joi/extract"
+LOCK_FILE="/var/run/joi-extract.lock"
 MAX_AGE_HOURS=24
 EMERGENCY_THRESHOLD=80
+
+# Acquire EXCLUSIVE lock - blocks all extractions during cleanup
+exec 200>"$LOCK_FILE"
+flock -x 200
+echo "Lock acquired, cleanup starting"
 
 # Regular cleanup - delete old files
 find "$EXTRACT_DIR" -type f -mmin +$((MAX_AGE_HOURS * 60)) -delete
@@ -594,16 +610,19 @@ find "$EXTRACT_DIR" -type d -empty -delete
 USAGE=$(df "$EXTRACT_DIR" --output=pcent | tail -1 | tr -d ' %')
 if [[ $USAGE -gt $EMERGENCY_THRESHOLD ]]; then
     echo "EMERGENCY: tmpfs at ${USAGE}%, cleaning oldest files"
-    # Delete oldest files until under 50%
+    # Delete oldest files until under 50% (safe now - no concurrent extractions)
     while [[ $(df "$EXTRACT_DIR" --output=pcent | tail -1 | tr -d ' %') -gt 50 ]]; do
         OLDEST=$(find "$EXTRACT_DIR" -type f -printf '%T+ %p\n' | sort | head -1 | cut -d' ' -f2-)
         if [[ -n "$OLDEST" ]]; then
-            rm -f "$OLDEST"
+            rm -f -- "$OLDEST"
         else
             break
         fi
     done
 fi
+
+echo "Cleanup complete"
+# Lock auto-released on script exit
 ```
 
 **Cron Entry:**
@@ -611,20 +630,52 @@ fi
 0 3 * * * /usr/local/bin/joi-extract-cleanup >> /var/log/joi/extract-cleanup.log 2>&1
 ```
 
-**Pre-Extraction Check:**
+**Extraction with Lock and Timeout:**
 ```python
-def check_tmpfs_space():
-    """Check tmpfs has enough space before extraction."""
-    usage = get_tmpfs_usage_percent()
-    if usage > 80:
-        run_emergency_cleanup()
-    if usage > 95:
-        raise ExtractionError("Extraction space full, try again later")
+import fcntl
+import subprocess
+import signal
+
+LOCK_FILE = "/var/run/joi-extract.lock"
+TIMEOUT_SECONDS = 30
+
+def extract_file(input_path: str, output_dir: str) -> str:
+    """Extract file with lock coordination and timeout."""
+
+    # Acquire SHARED lock (multiple extractions OK, but blocks during cleanup)
+    with open(LOCK_FILE, "w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ExtractionError("Cleanup in progress, try again in a moment")
+
+        # Check tmpfs space
+        if get_tmpfs_usage_percent() > 95:
+            raise ExtractionError("Extraction space full, try again later")
+
+        # Run extraction with timeout
+        try:
+            result = subprocess.run(
+                ["pdftotext", input_path, "-"],
+                capture_output=True,
+                timeout=TIMEOUT_SECONDS
+            )
+            return result.stdout.decode()
+        except subprocess.TimeoutExpired:
+            raise ExtractionError("Extraction timed out, file too complex")
+
+        # Lock auto-released when 'with' block exits
 ```
+
+**Lock Coordination:**
+- Extractions acquire SHARED lock (multiple can run concurrently)
+- Cleanup acquires EXCLUSIVE lock (blocks new extractions, waits for running ones)
+- No race condition possible between extraction and cleanup
 
 **What This Protects Against:**
 - Zip bomb: small file → huge extraction → tmpfs fills → main disk safe
-- Runaway extraction: process killed by tmpfs limit, not disk full
+- Infinite loop: extraction killed after 30 seconds
+- Race condition: lock prevents cleanup/extraction conflicts
 - Leftover files: daily cleanup + emergency cleanup
 
 **Limit Notifications:**
@@ -642,7 +693,9 @@ All notifications go through Joi to the user. Mesh rejections are forwarded to J
 | Storage quota | Joi | "You've reached your storage quota ({quota}MB). Please /reset old sessions." |
 | Invalid content | Joi | "I couldn't read this {ext} file. It may be corrupted or password-protected." |
 | Extraction too large | Joi | "This file expands to more than I can safely process. Please send a simpler file." |
+| Extraction timeout | Joi | "This file is taking too long to process. It may be too complex." |
 | Extraction space full | Joi | "I'm temporarily unable to process files. Please try again in a few minutes." |
+| Cleanup in progress | Joi | "System maintenance in progress. Please try again in a moment." |
 
 **Quota Warnings (proactive):**
 
