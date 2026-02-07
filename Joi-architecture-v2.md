@@ -942,6 +942,13 @@ echo "Configuration validation passed"
 exit 0
 ```
 
+**Known Limitations (Deferred):**
+
+| Issue | Reason Deferred |
+|-------|-----------------|
+| **Binary hash verification** | No proper tooling available. Immutable flag (`chattr +i`) provides basic protection. Future: integrate with AIDE or Tripwire for file integrity monitoring. |
+| **Sudoers content validation** | Sudoers files require root to modify. If attacker has root, they can bypass any validation. Theoretical risk only - root compromise = game over regardless. |
+
 **Run Validation:**
 - On systemd service start (ExecStartPre)
 - After any config file change (inotify watch)
