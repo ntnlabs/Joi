@@ -250,7 +250,7 @@ No mode switching. The conversation type IS the mode.
 │   │   └── family/             # 750 joi-family:joi-family-readers
 │   ├── critical/               # Top level - special status
 │   │   └── safety/             # 750 joi-critical:joi-critical
-│   └── shared/                 # 755 world-readable
+│   └── shared/                 # 750 joi:joi-all-channels (not world-readable)
 │       └── common/
 └── data/
     ├── owner/
@@ -262,7 +262,7 @@ No mode switching. The conversation type IS the mode.
     ├── group/
     │   └── family.db           # 640 joi-family:joi-family-readers
     ├── critical.db             # 600 joi-critical
-    └── shared.db               # 644 world-readable
+    └── shared.db               # 640 joi:joi-all-channels
 ```
 
 **Why critical/ at top level?** Critical is special - it reads from all public folders for safety decisions. Top-level placement makes this explicit.
@@ -282,6 +282,15 @@ useradd -r -s /sbin/nologin joi-critical
 groupadd joi-owner-readers      # Who can read owner's public knowledge
 groupadd joi-partner-readers    # Who can read partner's public knowledge
 groupadd joi-family-readers     # Who can read family knowledge
+groupadd joi-all-channels       # All channel users (for shared/ access)
+
+# Add all channel users to joi-all-channels
+usermod -aG joi-all-channels joi-owner-private
+usermod -aG joi-all-channels joi-owner-public
+usermod -aG joi-all-channels joi-partner-private
+usermod -aG joi-all-channels joi-partner-public
+usermod -aG joi-all-channels joi-family
+usermod -aG joi-all-channels joi-critical
 ```
 
 ### Whole-Folder Sharing (Set Up at Registration)
@@ -355,11 +364,19 @@ allowed_channel_users:
 ```
 Message arrives (sender=owner, channel=private_dm)
     ↓
+Acquire config read lock (prevents reload during lookup)
+    ↓
 Lookup: allowed_channel_users["owner_private_dm"]
     ↓
 Not found? → DENY (security error, logged)
     ↓
 Found: joi-owner-private
+    ↓
+Verify user exists: getpwnam("joi-owner-private")
+    ↓
+User missing? → DENY (config/system mismatch, alert)
+    ↓
+Release config read lock
     ↓
 Spawn knowledge retrieval subprocess as that user
     ↓
@@ -369,6 +386,43 @@ Only permitted files/databases readable
     ↓
 Results returned to main Joi process
 ```
+
+**TOCTOU Protection:**
+```python
+# Atomic configuration reload (prevents race conditions)
+class ConfigManager:
+    def __init__(self):
+        self._config = {}
+        self._lock = threading.RLock()
+
+    def reload(self, new_config_path: str):
+        """Atomic config reload via temp file + rename."""
+        # 1. Load and validate new config
+        new_config = load_and_validate(new_config_path)
+
+        # 2. Verify all users exist
+        for channel, user in new_config["allowed_channel_users"].items():
+            try:
+                pwd.getpwnam(user)
+            except KeyError:
+                raise ConfigError(f"User {user} does not exist")
+
+        # 3. Atomic swap under lock
+        with self._lock:
+            self._config = new_config
+
+    def get_channel_user(self, channel: str) -> Optional[str]:
+        """Get user for channel (thread-safe)."""
+        with self._lock:
+            return self._config.get("allowed_channel_users", {}).get(channel)
+```
+
+**Error Handling:**
+| Scenario | Action |
+|----------|--------|
+| User deleted after lookup | Subprocess fails, logged as security event |
+| Config file corrupted | Reject reload, keep old config, alert |
+| Unknown channel | DENY, log security event |
 
 ### Sudoers Configuration
 
@@ -415,6 +469,551 @@ open("/var/lib/joi/knowledge/partner/private/secrets.md")
 # → PermissionError: [Errno 13] Permission denied
 
 # Even if application has a bug, Linux blocks it
+```
+
+### joi-retrieve Binary Specification
+
+The `joi-retrieve` binary is the ONLY way to access knowledge. It runs as the channel user via sudo.
+
+**Binary Requirements:**
+- **Owner/permissions:** `root:root 0755` (immutable via `chattr +i`)
+- **Location:** `/usr/local/bin/joi-retrieve`
+- **Language:** Compiled (Go/Rust preferred) - no interpreter injection
+
+**Input Validation (STRICT):**
+```
+joi-retrieve <query-type> <query-json>
+
+Query types (whitelist):
+  - search      Search knowledge base
+  - get         Get specific document by ID
+  - list        List documents in category
+
+Query JSON (validated):
+  - Max length: 4096 bytes
+  - Must be valid JSON
+  - No path components allowed (no /, .., ~)
+  - Only alphanumeric + limited punctuation
+```
+
+**Example:**
+```bash
+# Valid
+sudo -u joi-owner-private /usr/local/bin/joi-retrieve search '{"q":"password reset","limit":5}'
+
+# Invalid - rejected before execution
+sudo -u joi-owner-private /usr/local/bin/joi-retrieve search '{"path":"/etc/shadow"}'
+# Error: path components not allowed in query
+```
+
+**Output:**
+- JSON only (structured, never raw file contents)
+- Max output size: 1MB (truncated if exceeded)
+- Includes metadata (source, timestamp, access level)
+
+```json
+{
+  "status": "ok",
+  "results": [
+    {
+      "id": "doc-123",
+      "title": "Password Policy",
+      "snippet": "...",
+      "source": "owner/private/security.md",
+      "accessed_as": "joi-owner-private"
+    }
+  ],
+  "truncated": false
+}
+```
+
+**Security Properties:**
+- No shell metacharacter processing
+- No path traversal possible (queries by ID, not path)
+- No arbitrary file reads (only indexed knowledge)
+- Timeout: 30 seconds max
+- Memory limit: 256MB via cgroup
+
+### Sudoers Hardening
+
+```sudoers
+# /etc/sudoers.d/joi
+# Hardened configuration for knowledge retrieval
+
+# Reset environment - prevent LD_PRELOAD and similar attacks
+Defaults:joi env_reset
+Defaults:joi !env_keep
+Defaults:joi secure_path="/usr/local/bin:/usr/bin:/bin"
+
+# Audit all sudo usage
+Defaults:joi log_output
+Defaults:joi logfile=/var/log/joi-sudo.log
+
+# Binary must match exact path - no arguments in sudoers (validated in binary)
+joi ALL=(joi-owner-private) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-owner-public) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-partner-private) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-partner-public) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-family) NOPASSWD: /usr/local/bin/joi-retrieve
+joi ALL=(joi-critical) NOPASSWD: /usr/local/bin/joi-retrieve
+```
+
+**Binary Protection:**
+```bash
+# Ensure binary is immutable
+chown root:root /usr/local/bin/joi-retrieve
+chmod 755 /usr/local/bin/joi-retrieve
+chattr +i /usr/local/bin/joi-retrieve
+
+# Verify before each update (remove immutable, update, re-add)
+lsattr /usr/local/bin/joi-retrieve
+# ----i---------e------- /usr/local/bin/joi-retrieve
+```
+
+### Subprocess Security Model
+
+All knowledge retrieval runs in sandboxed subprocesses with strict limits.
+
+**Resource Limits (via systemd/cgroup):**
+```ini
+# /etc/systemd/system/joi-retrieve@.service
+[Service]
+User=%i
+MemoryMax=256M
+CPUQuota=50%
+TimeoutSec=30
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+NoNewPrivileges=true
+```
+
+**Execution Model:**
+```python
+def retrieve_knowledge(channel_user: str, query: dict) -> dict:
+    """Execute knowledge retrieval in sandboxed subprocess."""
+
+    # 1. Validate query (before subprocess)
+    if not validate_query(query):
+        raise SecurityError("Invalid query format")
+
+    # 2. Serialize query (no shell metacharacters possible)
+    query_json = json.dumps(query)
+    if len(query_json) > 4096:
+        raise SecurityError("Query too large")
+
+    # 3. Execute via sudo with timeout
+    result = subprocess.run(
+        ["sudo", "-u", channel_user, "/usr/local/bin/joi-retrieve",
+         query["type"], query_json],
+        capture_output=True,
+        timeout=30,  # Hard timeout
+        env={},      # Empty environment
+    )
+
+    # 4. Parse and validate output
+    if result.returncode != 0:
+        log_retrieval_failure(channel_user, query, result.stderr)
+        return {"status": "error", "results": []}
+
+    # 5. Validate output is valid JSON
+    try:
+        output = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        log_security_event("Invalid JSON from joi-retrieve")
+        return {"status": "error", "results": []}
+
+    return output
+```
+
+**Communication:**
+- Subprocess returns JSON to stdout
+- Subprocess writes errors to stderr (logged, not returned to LLM)
+- No IPC, no shared memory, no sockets
+
+### Sender-to-Channel Validation
+
+The mesh proxy validates Signal sender identity before forwarding to Joi.
+
+**Mesh Proxy Validation Flow:**
+```
+Signal message arrives
+    ↓
+signal-cli provides cryptographic sender identity (phone number)
+    ↓
+Mesh looks up phone in /etc/mesh-proxy/identities.yaml
+    ↓
+Not found? → DROP (unknown sender, logged)
+    ↓
+Found: Get recipient_id (e.g., "owner", "partner")
+    ↓
+Determine channel from Signal conversation type:
+  - DM → {recipient_id}_private_dm
+  - Group → lookup group_id in groups.yaml
+    ↓
+Include validated channel in API call to Joi:
+  X-Validated-Channel: owner_private_dm
+  X-Validated-Sender: owner
+  X-Signal-Sender-Hash: sha256(phone)  # For logging only
+    ↓
+Joi trusts X-Validated-Channel header (mesh is trusted)
+```
+
+**Security Properties:**
+- Signal provides cryptographic sender verification
+- Mesh validates against known identities
+- Channel is determined by mesh (joi cannot override)
+- Compromised mesh could forge, but mesh is in trust boundary
+
+**Identity Config (mesh):**
+```yaml
+# /etc/mesh-proxy/identities.yaml
+# Authoritative mapping of phone → recipient
+
+identities:
+  "+1555XXXXXXX1":
+    recipient_id: owner
+    name: "Owner"
+
+  "+1555XXXXXXX2":
+    recipient_id: partner
+    name: "Partner"
+
+# Groups (Signal group IDs)
+groups:
+  "base64-group-id-1":
+    channel: family_group
+    members: [owner, partner]  # Informational, Signal is authoritative
+
+  "base64-group-id-2":
+    channel: critical_group
+    members: [owner]
+```
+
+### Signal Group Membership Monitoring
+
+Joi should detect unexpected changes to Signal group membership.
+
+**Monitoring Strategy:**
+```yaml
+# /etc/joi/groups.yaml
+# Expected group membership (verified periodically)
+
+groups:
+  critical_group:
+    signal_group_id: "base64-group-id"
+    expected_members:
+      - owner
+    alert_on_change: true  # Alert if membership changes
+
+  family_group:
+    signal_group_id: "base64-group-id-2"
+    expected_members:
+      - owner
+      - partner
+    alert_on_change: true
+```
+
+**Verification (mesh proxy):**
+```python
+def check_group_membership():
+    """Periodic check (every 6 hours) of Signal group membership."""
+
+    for group_id, config in groups.items():
+        # Get current members from signal-cli
+        current = signal_cli.get_group_members(group_id)
+        expected = set(config["expected_members"])
+
+        added = current - expected
+        removed = expected - current
+
+        if added or removed:
+            alert_critical(
+                f"Group {group_id} membership changed!\n"
+                f"Added: {added}\n"
+                f"Removed: {removed}"
+            )
+            # Also log to audit trail
+            log_security_event("group_membership_change", group_id, added, removed)
+```
+
+**Alerts:**
+- Unexpected member added → Critical alert to owner
+- Expected member removed → Critical alert to owner
+- Group renamed → Warning (informational)
+
+### Write Isolation Model
+
+Knowledge retrieval is READ-ONLY. Writes follow a separate path.
+
+**Write Flow:**
+```
+Joi wants to save knowledge
+    ↓
+Main joi process (not subprocess) handles write
+    ↓
+Write path determined by CURRENT channel context
+    ↓
+Append-only log (cannot modify existing documents)
+    ↓
+New document indexed for future retrieval
+```
+
+**Write Rules:**
+- Private DM context → Write to owner/private/ (or partner/private/)
+- Group context → Write to group folder
+- Critical context → Write to critical/safety/ only
+- **Cross-channel writes BLOCKED** - cannot write to folder you can't read
+
+**Implementation:**
+```python
+def save_knowledge(channel: str, document: dict) -> bool:
+    """Save knowledge to appropriate folder based on current channel."""
+
+    # 1. Determine write path from channel
+    channel_user = get_channel_user(channel)
+    write_path = get_write_path(channel_user)  # Maps user → folder
+
+    # 2. Validate: channel user must have write access to path
+    if not can_write(channel_user, write_path):
+        log_security_event("Attempted cross-channel write blocked")
+        return False
+
+    # 3. Write as main joi user (has write access to all)
+    # Document tagged with source channel for audit
+    document["_source_channel"] = channel
+    document["_timestamp"] = time.time()
+    document["_id"] = generate_id()
+
+    # 4. Append to write-ahead log
+    append_to_log(write_path, document)
+
+    # 5. Index for retrieval
+    index_document(write_path, document)
+
+    return True
+```
+
+**Folder Write Permissions:**
+```bash
+# Main joi user has write access to all folders
+# Channel users have READ-ONLY access
+
+# Knowledge folders: owned by main joi, readable by channel users
+chown -R joi:joi-owner-readers /var/lib/joi/knowledge/group/owner_public/
+chmod -R 750 /var/lib/joi/knowledge/group/owner_public/
+
+# Private folders: only channel user can read, only joi can write
+chown joi:joi-owner-private /var/lib/joi/knowledge/owner/private/
+chmod 750 /var/lib/joi/knowledge/owner/private/
+```
+
+### Directory and File Defaults
+
+**Umask and Setgid Configuration:**
+```bash
+# All channel directories use setgid to preserve group ownership
+chmod g+s /var/lib/joi/knowledge/owner/private/
+chmod g+s /var/lib/joi/knowledge/group/owner_public/
+chmod g+s /var/lib/joi/knowledge/group/family/
+# ... etc for all knowledge directories
+
+# Main joi service runs with restrictive umask
+# /etc/systemd/system/joi.service
+[Service]
+UMask=0027  # New files: 640, new dirs: 750
+```
+
+**Expected File Permissions:**
+| Location | File Mode | Dir Mode | Owner | Group |
+|----------|-----------|----------|-------|-------|
+| owner/private/ | 640 | 750 | joi | joi-owner-private |
+| group/owner_public/ | 640 | 750 | joi | joi-owner-readers |
+| group/family/ | 640 | 750 | joi | joi-family-readers |
+| critical/safety/ | 640 | 750 | joi | joi-critical |
+| shared/ | 640 | 750 | joi | joi-all-channels |
+
+### Configuration Validation
+
+Automated checks to prevent misconfiguration.
+
+**Validation Script:** `/usr/local/bin/joi-validate-config`
+```bash
+#!/bin/bash
+# Run on startup and after any config change
+
+ERRORS=0
+
+# 1. Verify joi-retrieve binary
+if [[ ! -f /usr/local/bin/joi-retrieve ]]; then
+    echo "ERROR: joi-retrieve binary missing"
+    ERRORS=$((ERRORS+1))
+fi
+if [[ $(stat -c %U:%G /usr/local/bin/joi-retrieve) != "root:root" ]]; then
+    echo "ERROR: joi-retrieve not owned by root:root"
+    ERRORS=$((ERRORS+1))
+fi
+if ! lsattr /usr/local/bin/joi-retrieve | grep -q '^....i'; then
+    echo "WARNING: joi-retrieve not immutable (chattr +i)"
+fi
+
+# 2. Verify critical CANNOT access private folders
+for private_group in joi-owner-private joi-partner-private; do
+    if id -nG joi-critical | grep -qw "$private_group"; then
+        echo "CRITICAL: joi-critical is in $private_group group!"
+        ERRORS=$((ERRORS+1))
+    fi
+done
+
+# 3. Verify channel_users.yaml matches recipients.yaml
+# ... (compare expected users exist)
+
+# 4. Verify directory permissions match expected
+for dir in /var/lib/joi/knowledge/owner/private \
+           /var/lib/joi/knowledge/group/owner_public \
+           /var/lib/joi/knowledge/critical/safety; do
+    if [[ -d "$dir" ]]; then
+        perms=$(stat -c %a "$dir")
+        if [[ "$perms" != "750" && "$perms" != "700" ]]; then
+            echo "WARNING: $dir has unexpected permissions: $perms"
+        fi
+    fi
+done
+
+# 5. Verify umask in service file
+if ! grep -q "UMask=0027" /etc/systemd/system/joi.service; then
+    echo "WARNING: joi.service missing UMask=0027"
+fi
+
+# 6. Check group memberships match recipients.yaml
+# Compare /etc/group against expected configuration
+
+if [[ $ERRORS -gt 0 ]]; then
+    echo "VALIDATION FAILED: $ERRORS critical errors"
+    exit 1
+fi
+
+echo "Configuration validation passed"
+exit 0
+```
+
+**Run Validation:**
+- On systemd service start (ExecStartPre)
+- After any config file change (inotify watch)
+- Daily via cron (drift detection)
+
+### Recipient Revocation Procedure
+
+When removing a recipient (e.g., partner leaves household):
+
+**Revocation Script:** `/usr/local/bin/joi-revoke-recipient`
+```bash
+#!/bin/bash
+# Usage: joi-revoke-recipient <recipient_id>
+# Example: joi-revoke-recipient partner
+
+RECIPIENT=$1
+if [[ -z "$RECIPIENT" ]]; then
+    echo "Usage: joi-revoke-recipient <recipient_id>"
+    exit 1
+fi
+
+echo "Revoking recipient: $RECIPIENT"
+
+# 1. Remove from all reader groups
+for group in $(grep "joi-.*-readers" /etc/group | cut -d: -f1); do
+    gpasswd -d "joi-${RECIPIENT}-private" "$group" 2>/dev/null
+    gpasswd -d "joi-${RECIPIENT}-public" "$group" 2>/dev/null
+done
+
+# 2. Remove recipient's own groups
+groupdel "joi-${RECIPIENT}-readers" 2>/dev/null
+
+# 3. Lock channel users (don't delete - preserve audit trail)
+usermod -L "joi-${RECIPIENT}-private"
+usermod -L "joi-${RECIPIENT}-public"
+
+# 4. Remove from identities.yaml (manual step - prints instructions)
+echo ""
+echo "MANUAL STEPS REQUIRED:"
+echo "1. Edit /etc/mesh-proxy/identities.yaml - remove $RECIPIENT entry"
+echo "2. Edit /etc/joi/recipients.yaml - remove $RECIPIENT section"
+echo "3. Edit /etc/joi/channel_users.yaml - remove ${RECIPIENT}_* entries"
+echo "4. Restart services: systemctl restart joi mesh-proxy"
+echo ""
+echo "OPTIONAL: Archive or delete knowledge folders:"
+echo "  /var/lib/joi/knowledge/${RECIPIENT}/"
+echo "  /var/lib/joi/data/${RECIPIENT}/"
+
+# 5. Run validation
+/usr/local/bin/joi-validate-config
+```
+
+**What Happens to Existing Knowledge:**
+- Recipient's private knowledge becomes inaccessible (user locked)
+- Recipient's public knowledge remains readable by others (if shared)
+- To fully purge: delete knowledge folders (optional, manual)
+
+### Audit Logging
+
+All security-relevant actions are logged.
+
+**auditd Rules:**
+```bash
+# /etc/audit/rules.d/joi.rules
+
+# Log all access to knowledge directories
+-w /var/lib/joi/knowledge/ -p rwxa -k joi-knowledge
+
+# Log all access to data directories
+-w /var/lib/joi/data/ -p rwxa -k joi-data
+
+# Log config changes
+-w /etc/joi/ -p wa -k joi-config
+-w /etc/mesh-proxy/ -p wa -k mesh-config
+
+# Log joi-retrieve execution
+-w /usr/local/bin/joi-retrieve -p x -k joi-retrieve
+
+# Log sudo usage (in addition to sudoers log)
+-w /var/log/joi-sudo.log -p wa -k joi-sudo
+```
+
+**Log Locations:**
+| Log | Location | Purpose |
+|-----|----------|---------|
+| Sudo actions | /var/log/joi-sudo.log | All privilege switches |
+| Audit trail | /var/log/audit/audit.log | File access, config changes |
+| Application | /var/log/joi/joi.log | Application events |
+| Security events | /var/log/joi/security.log | Blocked actions, anomalies |
+
+**Log Retention:**
+- Keep 90 days online
+- Archive to encrypted backup monthly
+- Never delete security logs without explicit approval
+
+### Mount Options
+
+Filesystem hardening for `/var/lib/joi/`:
+
+```bash
+# /etc/fstab entry (if separate partition)
+/dev/mapper/joi-data /var/lib/joi ext4 defaults,nosuid,nodev,noexec 0 2
+```
+
+**Mount Options:**
+- `nosuid` - Prevent setuid binaries (no privilege escalation)
+- `nodev` - Prevent device files (no /dev access)
+- `noexec` - Prevent execution (knowledge is data only)
+
+**If Not Separate Partition:**
+```bash
+# Bind mount with options
+mount --bind /var/lib/joi /var/lib/joi
+mount -o remount,nosuid,nodev,noexec /var/lib/joi
+
+# Add to /etc/fstab for persistence
+/var/lib/joi /var/lib/joi none bind,nosuid,nodev,noexec 0 0
 ```
 
 ## Secrets Management
