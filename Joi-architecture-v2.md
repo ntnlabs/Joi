@@ -515,7 +515,100 @@ Uploads inherit channel permissions - Linux access control works automatically.
 | .csv | Parse to structured data | Python csv |
 | .json | Parse and validate | Python json |
 
-Processing happens on joi (not mesh) after file transfer.
+**Safe Extraction (tmpfs isolation):**
+
+Extraction happens in tmpfs to protect main filesystem from zip-bomb style attacks.
+
+```
+Upload arrives
+    ↓
+Store in tmpfs: /var/lib/joi/extract/
+    ↓
+Extract/parse in tmpfs
+    ↓
+Check: extracted size < limit?
+    ↓ Yes                          ↓ No
+Move to permanent storage     Delete + notify user
+    ↓                              "Extraction too large"
+Delete tmpfs copy
+```
+
+**Tmpfs Configuration:**
+```bash
+# /etc/fstab
+tmpfs /var/lib/joi/extract tmpfs size=512M,mode=750,uid=joi,gid=joi 0 0
+```
+
+**Extraction Limits:**
+```yaml
+# /etc/joi/extraction.yaml
+extraction:
+  tmpfs_path: /var/lib/joi/extract
+  max_extracted_size_mb: 50       # Absolute cap per file
+  max_ratio: 10                   # Max 10x inflation (1MB input → 10MB max output)
+```
+
+**Garbage Collection:**
+
+```yaml
+# Cleanup policy
+cleanup:
+  # Regular cleanup (cron daily at 3am)
+  schedule: "0 3 * * *"
+  max_age_hours: 24               # Delete files older than 24h
+
+  # Emergency cleanup (when tmpfs gets full)
+  emergency_threshold_percent: 80  # Trigger at 80% full
+  emergency_action: delete_oldest  # Delete oldest files until under 50%
+```
+
+**Cleanup Script:** `/usr/local/bin/joi-extract-cleanup`
+```bash
+#!/bin/bash
+EXTRACT_DIR="/var/lib/joi/extract"
+MAX_AGE_HOURS=24
+EMERGENCY_THRESHOLD=80
+
+# Regular cleanup - delete old files
+find "$EXTRACT_DIR" -type f -mmin +$((MAX_AGE_HOURS * 60)) -delete
+find "$EXTRACT_DIR" -type d -empty -delete
+
+# Emergency cleanup - check tmpfs usage
+USAGE=$(df "$EXTRACT_DIR" --output=pcent | tail -1 | tr -d ' %')
+if [[ $USAGE -gt $EMERGENCY_THRESHOLD ]]; then
+    echo "EMERGENCY: tmpfs at ${USAGE}%, cleaning oldest files"
+    # Delete oldest files until under 50%
+    while [[ $(df "$EXTRACT_DIR" --output=pcent | tail -1 | tr -d ' %') -gt 50 ]]; do
+        OLDEST=$(find "$EXTRACT_DIR" -type f -printf '%T+ %p\n' | sort | head -1 | cut -d' ' -f2-)
+        if [[ -n "$OLDEST" ]]; then
+            rm -f "$OLDEST"
+        else
+            break
+        fi
+    done
+fi
+```
+
+**Cron Entry:**
+```
+0 3 * * * /usr/local/bin/joi-extract-cleanup >> /var/log/joi/extract-cleanup.log 2>&1
+```
+
+**Pre-Extraction Check:**
+```python
+def check_tmpfs_space():
+    """Check tmpfs has enough space before extraction."""
+    usage = get_tmpfs_usage_percent()
+    if usage > 80:
+        run_emergency_cleanup()
+    if usage > 95:
+        raise ExtractionError("Extraction space full, try again later")
+```
+
+**What This Protects Against:**
+- Zip bomb: small file → huge extraction → tmpfs fills → main disk safe
+- Runaway extraction: process killed by tmpfs limit, not disk full
+- Leftover files: daily cleanup + emergency cleanup
 
 **Limit Notifications:**
 
@@ -531,6 +624,8 @@ All notifications go through Joi to the user. Mesh rejections are forwarded to J
 | Session size limit | Joi | "This session has {used}MB of uploads (limit: {max}MB). Use /reset to free up space." |
 | Storage quota | Joi | "You've reached your storage quota ({quota}MB). Please /reset old sessions." |
 | Invalid content | Joi | "I couldn't read this {ext} file. It may be corrupted or password-protected." |
+| Extraction too large | Joi | "This file expands to more than I can safely process. Please send a simpler file." |
+| Extraction space full | Joi | "I'm temporarily unable to process files. Please try again in a few minutes." |
 
 **Quota Warnings (proactive):**
 
