@@ -329,6 +329,58 @@ expected_processes:
     user: mesh-proxy
 ```
 
+**Challenge-Response Shared Secret:**
+
+The HMAC shared secret proves mesh possesses a secret known only to joi and legitimate mesh.
+
+```
+# Storage locations (both VMs):
+
+# On joi VM:
+/etc/joi/secrets/mesh-hmac.key
+  - Owner: root:joi
+  - Permissions: 0640
+  - Format: 32 bytes, hex-encoded (64 chars)
+  - Immutable: chattr +i
+
+# On mesh VM:
+/etc/mesh-proxy/secrets/hmac.key
+  - Owner: root:mesh-proxy
+  - Permissions: 0640
+  - Format: same as joi
+  - Protected by: LUKS disk encryption
+```
+
+**Key Generation (initial setup):**
+```bash
+# Generate on air-gapped machine or joi VM
+openssl rand -hex 32 > mesh-hmac.key
+
+# Install on joi
+sudo install -o root -g joi -m 0640 mesh-hmac.key /etc/joi/secrets/mesh-hmac.key
+sudo chattr +i /etc/joi/secrets/mesh-hmac.key
+
+# Install on mesh (transfer securely - e.g., via Proxmox console copy)
+sudo install -o root -g mesh-proxy -m 0640 mesh-hmac.key /etc/mesh-proxy/secrets/hmac.key
+
+# Delete original
+shred -u mesh-hmac.key
+```
+
+**Key Rotation:**
+- Rotate annually or on suspected compromise
+- Rotation requires Proxmox console access to both VMs
+- Steps: generate new key → install on mesh → install on joi → verify heartbeat works
+
+**Threat Model:**
+| Attack | Prevention |
+|--------|-----------|
+| Key extraction from mesh | LUKS encryption + file permissions (0640) |
+| Key extraction from joi | LUKS encryption + immutable flag + 0640 perms |
+| Brute force HMAC | 256-bit key = computationally infeasible |
+| Replay attack | Fresh nonce per challenge |
+| MITM | Nebula encryption (attacker cannot see challenge/response) |
+
 **Updating Baseline After Legitimate Changes:**
 ```bash
 # On mesh: regenerate hashes
@@ -444,6 +496,44 @@ User: Forget that I ever had a BMW.
 Joi: Done. I've removed all memory of you having a BMW.
 ```
 
+### Admin Memory Purge
+
+> **Security Note:** Explicit memories persist across /reset by design. This creates a risk:
+> if a malicious memory is injected (e.g., via prompt injection in uploaded content),
+> it survives reset and continues influencing Joi's behavior.
+
+**Admin purge command** (run on joi VM via Proxmox console):
+```bash
+# /usr/local/bin/joi-purge-memories
+#!/bin/bash
+# Purges ALL explicit memories - use only for security incidents
+
+RECIPIENT=${1:-all}
+
+if [[ "$RECIPIENT" == "all" ]]; then
+    echo "DANGER: This will delete ALL explicit memories for ALL users."
+    echo "Type 'PURGE ALL' to confirm:"
+    read confirm
+    [[ "$confirm" != "PURGE ALL" ]] && exit 1
+
+    sqlite3 /var/lib/joi/memory.db "UPDATE user_facts SET active = 0, purged_at = datetime('now'), purge_reason = 'admin_security_purge';"
+    echo "All explicit memories purged."
+else
+    echo "Purging memories for recipient: $RECIPIENT"
+    sqlite3 /var/lib/joi/memory.db "UPDATE user_facts SET active = 0, purged_at = datetime('now'), purge_reason = 'admin_security_purge' WHERE user_id = '$RECIPIENT';"
+fi
+
+# Force joi to reload memory index
+systemctl reload joi
+```
+
+**When to use:**
+- Suspected prompt injection attack that planted malicious memories
+- User requests complete data deletion (GDPR-style)
+- Security incident response
+
+**Audit trail:** Purged memories are soft-deleted with timestamp and reason, not hard-deleted.
+
 ### Memory Store Security
 
 - Encrypt at rest (SQLCipher or LUKS)
@@ -490,19 +580,31 @@ uploads:
   # Security gating - is this safe to forward?
   allowed_extensions:
     - .txt
-    - .pdf
+    # - .pdf    # DISABLED: CVE risk in pdftotext/pdfplumber (see security note below)
     - .csv
     - .md
     - .json
 
   magic_validation: true      # Check file magic bytes
   reject_mismatch: true       # Reject if magic doesn't match extension
-  hard_max_size_mb: 100       # Absolute ceiling, reject larger
+  hard_max_size_mb: 50        # Reduced from 100MB to match extraction limits
 ```
+
+> **PDF DISABLED (PoC Security Decision):**
+> PDF parsing tools (pdftotext/poppler, pdfplumber) have had multiple CVEs including
+> buffer overflows and malformed font handling exploits. Until proper sandboxing is
+> implemented (seccomp subprocess, separate VM, or Rust-based parser), PDF uploads
+> are rejected at the mesh layer. Users receive: "PDF uploads are temporarily disabled
+> for security hardening. Please copy text content into a .txt file."
+>
+> **Re-enable checklist:**
+> - [ ] Implement seccomp-sandboxed subprocess for PDF parsing
+> - [ ] OR deploy pdf-parser in isolated VM with minimal attack surface
+> - [ ] OR switch to memory-safe parser (pdf-rs, pdf.js server-side)
+> - [ ] Add quarterly CVE monitoring for chosen parser
 
 | Extension | Expected Magic | Notes |
 |-----------|----------------|-------|
-| .pdf | `%PDF` | PDF header |
 | .txt | (none) | UTF-8 text validation |
 | .csv | (none) | UTF-8 text, comma-separated |
 | .json | `{` or `[` | Valid JSON structure |
@@ -555,17 +657,12 @@ Uploads inherit channel permissions - Linux access control works automatically.
 | Format | Processing | Tool |
 |--------|------------|------|
 | .txt, .md | Direct use | None |
-| .pdf | Text extraction | pdftotext / pdfplumber |
 | .csv | Parse to structured data | Python csv |
 | .json | Parse and validate | Python json |
 
-> **Security Note (PDF parsing):** pdftotext (poppler) and pdfplumber have had CVEs
-> (buffer overflows, malformed font handling). Consider:
-> - Running parser in sandboxed subprocess (seccomp, minimal syscalls)
-> - Evaluating safer alternatives (pdf2image + OCR, or Rust-based parsers)
-> - Keeping parser tools updated (add to quarterly maintenance)
->
-> This is a known risk area - document for post-PoC hardening.
+> **PDF Support (DISABLED in PoC):** See "PDF DISABLED" note above. PDF will be
+> re-enabled once sandboxing is implemented. Current workaround: users copy text
+> content into .txt files.
 
 **Safe Extraction (tmpfs isolation):**
 
@@ -600,7 +697,27 @@ extraction:
   max_ratio: 10                   # Max 10x inflation (1MB input → 10MB max output)
   timeout_seconds: 30             # Kill extraction if takes too long
   lock_file: /var/run/joi-extract.lock
+  max_concurrent: 3               # Max 3 concurrent extractions (150MB worst case)
+  queue_max: 5                    # Max pending extractions before rejecting
 ```
+
+> **Tmpfs Sizing Rationale:**
+>
+> | Limit | Value | Worst Case |
+> |-------|-------|------------|
+> | max_extracted_size_mb | 50MB | 50MB per file |
+> | max_concurrent | 3 | 150MB concurrent |
+> | Emergency threshold | 80% | 410MB triggers cleanup |
+> | Safe headroom | ~100MB | For cleanup operations |
+> | **Total tmpfs** | **512MB** | Fits worst case + headroom |
+>
+> The mesh hard limit (50MB input) × max_ratio (10x) = 500MB theoretical max per file,
+> but max_extracted_size_mb (50MB) caps actual output. With max 3 concurrent extractions,
+> worst case is 150MB, well within 512MB tmpfs.
+>
+> **If tmpfs fills despite limits:** Emergency cleanup triggers at 80% (410MB),
+> deletes oldest files until under 50% (256MB). New extractions wait (LOCK_SH blocked)
+> until cleanup completes.
 
 **Garbage Collection:**
 
@@ -657,41 +774,54 @@ echo "Cleanup complete"
 0 3 * * * /usr/local/bin/joi-extract-cleanup >> /var/log/joi/extract-cleanup.log 2>&1
 ```
 
-**Extraction with Lock and Timeout:**
+**Extraction with Lock, Timeout, and Concurrency Limit:**
 ```python
 import fcntl
 import subprocess
-import signal
+import threading
 
 LOCK_FILE = "/var/run/joi-extract.lock"
 TIMEOUT_SECONDS = 30
+MAX_CONCURRENT = 3
+
+# Semaphore limits concurrent extractions
+_extraction_semaphore = threading.Semaphore(MAX_CONCURRENT)
 
 def extract_file(input_path: str, output_dir: str) -> str:
-    """Extract file with lock coordination and timeout."""
+    """Extract file with concurrency limit, lock coordination, and timeout."""
 
-    # Acquire SHARED lock (multiple extractions OK, but blocks during cleanup)
-    with open(LOCK_FILE, "w") as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise ExtractionError("Cleanup in progress, try again in a moment")
+    # 1. Check concurrency limit (non-blocking)
+    if not _extraction_semaphore.acquire(blocking=False):
+        raise ExtractionError("Too many concurrent extractions, try again in a moment")
 
-        # Check tmpfs space
-        if get_tmpfs_usage_percent() > 95:
-            raise ExtractionError("Extraction space full, try again later")
+    try:
+        # 2. Acquire SHARED lock (blocks during cleanup)
+        with open(LOCK_FILE, "w") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise ExtractionError("Cleanup in progress, try again in a moment")
 
-        # Run extraction with timeout
-        try:
-            result = subprocess.run(
-                ["pdftotext", input_path, "-"],
-                capture_output=True,
-                timeout=TIMEOUT_SECONDS
-            )
-            return result.stdout.decode()
-        except subprocess.TimeoutExpired:
-            raise ExtractionError("Extraction timed out, file too complex")
+            # 3. Check tmpfs space
+            if get_tmpfs_usage_percent() > 95:
+                raise ExtractionError("Extraction space full, try again later")
 
-        # Lock auto-released when 'with' block exits
+            # 4. Run extraction with timeout
+            # Note: PDF disabled in PoC - this handles .txt, .csv, .json, .md only
+            try:
+                result = subprocess.run(
+                    ["cat", input_path],  # Simple passthrough for text files
+                    capture_output=True,
+                    timeout=TIMEOUT_SECONDS
+                )
+                return result.stdout.decode()
+            except subprocess.TimeoutExpired:
+                raise ExtractionError("Extraction timed out, file too complex")
+
+            # Lock auto-released when 'with' block exits
+    finally:
+        # Always release semaphore
+        _extraction_semaphore.release()
 ```
 
 **Lock Coordination:**
@@ -704,6 +834,8 @@ def extract_file(input_path: str, output_dir: str) -> str:
 - Infinite loop: extraction killed after 30 seconds
 - Race condition: lock prevents cleanup/extraction conflicts
 - Leftover files: daily cleanup + emergency cleanup
+- Tmpfs exhaustion: max 3 concurrent extractions (150MB worst case vs 512MB tmpfs)
+- PDF exploits: PDF disabled until sandboxing implemented
 
 **Limit Notifications:**
 
@@ -711,7 +843,8 @@ All notifications go through Joi to the user. Mesh rejections are forwarded to J
 
 | Limit Hit | Checked By | Response |
 |-----------|------------|----------|
-| Extension not allowed | Mesh | "I can't process .{ext} files. I accept: txt, pdf, csv, md, json." |
+| Extension not allowed | Mesh | "I can't process .{ext} files. I accept: txt, csv, md, json." |
+| PDF upload attempted | Mesh | "PDF uploads are temporarily disabled for security. Please copy text into a .txt file." |
 | Magic byte mismatch | Mesh | "This file doesn't appear to be a valid {ext} file. Please check the file." |
 | Over 100MB hard limit | Mesh | "This file is too large ({size}MB). Maximum is 100MB." |
 | Over user's size limit | Joi | "This file is {size}MB but your limit is {max}MB. Please send a smaller file." |
@@ -722,6 +855,7 @@ All notifications go through Joi to the user. Mesh rejections are forwarded to J
 | Extraction too large | Joi | "This file expands to more than I can safely process. Please send a simpler file." |
 | Extraction timeout | Joi | "This file is taking too long to process. It may be too complex." |
 | Extraction space full | Joi | "I'm temporarily unable to process files. Please try again in a few minutes." |
+| Too many concurrent | Joi | "Processing multiple files right now. Please try again in a moment." |
 | Cleanup in progress | Joi | "System maintenance in progress. Please try again in a moment." |
 
 **Quota Warnings (proactive):**
@@ -1491,6 +1625,8 @@ When removing a recipient (e.g., partner leaves household):
 # Usage: joi-revoke-recipient <recipient_id>
 # Example: joi-revoke-recipient partner
 
+set -e  # Exit on error
+
 RECIPIENT=$1
 if [[ -z "$RECIPIENT" ]]; then
     echo "Usage: joi-revoke-recipient <recipient_id>"
@@ -1501,16 +1637,16 @@ echo "Revoking recipient: $RECIPIENT"
 
 # 1. Remove from all reader groups
 for group in $(grep "joi-.*-readers" /etc/group | cut -d: -f1); do
-    gpasswd -d "joi-${RECIPIENT}-private" "$group" 2>/dev/null
-    gpasswd -d "joi-${RECIPIENT}-public" "$group" 2>/dev/null
+    gpasswd -d "joi-${RECIPIENT}-private" "$group" 2>/dev/null || true
+    gpasswd -d "joi-${RECIPIENT}-public" "$group" 2>/dev/null || true
 done
 
 # 2. Remove recipient's own groups
-groupdel "joi-${RECIPIENT}-readers" 2>/dev/null
+groupdel "joi-${RECIPIENT}-readers" 2>/dev/null || true
 
 # 3. Kill any active processes for these users
-pkill -u "joi-${RECIPIENT}-private" 2>/dev/null
-pkill -u "joi-${RECIPIENT}-public" 2>/dev/null
+pkill -u "joi-${RECIPIENT}-private" 2>/dev/null || true
+pkill -u "joi-${RECIPIENT}-public" 2>/dev/null || true
 
 # 4. Lock channel users (don't delete - preserve audit trail)
 usermod -L "joi-${RECIPIENT}-private"
@@ -1519,22 +1655,43 @@ usermod -L "joi-${RECIPIENT}-public"
 # 5. Update identities config (joi is authoritative source)
 # Remove recipient from identities.yaml
 sed -i "/^  \".*\":$/,/^  \".*\":$/{/recipient_id: ${RECIPIENT}/,/^  \"/d}" \
-    /etc/joi/identities.yaml 2>/dev/null
+    /etc/joi/identities.yaml 2>/dev/null || true
 # Also update local config files
-sed -i "/^  ${RECIPIENT}:/,/^  [a-z]/d" /etc/joi/recipients.yaml 2>/dev/null
-sed -i "/${RECIPIENT}_/d" /etc/joi/channel_users.yaml 2>/dev/null
+sed -i "/^  ${RECIPIENT}:/,/^  [a-z]/d" /etc/joi/recipients.yaml 2>/dev/null || true
+sed -i "/${RECIPIENT}_/d" /etc/joi/channel_users.yaml 2>/dev/null || true
 
 # 6. Invalidate joi's in-memory cache (reload config)
 systemctl reload joi 2>/dev/null || kill -HUP $(pidof joi-agent) 2>/dev/null
 echo "Joi config updated and cache invalidated"
-echo "Mesh will auto-sync on next request (hash comparison)"
+
+# 7. IMMEDIATE PUSH to mesh (no race window)
+echo "Pushing config to mesh..."
+CONFIG_JSON=$(cat /etc/joi/identities.yaml | python3 -c "import sys,yaml,json; print(json.dumps(yaml.safe_load(sys.stdin)))")
+CONFIG_HASH=$(echo -n "$CONFIG_JSON" | sha256sum | cut -d' ' -f1)
+TIMESTAMP=$(date +%s%3N)
+
+PUSH_RESULT=$(curl -s -X POST \
+    --cacert /etc/nebula/ca.crt \
+    --cert /etc/nebula/joi.crt \
+    --key /etc/nebula/joi.key \
+    -H "Content-Type: application/json" \
+    -d "{\"config\": $CONFIG_JSON, \"hash\": \"$CONFIG_HASH\", \"timestamp\": $TIMESTAMP}" \
+    "https://10.42.0.1:8444/config/sync" 2>&1)
+
+if echo "$PUSH_RESULT" | grep -q '"status":"applied"'; then
+    echo "Config pushed to mesh successfully - revocation is IMMEDIATE"
+else
+    echo "WARNING: Config push failed (mesh may be down). Will retry on next heartbeat."
+    echo "Push result: $PUSH_RESULT"
+    echo "Max delay until sync: 30 seconds (next heartbeat)"
+fi
 
 echo ""
 echo "OPTIONAL: Archive or delete knowledge folders:"
 echo "  /var/lib/joi/knowledge/${RECIPIENT}/"
 echo "  /var/lib/joi/data/${RECIPIENT}/"
 
-# 7. Run validation
+# 8. Run validation
 /usr/local/bin/joi-validate-config
 ```
 
@@ -1545,49 +1702,76 @@ echo "  /var/lib/joi/data/${RECIPIENT}/"
 
 ### Config Sync Between Joi and Mesh
 
-Joi is the authoritative source for identity configuration. Mesh syncs automatically via hash comparison.
+Joi is the authoritative source for identity configuration. Mesh receives config via **push from joi** (never pulls).
 
-**How It Works:**
+> **Security Principle:** Mesh NEVER initiates config fetches. A compromised mesh could
+> refuse to fetch updates or fetch from an attacker-controlled endpoint. Joi pushes
+> config directly; mesh only receives and applies.
+
+**Push-Based Sync (Immediate):**
 
 ```
-Joi sends API request to mesh:
-  X-Config-Hash: sha256(identities.yaml contents)
-
-Mesh receives request:
-  local_hash = sha256(local identities.yaml)
-
-  if request_hash != local_hash:
-      fetch_config_from_joi()  # GET https://joi:8443/config/identities
-      apply_config()
-      log("Config synced from joi")
-
-  process_request()
+Revocation on joi:
+    ↓
+joi-revoke-recipient updates /etc/joi/identities.yaml
+    ↓
+Script triggers immediate config push:
+    POST https://mesh:8444/config/sync
+    Body: { "config": {...}, "hash": "abc123...", "timestamp": ... }
+    Auth: Nebula certificate (joi only)
+    ↓
+Mesh receives, validates joi certificate, applies config
+    ↓
+Mesh responds: { "status": "applied", "hash": "abc123..." }
+    ↓
+Revoked user blocked immediately (no race window)
 ```
 
-**Joi Config Endpoint:**
+**Mesh Config Endpoint (receives push, never fetches):**
 ```
-GET /config/identities
-Response: { "hash": "abc123...", "config": { ... } }
+POST /config/sync
+Body: { "hash": "...", "config": { ... }, "timestamp": ... }
+Auth: Nebula certificate - ONLY joi (10.42.0.10) can call this
 
-Authentication: Nebula certificate (mesh only)
+Response: { "status": "applied", "previous_hash": "...", "new_hash": "..." }
 ```
+
+**Hash Verification (defense in depth):**
+
+Joi also includes config hash in every outbound request header. If mesh's local hash
+doesn't match, it logs a warning (config desync detected) but does NOT fetch - it
+waits for joi to push. This catches edge cases like network failures during push.
+
+```yaml
+# Every joi → mesh request includes:
+X-Config-Hash: sha256(identities.yaml)
+
+# Mesh compares to local hash
+# Mismatch → log warning, but NEVER fetch from joi
+# Joi is responsible for re-pushing on next heartbeat if push failed
+```
+
+**Heartbeat Re-Push:**
+
+During each 30-second health check (joi-challenger), joi also verifies mesh has correct config:
+1. Mesh response includes its current config hash
+2. If mismatch: joi immediately re-pushes config
+3. This handles cases where initial push failed (network, mesh restart)
 
 **What This Prevents:**
-- Configuration drift after revocation
-- Forgotten manual restarts
-- Human error in config sync
+- Revocation race window (push is immediate)
+- Compromised mesh refusing to sync (mesh cannot initiate, only receive)
+- Configuration drift after network failures (heartbeat re-push)
 
-**What This Does NOT Prevent:**
-- Compromised mesh ignoring sync (but compromised mesh = game over anyway)
-
-**Revocation Flow (Automated):**
+**Revocation Flow (Immediate, No Race Window):**
 ```
 1. Admin runs joi-revoke-recipient on joi VM
 2. Script updates /etc/joi/identities.yaml
 3. Script invalidates joi cache
-4. Next API request from mesh includes old hash
-5. Mesh detects mismatch, fetches new config from joi
-6. Revoked user immediately blocked - no manual steps
+4. Script immediately pushes config to mesh (POST /config/sync)
+5. Mesh applies config, logs change
+6. Revoked user blocked immediately - zero race window
+7. If push fails: joi retries on next heartbeat (max 30s delay)
 ```
 
 ### Audit Logging
