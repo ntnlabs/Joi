@@ -408,6 +408,142 @@ Joi: Done. I've removed all memory of you having a BMW.
 - Session data cleared on reset
 - Uploaded files deleted after processing or on reset
 
+### Uploaded Data Handling
+
+Users can send files to Joi. Validation is split between mesh (security) and joi (policy).
+
+**Validation Flow:**
+
+```
+User sends file
+    ↓
+MESH: Extension allowed? ──No──► Reject + notify user
+    ↓ Yes
+MESH: Magic bytes match? ──No──► Reject + notify user
+    ↓ Yes
+MESH: Under 100MB hard limit? ──No──► Reject + notify user
+    ↓ Yes
+Forward to Joi via Nebula
+    ↓
+JOI: Under user's size limit? ──No──► Reject + notify user
+    ↓ Yes
+JOI: Session file count OK? ──No──► Reject + notify user
+    ↓ Yes
+JOI: Session total size OK? ──No──► Reject + notify user
+    ↓ Yes
+JOI: User quota OK? ──No──► Reject + notify user
+    ↓ Yes
+JOI: Content valid (parse)? ──No──► Reject + notify user
+    ↓ Yes
+Store and process
+```
+
+**Mesh Checks (universal security - same for all users):**
+
+```yaml
+# /etc/mesh-proxy/uploads.yaml
+uploads:
+  # Security gating - is this safe to forward?
+  allowed_extensions:
+    - .txt
+    - .pdf
+    - .csv
+    - .md
+    - .json
+
+  magic_validation: true      # Check file magic bytes
+  reject_mismatch: true       # Reject if magic doesn't match extension
+  hard_max_size_mb: 100       # Absolute ceiling, reject larger
+```
+
+| Extension | Expected Magic | Notes |
+|-----------|----------------|-------|
+| .pdf | `%PDF` | PDF header |
+| .txt | (none) | UTF-8 text validation |
+| .csv | (none) | UTF-8 text, comma-separated |
+| .json | `{` or `[` | Valid JSON structure |
+| .md | (none) | UTF-8 text |
+
+Mesh does NOT have per-user limits - it only does universal security checks.
+
+**Joi Checks (per-user policy - requires full config):**
+
+```yaml
+# /etc/joi/recipients.yaml
+recipients:
+  owner:
+    upload_limits:
+      max_file_size_mb: 50        # User's personal limit (under mesh's 100MB)
+      max_session_files: 20
+      max_session_total_mb: 200
+      max_storage_quota_mb: 1000
+
+  partner:
+    upload_limits:
+      max_file_size_mb: 10
+      max_session_files: 10
+      max_session_total_mb: 50
+      max_storage_quota_mb: 500
+```
+
+Joi has the full context: user identity, session state, storage usage.
+
+**Storage Structure:**
+
+```
+/var/lib/joi/knowledge/
+├── owner/
+│   └── private/
+│       └── uploads/              # DM uploads
+│           └── session_abc123/   # Cleared on /reset
+│               ├── document.pdf
+│               └── data.csv
+├── group/
+│   └── owner_public/
+│       └── uploads/              # Group uploads
+│           └── session_def456/
+```
+
+Uploads inherit channel permissions - Linux access control works automatically.
+
+**File Processing (on joi):**
+
+| Format | Processing | Tool |
+|--------|------------|------|
+| .txt, .md | Direct use | None |
+| .pdf | Text extraction | pdftotext / pdfplumber |
+| .csv | Parse to structured data | Python csv |
+| .json | Parse and validate | Python json |
+
+Processing happens on joi (not mesh) after file transfer.
+
+**Limit Notifications:**
+
+All notifications go through Joi to the user. Mesh rejections are forwarded to Joi which notifies user.
+
+| Limit Hit | Checked By | Response |
+|-----------|------------|----------|
+| Extension not allowed | Mesh | "I can't process .{ext} files. I accept: txt, pdf, csv, md, json." |
+| Magic byte mismatch | Mesh | "This file doesn't appear to be a valid {ext} file. Please check the file." |
+| Over 100MB hard limit | Mesh | "This file is too large ({size}MB). Maximum is 100MB." |
+| Over user's size limit | Joi | "This file is {size}MB but your limit is {max}MB. Please send a smaller file." |
+| Session file count | Joi | "You've uploaded {n} files this session (limit: {max}). Use /reset to start fresh." |
+| Session size limit | Joi | "This session has {used}MB of uploads (limit: {max}MB). Use /reset to free up space." |
+| Storage quota | Joi | "You've reached your storage quota ({quota}MB). Please /reset old sessions." |
+| Invalid content | Joi | "I couldn't read this {ext} file. It may be corrupted or password-protected." |
+
+**Quota Warnings (proactive):**
+
+```yaml
+upload_warnings:
+  warn_at_percent: 80    # Warn when 80% of limit reached
+```
+
+```
+Joi: Just a heads up - you've used 85% of your session upload limit.
+     You can upload about 30MB more before hitting the cap.
+```
+
 ## Channel-Based Knowledge Isolation
 
 Different channels have different knowledge access. Enforced by **Linux file permissions**, not application logic.
