@@ -1424,6 +1424,7 @@ Security improvements deferred from PoC phase:
 
 | Improvement | Current State | Target State | Value |
 |-------------|---------------|--------------|-------|
+| **Physical devices** | VMs on Proxmox (Proxmox = root of trust) | Dedicated hardware for mesh and joi (removes virtualization from trust chain) | High - Proxmox compromise no longer game over |
 | **Kernel-enforced write isolation** | Writes via main joi process (app-level checks) | Separate `joi-write` binary per channel via sudo, mirroring read isolation | High - eliminates write path bugs |
 | **Centralized logging** | All logs local to joi VM | Dedicated log server (not joi, not mesh) receives forwarded logs | Medium - tamper evidence |
 | **Binary hash verification** | Immutable flag only | AIDE/Tripwire integration for cryptographic verification | Low - detects maintenance tampering |
