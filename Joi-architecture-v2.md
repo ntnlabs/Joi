@@ -989,17 +989,19 @@ pkill -u "joi-${RECIPIENT}-public" 2>/dev/null
 usermod -L "joi-${RECIPIENT}-private"
 usermod -L "joi-${RECIPIENT}-public"
 
-# 5. Invalidate joi's in-memory cache (reload config)
-systemctl reload joi 2>/dev/null || kill -HUP $(pidof joi-agent) 2>/dev/null
-echo "Joi config cache invalidated"
+# 5. Update identities config (joi is authoritative source)
+# Remove recipient from identities.yaml
+sed -i "/^  \".*\":$/,/^  \".*\":$/{/recipient_id: ${RECIPIENT}/,/^  \"/d}" \
+    /etc/joi/identities.yaml 2>/dev/null
+# Also update local config files
+sed -i "/^  ${RECIPIENT}:/,/^  [a-z]/d" /etc/joi/recipients.yaml 2>/dev/null
+sed -i "/${RECIPIENT}_/d" /etc/joi/channel_users.yaml 2>/dev/null
 
-# 6. Remove from identities.yaml (manual step - prints instructions)
-echo ""
-echo "MANUAL STEPS REQUIRED:"
-echo "1. Edit /etc/mesh-proxy/identities.yaml - remove $RECIPIENT entry"
-echo "2. Edit /etc/joi/recipients.yaml - remove $RECIPIENT section"
-echo "3. Edit /etc/joi/channel_users.yaml - remove ${RECIPIENT}_* entries"
-echo "4. Restart services: systemctl restart joi mesh-proxy"
+# 6. Invalidate joi's in-memory cache (reload config)
+systemctl reload joi 2>/dev/null || kill -HUP $(pidof joi-agent) 2>/dev/null
+echo "Joi config updated and cache invalidated"
+echo "Mesh will auto-sync on next request (hash comparison)"
+
 echo ""
 echo "OPTIONAL: Archive or delete knowledge folders:"
 echo "  /var/lib/joi/knowledge/${RECIPIENT}/"
@@ -1013,6 +1015,53 @@ echo "  /var/lib/joi/data/${RECIPIENT}/"
 - Recipient's private knowledge becomes inaccessible (user locked)
 - Recipient's public knowledge remains readable by others (if shared)
 - To fully purge: delete knowledge folders (optional, manual)
+
+### Config Sync Between Joi and Mesh
+
+Joi is the authoritative source for identity configuration. Mesh syncs automatically via hash comparison.
+
+**How It Works:**
+
+```
+Joi sends API request to mesh:
+  X-Config-Hash: sha256(identities.yaml contents)
+
+Mesh receives request:
+  local_hash = sha256(local identities.yaml)
+
+  if request_hash != local_hash:
+      fetch_config_from_joi()  # GET https://joi:8443/config/identities
+      apply_config()
+      log("Config synced from joi")
+
+  process_request()
+```
+
+**Joi Config Endpoint:**
+```
+GET /config/identities
+Response: { "hash": "abc123...", "config": { ... } }
+
+Authentication: Nebula certificate (mesh only)
+```
+
+**What This Prevents:**
+- Configuration drift after revocation
+- Forgotten manual restarts
+- Human error in config sync
+
+**What This Does NOT Prevent:**
+- Compromised mesh ignoring sync (but compromised mesh = game over anyway)
+
+**Revocation Flow (Automated):**
+```
+1. Admin runs joi-revoke-recipient on joi VM
+2. Script updates /etc/joi/identities.yaml
+3. Script invalidates joi cache
+4. Next API request from mesh includes old hash
+5. Mesh detects mismatch, fetches new config from joi
+6. Revoked user immediately blocked - no manual steps
+```
 
 ### Audit Logging
 
