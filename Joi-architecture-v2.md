@@ -637,7 +637,7 @@ The mesh proxy validates Signal sender identity before forwarding to Joi.
 
 **Mesh Proxy Validation Flow:**
 ```
-Signal message arrives
+Signal message arrives (DM or Group - same flow)
     ↓
 signal-cli provides cryptographic sender identity (phone number)
     ↓
@@ -659,9 +659,15 @@ Include validated channel in API call to Joi:
 Joi trusts X-Validated-Channel header (mesh is trusted)
 ```
 
+**Critical: Whitelist applies to ALL messages**
+- DM from unknown sender → DROP
+- Group message from unknown sender → DROP
+- Even if attacker adds themselves to Signal group, they're not in identities.yaml → DROP
+- Signal group membership is irrelevant; our whitelist is authoritative
+
 **Security Properties:**
 - Signal provides cryptographic sender verification
-- Mesh validates against known identities
+- Mesh validates against known identities (whitelist)
 - Channel is determined by mesh (joi cannot override)
 - Compromised mesh could forge, but mesh is in trust boundary
 
@@ -680,21 +686,26 @@ identities:
     name: "Partner"
 
 # Groups (Signal group IDs)
+# Note: members list is for alerting only. Security comes from identities whitelist above.
+# Even if someone joins the Signal group, they can't send messages unless in identities.
 groups:
   "base64-group-id-1":
     channel: family_group
-    members: [owner, partner]  # Informational, Signal is authoritative
+    expected_members: [owner, partner]  # For monitoring alerts only
 
   "base64-group-id-2":
     channel: critical_group
-    members: [owner]
+    expected_members: [owner]  # For monitoring alerts only
 ```
 
 ### Signal Group Membership Monitoring
 
-Joi should detect unexpected changes to Signal group membership.
+Group membership monitoring is **informational only** - security comes from the sender whitelist (identities.yaml). However, unexpected group changes may indicate:
+- Compromised phone adding unauthorized members
+- Social engineering attempts
+- Accidental group modifications
 
-**Monitoring Strategy:**
+**Monitoring Strategy (Alerting Only):**
 ```yaml
 # /etc/joi/groups.yaml
 # Expected group membership (verified periodically)
@@ -737,10 +748,13 @@ def check_group_membership():
             log_security_event("group_membership_change", group_id, added, removed)
 ```
 
-**Alerts:**
-- Unexpected member added → Critical alert to owner
-- Expected member removed → Critical alert to owner
-- Group renamed → Warning (informational)
+**Alerts (Informational - Security Not Dependent on This):**
+- Unexpected member added → Alert owner (investigate why)
+- Expected member removed → Alert owner (may indicate compromise)
+- Group renamed → Warning
+
+**Why This Is Not Security-Critical:**
+Unknown senders are dropped at mesh regardless of Signal group membership. This monitoring just helps detect anomalies that may warrant investigation.
 
 ### Write Isolation Model
 
