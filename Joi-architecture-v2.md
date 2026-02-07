@@ -198,15 +198,38 @@ gpu_health:
 - Audit logs are anonymized and stored locally only.
 - Nebula certificates stored securely; rotate annually or on compromise.
 
-### Message Size Limit
+### Message Size Limits
+
+> **Limit Hierarchy (single source of truth):**
+>
+> | Layer | Limit | Purpose |
+> |-------|-------|---------|
+> | Signal (mesh) | 1500 chars | User-facing messages via Signal |
+> | API inbound (joi) | 4096 chars | Internal API requests (includes metadata) |
+> | API outbound (joi) | 2048 chars | Internal API responses |
+> | Knowledge query | 4096 bytes | joi-retrieve query JSON |
+> | Search result | 500 chars | Per-result snippet from web search |
+>
+> The 1500 char Signal limit is the most restrictive and user-facing. Internal API
+> limits are higher to accommodate structured payloads with metadata/headers.
 
 ```yaml
-# /etc/mesh-proxy/limits.yaml
+# /etc/mesh-proxy/limits.yaml (AUTHORITATIVE for mesh limits)
 message:
-  max_length: 1500    # Characters, universal, no exceptions
+  max_length: 1500    # Signal messages, user-facing
 ```
 
-**On rejection:**
+```yaml
+# /etc/joi/policy.yaml (AUTHORITATIVE for joi limits)
+content:
+  input:
+    signal:
+      max_length: 4096    # API payload including metadata
+  output:
+    max_length: 2048      # API response including metadata
+```
+
+**On rejection (mesh):**
 ```
 "Message too long ({len} chars). Maximum is 1500.
  For longer content, please send as a file."
@@ -304,6 +327,16 @@ joi-challenger (every 30s) ────► mesh-watchdog
 - Attacker cannot power joi back up (no LUKS passphrase)
 - Only owner can unlock via Proxmox console
 - This is a one-way trip for the attacker
+
+> **LUKS Configuration Requirements:**
+> - **No TPM:** VMs cannot use TPM auto-unlock (Proxmox doesn't expose TPM to VMs)
+> - **Manual unlock only:** LUKS passphrase entered via Proxmox console on every boot
+> - **No keyfile:** Keyfiles would defeat the security purpose (attacker with disk access = game over)
+> - **Consequence:** Reboots require manual intervention. This is a feature, not a bug.
+>
+> This is the correct configuration for security-critical VMs. Automated LUKS unlock
+> (via TPM, keyfile, or network) would allow an attacker who gains VM access to
+> simply reboot and regain access.
 
 **Known-Good Hashes (stored on joi):**
 ```yaml
@@ -637,18 +670,36 @@ Joi has the full context: user identity, session state, storage usage.
 **Storage Structure:**
 
 ```
+# Runtime (tmpfs) - cleared on reboot or /reset
+/var/lib/joi/session-uploads/     # tmpfs mount
+├── owner_private/
+│   └── session_abc123/
+│       ├── document.txt
+│       └── data.csv
+└── owner_public/
+    └── session_def456/
+
+# Persistent (disk) - only for explicitly saved knowledge
 /var/lib/joi/knowledge/
 ├── owner/
 │   └── private/
-│       └── uploads/              # DM uploads
-│           └── session_abc123/   # Cleared on /reset
-│               ├── document.pdf
-│               └── data.csv
-├── group/
-│   └── owner_public/
-│       └── uploads/              # Group uploads
-│           └── session_def456/
+│       └── saved/                # Explicitly saved from session
+└── group/
+    └── owner_public/
+        └── saved/
 ```
+
+> **Session uploads in tmpfs:** Session uploads live in tmpfs during runtime.
+> This prevents sensitive uploaded data from persisting on disk after a crash.
+> Only data explicitly saved to knowledge base moves to persistent storage.
+>
+> ```bash
+> # /etc/fstab - session uploads tmpfs (separate from extraction tmpfs)
+> tmpfs /var/lib/joi/session-uploads tmpfs size=1G,mode=750,uid=joi,gid=joi 0 0
+> ```
+>
+> On `/reset`: session tmpfs is cleared. On reboot: automatically cleared.
+> On crash: no session data persists (defense in depth).
 
 Uploads inherit channel permissions - Linux access control works automatically.
 
@@ -696,10 +747,16 @@ extraction:
   max_extracted_size_mb: 50       # Absolute cap per file
   max_ratio: 10                   # Max 10x inflation (1MB input → 10MB max output)
   timeout_seconds: 30             # Kill extraction if takes too long
-  lock_file: /var/run/joi-extract.lock
+  lock_file: /run/joi/extract.lock  # In /run (tmpfs) - auto-cleared on reboot
   max_concurrent: 3               # Max 3 concurrent extractions (150MB worst case)
   queue_max: 5                    # Max pending extractions before rejecting
+  max_memory_mb: 256              # Per-extraction memory limit (OOM protection)
 ```
+
+> **Lock file in /run (tmpfs):** The lock file is in `/run/joi/` which is tmpfs on
+> modern Linux (cleared on reboot). This prevents stale locks after crash/reboot.
+> Create directory at boot: `mkdir -p /run/joi && chown joi:joi /run/joi`
+> Add to systemd: `RuntimeDirectory=joi` in joi.service
 
 > **Tmpfs Sizing Rationale:**
 >
@@ -737,9 +794,13 @@ cleanup:
 ```bash
 #!/bin/bash
 EXTRACT_DIR="/var/lib/joi/extract"
-LOCK_FILE="/var/run/joi-extract.lock"
+LOCK_FILE="/run/joi/extract.lock"
 MAX_AGE_HOURS=24
 EMERGENCY_THRESHOLD=80
+
+# Ensure lock directory exists (should be created by systemd, but be safe)
+mkdir -p /run/joi
+chown joi:joi /run/joi
 
 # Acquire EXCLUSIVE lock - blocks all extractions during cleanup
 exec 200>"$LOCK_FILE"
@@ -774,21 +835,32 @@ echo "Cleanup complete"
 0 3 * * * /usr/local/bin/joi-extract-cleanup >> /var/log/joi/extract-cleanup.log 2>&1
 ```
 
-**Extraction with Lock, Timeout, and Concurrency Limit:**
+**Extraction with Lock, Timeout, Memory Limit, and Concurrency Limit:**
 ```python
 import fcntl
 import subprocess
 import threading
+import resource
+import os
+import signal
 
-LOCK_FILE = "/var/run/joi-extract.lock"
+LOCK_FILE = "/run/joi/extract.lock"  # In tmpfs - auto-cleared on reboot
 TIMEOUT_SECONDS = 30
 MAX_CONCURRENT = 3
+MAX_MEMORY_BYTES = 256 * 1024 * 1024  # 256MB
 
 # Semaphore limits concurrent extractions
 _extraction_semaphore = threading.Semaphore(MAX_CONCURRENT)
 
+def _set_resource_limits():
+    """Set memory limit for subprocess (called in child after fork)."""
+    # Limit virtual memory to prevent OOM
+    resource.setrlimit(resource.RLIMIT_AS, (MAX_MEMORY_BYTES, MAX_MEMORY_BYTES))
+    # Limit CPU time as backup to timeout
+    resource.setrlimit(resource.RLIMIT_CPU, (TIMEOUT_SECONDS + 5, TIMEOUT_SECONDS + 10))
+
 def extract_file(input_path: str, output_dir: str) -> str:
-    """Extract file with concurrency limit, lock coordination, and timeout."""
+    """Extract file with concurrency limit, lock coordination, memory limit, and timeout."""
 
     # 1. Check concurrency limit (non-blocking)
     if not _extraction_semaphore.acquire(blocking=False):
@@ -806,16 +878,26 @@ def extract_file(input_path: str, output_dir: str) -> str:
             if get_tmpfs_usage_percent() > 95:
                 raise ExtractionError("Extraction space full, try again later")
 
-            # 4. Run extraction with timeout
+            # 4. Run extraction with timeout, memory limit, and process group
             # Note: PDF disabled in PoC - this handles .txt, .csv, .json, .md only
+            process = None
             try:
-                result = subprocess.run(
+                process = subprocess.Popen(
                     ["cat", input_path],  # Simple passthrough for text files
-                    capture_output=True,
-                    timeout=TIMEOUT_SECONDS
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    preexec_fn=_set_resource_limits,
+                    start_new_session=True  # New process group for clean kill
                 )
-                return result.stdout.decode()
+                stdout, stderr = process.communicate(timeout=TIMEOUT_SECONDS)
+                if process.returncode != 0:
+                    raise ExtractionError(f"Extraction failed: {stderr.decode()[:200]}")
+                return stdout.decode()
             except subprocess.TimeoutExpired:
+                # Kill entire process group (catches any child processes)
+                if process:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                    process.wait()  # Reap zombie
                 raise ExtractionError("Extraction timed out, file too complex")
 
             # Lock auto-released when 'with' block exits
@@ -836,6 +918,10 @@ def extract_file(input_path: str, output_dir: str) -> str:
 - Leftover files: daily cleanup + emergency cleanup
 - Tmpfs exhaustion: max 3 concurrent extractions (150MB worst case vs 512MB tmpfs)
 - PDF exploits: PDF disabled until sandboxing implemented
+- Stale locks after crash: lock file in /run (tmpfs), auto-cleared on reboot
+- OOM from extraction: 256MB memory limit per extraction subprocess
+- Zombie processes: process group kill on timeout catches all children
+- Session data persistence: session uploads in tmpfs, cleared on reset/reboot
 
 **Limit Notifications:**
 
@@ -1586,9 +1672,12 @@ for dir in /var/lib/joi/knowledge/owner/private \
     fi
 done
 
-# 5. Verify umask in service file
+# 5. Verify umask and RuntimeDirectory in service file
 if ! grep -q "UMask=0027" /etc/systemd/system/joi.service; then
     echo "WARNING: joi.service missing UMask=0027"
+fi
+if ! grep -q "RuntimeDirectory=joi" /etc/systemd/system/joi.service; then
+    echo "WARNING: joi.service missing RuntimeDirectory=joi (needed for lock files)"
 fi
 
 # 6. Check group memberships match recipients.yaml
@@ -1774,6 +1863,101 @@ During each 30-second health check (joi-challenger), joi also verifies mesh has 
 7. If push fails: joi retries on next heartbeat (max 30s delay)
 ```
 
+### Config Authoritative Sources
+
+> **Single source of truth for each config file:**
+
+| Config File | Authoritative Source | Sync Direction | Notes |
+|-------------|---------------------|----------------|-------|
+| `identities.yaml` | **joi** | joi → mesh | User identities, pushed on change |
+| `recipients.yaml` | joi only | N/A | Per-user limits, joi-local |
+| `channel_users.yaml` | joi only | N/A | Channel mapping, joi-local |
+| `limits.yaml` | **mesh** | mesh-local | Message limits, mesh-local |
+| `uploads.yaml` | **mesh** | mesh-local | Upload security, mesh-local |
+| `mesh-baseline.yaml` | joi only | N/A | Known-good hashes, immutable |
+| `policy.yaml` | joi only | N/A | Content policy, joi-local |
+| `extraction.yaml` | joi only | N/A | Extraction limits, joi-local |
+
+**Mesh-local configs (`limits.yaml`, `uploads.yaml`):**
+These are security enforcement configs that live only on mesh. Joi doesn't manage them.
+If these need updating, admin SSHs to mesh and edits directly. These rarely change.
+
+**Why not push all config from joi?**
+Mesh security configs (`uploads.yaml`, `limits.yaml`) are enforcement boundaries. They should
+be conservative defaults that rarely change. Pushing from joi would mean a compromised joi
+could weaken mesh security. Mesh-local = mesh enforces even if joi is compromised.
+
+### Config Rollback Mechanism
+
+Bad config can break mesh. Mesh implements automatic rollback on failure.
+
+**Mesh Config Apply with Rollback:**
+```bash
+# /usr/local/bin/mesh-apply-config
+#!/bin/bash
+set -e
+
+CONFIG_DIR="/etc/mesh-proxy"
+BACKUP_DIR="/var/lib/mesh-proxy/config-backup"
+NEW_CONFIG="$1"
+CONFIG_NAME=$(basename "$NEW_CONFIG")
+
+# 1. Backup current config
+mkdir -p "$BACKUP_DIR"
+BACKUP_FILE="$BACKUP_DIR/${CONFIG_NAME}.$(date +%Y%m%d_%H%M%S)"
+cp "$CONFIG_DIR/$CONFIG_NAME" "$BACKUP_FILE" 2>/dev/null || true
+
+# 2. Apply new config
+cp "$NEW_CONFIG" "$CONFIG_DIR/$CONFIG_NAME"
+
+# 3. Validate config (syntax check)
+if ! mesh-proxy --validate-config "$CONFIG_DIR/$CONFIG_NAME"; then
+    echo "ERROR: Config validation failed, rolling back"
+    cp "$BACKUP_FILE" "$CONFIG_DIR/$CONFIG_NAME"
+    exit 1
+fi
+
+# 4. Reload service
+if ! systemctl reload mesh-proxy; then
+    echo "ERROR: Service reload failed, rolling back"
+    cp "$BACKUP_FILE" "$CONFIG_DIR/$CONFIG_NAME"
+    systemctl restart mesh-proxy
+    exit 1
+fi
+
+# 5. Health check (give service 5s to stabilize)
+sleep 5
+if ! curl -sf http://localhost:8444/health > /dev/null; then
+    echo "ERROR: Health check failed, rolling back"
+    cp "$BACKUP_FILE" "$CONFIG_DIR/$CONFIG_NAME"
+    systemctl restart mesh-proxy
+    exit 1
+fi
+
+echo "Config applied successfully"
+
+# 6. Keep only last 10 backups
+ls -t "$BACKUP_DIR/${CONFIG_NAME}."* 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
+```
+
+**Rollback Triggers:**
+| Failure | Action |
+|---------|--------|
+| YAML syntax error | Immediate rollback, don't reload |
+| Service reload fails | Rollback + restart service |
+| Health check fails (5s) | Rollback + restart service |
+| Joi push rejected | Mesh keeps old config, logs error |
+
+**Manual Rollback:**
+```bash
+# List available backups
+ls -la /var/lib/mesh-proxy/config-backup/
+
+# Restore specific backup
+cp /var/lib/mesh-proxy/config-backup/identities.yaml.20240101_120000 /etc/mesh-proxy/identities.yaml
+systemctl reload mesh-proxy
+```
+
 ### Audit Logging
 
 All security-relevant actions are logged.
@@ -1866,6 +2050,8 @@ The SQLCipher database key is managed as follows:
 EnvironmentFile=/etc/joi/secrets/env
 ExecStart=/opt/joi/bin/joi-agent
 User=joi
+RuntimeDirectory=joi              # Creates /run/joi, owned by joi:joi
+RuntimeDirectoryMode=0750         # Lock files go here (tmpfs, cleared on reboot)
 ```
 
 ```bash
