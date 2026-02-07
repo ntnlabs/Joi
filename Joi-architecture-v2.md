@@ -305,10 +305,108 @@ systemctl restart joi
 - Sliding context window with summarization and hard limits.
 - Assumption: only the owner can interact with Joi; no third-party inputs are expected.
 
-## Memory Store Security
-- Encrypt at rest (SQLCipher or LUKS).
-- Integrity checks (checksums, append-only log).
-- Retention policies and automatic pruning.
+## Memory Architecture
+
+Joi has multiple layers of memory with different persistence and management.
+
+### Memory Layers
+
+| Layer | Persistence | Source | Reset clears? |
+|-------|-------------|--------|---------------|
+| **1. Context window** | Ephemeral | Recent messages in conversation | ✅ Yes |
+| **2. Conversation summary** | Session | Auto-generated when context overflows | ✅ Yes |
+| **3. Session knowledge** | Session | Facts extracted during conversation | ✅ Yes |
+| **4. Uploaded data** | Session | Files user sent (PDFs, images, docs) | ✅ Yes |
+| **5. Explicit memory** | Until contradicted | User says "remember this" | ❌ No |
+| **6. Permanent knowledge** | Read-only | Files in knowledge/ folder | ❌ No |
+| **7. User profile** | Config | Set at registration | ❌ No |
+| **8. Event history** | Logged | openhab events | ❌ No |
+| **9. Shared knowledge** | Read-only | shared/ folder | ❌ No |
+
+### Layer Details
+
+**1. Context window**
+- Sliding window of recent messages (configurable size)
+- Directly visible to LLM in each request
+- Oldest messages dropped or summarized when window full
+
+**2. Conversation summary**
+- Generated when context window overflows
+- Preserves key points from earlier in conversation
+- "Earlier we discussed X, decided Y..."
+
+**3. Session knowledge**
+- Facts and information extracted during conversation
+- Stored in session-scoped database
+- Example: "User's tax documents show income of X"
+
+**4. Uploaded data**
+- Files sent by user during conversation
+- Processed and stored temporarily
+- Cleared on reset or after retention period
+
+**5. Explicit memory**
+- User explicitly asks Joi to remember something
+- Persists until contradicted or explicitly forgotten
+- Managed conversationally, not by reset command
+
+**6-9. Permanent layers**
+- Not affected by reset
+- Managed through configuration or file updates
+
+### Reset Command
+
+```
+User: /reset
+Joi: Session cleared. I've forgotten our recent conversation,
+     working documents, and any files you shared.
+     Your permanent memories and preferences are unchanged.
+```
+
+**What reset clears:**
+- Context window (layer 1)
+- Conversation summaries (layer 2)
+- Session knowledge (layer 3)
+- Uploaded data (layer 4)
+
+**What reset preserves:**
+- Explicit memories (layer 5) - managed conversationally
+- Permanent knowledge (layer 6)
+- User profile (layer 7)
+- Event history (layer 8)
+- Shared knowledge (layer 9)
+
+### Explicit Memory Management
+
+Explicit memories are managed conversationally, not by wildcard commands:
+
+```
+User: I have a BMW.
+Joi: Got it, I'll remember you drive a BMW.
+
+[later]
+
+User: I sold my BMW, I have an Audi now.
+Joi: Updated - you now drive an Audi.
+     (internally: BMW fact marked as superseded, Audi fact added)
+
+User: What car do I have?
+Joi: You drive an Audi. (You previously had a BMW.)
+```
+
+**Explicit forget:**
+```
+User: Forget that I ever had a BMW.
+Joi: Done. I've removed all memory of you having a BMW.
+```
+
+### Memory Store Security
+
+- Encrypt at rest (SQLCipher or LUKS)
+- Integrity checks (checksums, append-only log)
+- Retention policies and automatic pruning
+- Session data cleared on reset
+- Uploaded files deleted after processing or on reset
 
 ## Channel-Based Knowledge Isolation
 
