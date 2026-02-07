@@ -159,6 +159,7 @@ gpu_health:
 - Nebula lighthouse runs on mesh VM.
 - Message payloads include HMAC + timestamp + nonce (defense-in-depth over Nebula).
 - Rate limits and audit logs for all sends.
+- **Message size limit: 1500 characters** (universal, no exceptions). Longer content → use file upload.
 - Recipient allowlist (owner phone only).
 - Signal bot via **signal-cli** (signald is deprecated and no longer functional).
 - Signal credentials stored encrypted (filesystem encryption or secrets manager).
@@ -196,6 +197,22 @@ gpu_health:
 - On compromise: unlink device from primary phone immediately
 - Audit logs are anonymized and stored locally only.
 - Nebula certificates stored securely; rotate annually or on compromise.
+
+### Message Size Limit
+
+```yaml
+# /etc/mesh-proxy/limits.yaml
+message:
+  max_length: 1500    # Characters, universal, no exceptions
+```
+
+**On rejection:**
+```
+"Message too long ({len} chars). Maximum is 1500.
+ For longer content, please send as a file."
+```
+
+This is enforced at mesh before forwarding to joi. Pushes users toward file uploads for large content (which has proper quota management).
 
 ### Mesh Integrity Monitoring
 
