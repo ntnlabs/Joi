@@ -910,12 +910,22 @@ def enforce_agent_action(action: str, context: dict) -> PolicyResult:
         if is_rate_limited('agent.llm_calls_per_hour'):
             return PolicyResult.DENY("LLM rate limited", log_level="WARN")
 
-    # 2. Proactive message limit
+    # 2. Proactive message - check behavior mode first
     if action == 'proactive_message':
+        # In assistant mode, proactive messages are completely disabled
+        if get_behavior_mode() == 'assistant':
+            return PolicyResult.DENY("Proactive disabled in assistant mode", log_level="DEBUG")
+
+        # In companion mode, check rate limit
         if is_rate_limited('agent.proactive_per_day'):
             return PolicyResult.DENY("Proactive limit reached", log_level="INFO")
 
-    # 3. openhab write attempt (should never happen - legacy check)
+    # 3. Impulse check - only in companion mode
+    if action == 'impulse_check':
+        if get_behavior_mode() == 'assistant':
+            return PolicyResult.DENY("Impulse system disabled in assistant mode", log_level="DEBUG")
+
+    # 4. openhab write attempt (should never happen - legacy check)
     if action == 'openhab_write':
         log_security_event("CRITICAL", "Attempted openhab write blocked")
         return PolicyResult.DENY("openhab is read-only", log_level="CRITICAL")
@@ -1210,7 +1220,13 @@ rate_limits:
 
   agent:
     llm_calls_per_hour: 120
-    proactive_per_day: 20
+    proactive_per_day: 20         # companion mode only
+
+# Behavior mode (see agent-loop-design.md for full details)
+behavior:
+  mode: "companion"               # "companion" or "assistant"
+  # companion: Full "Wind" behavior - proactive, organic engagement
+  # assistant: Request-response only - no proactive, no impulse system
 
 content:
   input:

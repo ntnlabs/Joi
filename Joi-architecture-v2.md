@@ -71,6 +71,7 @@ Before enabling Slovak mode, the model must pass these tests:
 ### 1) Joi Core (Proxmox VM, offline)
 - **LLM Runtime:** Ollama with OpenAI-compatible API (GPU accelerated via RTX 3060 passthrough).
 - Always-on agent loop (context-driven behavior).
+- **Behavior Mode:** Configurable between `companion` (proactive, organic engagement) and `assistant` (request-response only). See `agent-loop-design.md`.
 - Local memory store (short-term + long-term).
 - Policy engine enforcing read-only rules and outbound restrictions.
 - Circuit breaker for agent actions and outbound messaging.

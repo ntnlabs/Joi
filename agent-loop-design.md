@@ -1,12 +1,68 @@
 # Joi Agent Loop Architecture
 
 > Design for Joi's "brain" - how she perceives, thinks, and engages.
-> Version: 1.0 (Draft)
-> Last updated: 2026-02-04
+> Version: 1.1 (Draft)
+> Last updated: 2026-02-08
+
+## Behavior Modes
+
+Joi supports two behavior modes, controlled by a single configuration flag:
+
+```yaml
+behavior:
+  mode: "companion"   # "companion" or "assistant"
+```
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **companion** | Full "Wind" behavior - proactive, organic, living presence | Personal use |
+| **assistant** | Request-response only - no proactive engagement | Professional/enterprise |
+
+### Mode Comparison
+
+| Feature | companion | assistant |
+|---------|-----------|-----------|
+| Responds to user messages | Yes | Yes |
+| Critical alerts (smoke, security) | Yes | Yes |
+| Impulse system (periodic checks) | Yes | **No** |
+| Proactive messages | Yes | **No** |
+| "Things worth mentioning" queue | Yes | **No** |
+| Context awareness (home state) | Yes | Yes |
+| Time/quiet hours awareness | Yes | **No** (always available) |
+| Personality in responses | Yes | Yes (but more professional) |
+
+### Switching Modes
+
+Mode can be changed at runtime via:
+1. Configuration file reload
+2. Owner command: "Joi, switch to assistant mode"
+3. API call (for programmatic control)
+
+```python
+# Runtime mode check
+def should_run_impulse_check():
+    return config.behavior.mode == "companion"
+
+def should_queue_proactive_topic(event):
+    if config.behavior.mode == "assistant":
+        return False  # Never queue proactive topics
+    return is_significant_event(event)
+```
+
+### Why Support Both?
+
+- **Personal deployment**: Full companion experience with organic engagement
+- **Professional deployment**: Predictable, on-demand assistant behavior
+- **Development/testing**: Assistant mode for deterministic testing
+- **Gradual rollout**: Start with assistant mode, enable companion later
+
+---
 
 ## Design Philosophy
 
 Joi is not a notification system. She is a companion with her own presence and rhythm.
+
+> **Note:** This philosophy applies to **companion mode**. In **assistant mode**, Joi is a responsive assistant only.
 
 **The Wind Metaphor**: Like wind, Joi's engagement pattern should feel natural and somewhat unpredictable. There's underlying logic (context, time, accumulated thoughts), but to the user it feels organic - sometimes she's chatty for days, sometimes quiet for a week.
 
@@ -20,6 +76,8 @@ Joi is not a notification system. She is a companion with her own presence and r
 ---
 
 ## State Machine
+
+### Companion Mode (Full)
 
 ```
                     ┌─────────────────────────────────────┐
@@ -62,6 +120,47 @@ Joi is not a notification system. She is a companion with her own presence and r
             │   RESPOND   │                              │
             │ (send msg)  │──────────────────────────────┘
             └─────────────┘
+```
+
+### Assistant Mode (Simplified)
+
+In assistant mode, the IMPULSE_CHECK state is disabled. Only user messages and critical events trigger responses.
+
+```
+                    ┌──────────────────────────┐
+                    │                          │
+                    ▼                          │
+              ┌──────────┐                     │
+              │  IDLE    │◄────────────┐       │
+              │ (aware)  │             │       │
+              └────┬─────┘             │       │
+                   │                   │       │
+     ┌─────────────┴─────────────┐     │       │
+     │                           │     │       │
+     ▼                           ▼     │       │
+┌─────────┐                ┌──────────┐│       │
+│ MESSAGE │                │ CRITICAL ││       │
+│RECEIVED │                │  ALERT   ││       │
+└────┬────┘                └────┬─────┘│       │
+     │                          │      │       │
+     ▼                          ▼      │       │
+┌───────────────────────────────────┐  │       │
+│         CONTEXT ASSEMBLY          │  │       │
+└───────────────┬───────────────────┘  │       │
+                │                      │       │
+                ▼                      │       │
+┌───────────────────────────────────┐  │       │
+│           PROCESSING              │  │       │
+└───────────────┬───────────────────┘  │       │
+                │                      │       │
+                ▼                      │       │
+          ┌─────────────┐              │       │
+          │   RESPOND   │──────────────┘       │
+          └─────────────┘                      │
+                                               │
+    [No IMPULSE_CHECK]                         │
+    [No proactive messages]                    │
+    [Events update context only] ──────────────┘
 ```
 
 ### States Explained
@@ -534,37 +633,117 @@ allow_llm_escalation: true
 ```yaml
 # agent-config.yaml
 
+# ============================================================
+# BEHAVIOR MODE - Master switch for companion vs assistant
+# ============================================================
+behavior:
+  mode: "companion"              # "companion" or "assistant"
+  #
+  # companion: Full "Wind" behavior
+  #   - Proactive messages, impulse checks, organic engagement
+  #   - Quiet hours respected, natural rhythm
+  #   - Best for personal use
+  #
+  # assistant: Request-response only
+  #   - Only responds to user messages and critical alerts
+  #   - No proactive outreach, no impulse system
+  #   - Always available (no quiet hours for non-critical)
+  #   - Best for professional/enterprise deployment
+
+# ============================================================
+# IMPULSE SYSTEM (companion mode only)
+# ============================================================
 impulse:
+  enabled: true                  # Redundant if mode=assistant (ignored)
   base: 0.05
   threshold: 0.5
-  check_interval_minutes: 12.5  # PoC tunable: 10-15 min range
+  check_interval_minutes: 12.5   # PoC tunable: 10-15 min range
   check_jitter_minutes: 2.5
-  critical_alert_boost: 0.5     # Instant boost, bypasses quiet hours
+  critical_alert_boost: 0.5      # Instant boost, bypasses quiet hours
 
 silence:
   thresholds_hours: [2, 6, 12, 24]
   factors: [0.0, 0.1, 0.2, 0.3, 0.4]
 
+# ============================================================
+# TIME AWARENESS (companion mode only for proactive)
+# ============================================================
 time_awareness:
   sleep_hours: [23, 7]
   weekend_morning_gentle_until: 10
+  # Note: In assistant mode, quiet hours don't apply
+  #       (user explicitly requested, so they're awake)
 
+# ============================================================
+# RATE LIMITS (both modes)
+# ============================================================
 rate_limits:
   direct_channel:
     max_per_hour: 60
-    proactive_suppress_at: 50
-    proactive_block_at: 55
+    proactive_suppress_at: 50    # companion mode only
+    proactive_block_at: 55       # companion mode only
   critical_channel:
-    max_per_hour: null  # No limit - safety first
+    max_per_hour: null           # No limit - safety first
 
+# ============================================================
+# CONTEXT (both modes)
+# ============================================================
 context:
   recent_messages_count: 10
   recent_events_hours: 24
-  things_worth_mentioning_max: 10
+  things_worth_mentioning_max: 10  # companion mode only
 
+# ============================================================
+# LLM (both modes)
+# ============================================================
 llm:
   timeout_seconds: 30
   max_response_tokens: 500
+```
+
+### Mode-Specific Behavior
+
+```python
+# agent_loop.py
+
+class AgentLoop:
+    def __init__(self, config):
+        self.config = config
+        self.mode = config.behavior.mode  # "companion" or "assistant"
+
+    def start(self):
+        # Always start event listener (context awareness)
+        self.start_event_listener()
+
+        # Only start impulse timer in companion mode
+        if self.mode == "companion":
+            self.start_impulse_timer()
+
+    def on_event_received(self, event):
+        # Always update context (both modes)
+        self.update_context(event)
+
+        # Critical alerts: always process (both modes)
+        if event.is_critical():
+            self.process_critical_alert(event)
+            return
+
+        # Significant events: only queue in companion mode
+        if self.mode == "companion" and self.is_significant(event):
+            self.queue_topic(event)
+
+    def on_impulse_check(self):
+        # Should never be called in assistant mode
+        if self.mode != "companion":
+            return
+
+        score = self.calculate_impulse_score()
+        if score >= self.config.impulse.threshold:
+            self.initiate_proactive_contact()
+
+    def on_message_received(self, message):
+        # Always respond to user messages (both modes)
+        self.process_and_respond(message)
 ```
 
 ---
