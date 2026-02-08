@@ -1,20 +1,58 @@
 # Joi Policy Engine
 
 > Central security enforcement for all Joi actions.
-> Version: 1.0 (Draft)
-> Last updated: 2026-02-04
+> Version: 1.1 (Draft)
+> Last updated: 2026-02-08
 
 ## Overview
 
-The Policy Engine is the **gatekeeper** for all Joi actions. Every input and output passes through it. If a rule is violated, the action is blocked.
+The Policy Engine is part of the **Protection Layer** - the gatekeeper for all Joi actions. Every input and output passes through it. If a rule is violated, the action is blocked.
+
+### Two-Layer Architecture
+
+Joi operates with two distinct control layers:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     PROTECTION LAYER                            │
+│           (raw automation, LLM has NO control)                  │
+│                                                                 │
+│  Components:                                                    │
+│  • Policy Engine (this document)                                │
+│  • Rate limiters, circuit breakers                              │
+│  • Input/output validation                                      │
+│  • Watchdogs, emergency stop                                    │
+│                                                                 │
+│  Key property: LLM cannot bypass or influence these controls.   │
+│  They protect the ecosystem even if LLM is compromised.         │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      LLM AGENT LAYER                            │
+│              (trusted for decisions within bounds)              │
+│                                                                 │
+│  Responsibilities:                                              │
+│  • Decide what to read/write via System Channel                 │
+│  • Decide what/when to notify owner                             │
+│  • All intentional writes go through LLM                        │
+│                                                                 │
+│  Key property: Operates freely within Protection Layer bounds.  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+> **See also:** `system-channel.md` for full System Channel specification.
+
+### Policy Engine Flow
 
 ```
                     ┌─────────────────────────┐
-   Signal ─────────►│                         │─────────► Agent Loop
-   openhab ────────►│     POLICY ENGINE       │
+   Interactive ────►│                         │─────────► Agent Loop
+   (Signal)         │     POLICY ENGINE       │
                     │                         │◄───────── Agent Loop
-   Signal ◄─────────│    (rules + logging)    │
-                    └─────────────────────────┘
+   System ─────────►│    (rules + logging)    │
+   Channel          │                         │─────────► System Channel
+                    └─────────────────────────┘           (writes)
 ```
 
 ## Design Principles
@@ -358,11 +396,70 @@ channels:
     - reminders
 ```
 
-### 5. openhab Rules (Read-Only Enforcement)
+### 5. System Channel Rules
+
+The System Channel provides a unified interface for all machine-to-machine communication.
+Each source has an access mode: `read`, `write`, or `read-write`.
+
+> **Full specification:** See `system-channel.md`
+
+```yaml
+system_channel:
+  sources:
+    # Read-only: openhab (legacy, same as before)
+    openhab:
+      mode: read
+      nebula_name: "openhab"
+      inbound:
+        event_types: [presence, sensors, weather, alert, state]
+        rate_limit: 240/hr
+      # No outbound - read-only source
+
+    # Read-write: Zabbix monitoring
+    zabbix:
+      mode: read-write
+      nebula_name: "zabbix"
+      inbound:
+        event_types: [problem, resolved, info]
+        rate_limit: 120/hr
+      outbound:
+        actions: [acknowledge, close, add_comment]
+        rate_limit: 60/hr
+
+    # Write-only: actuator commands
+    actuator:
+      mode: write
+      nebula_name: "actuator-bridge"
+      outbound:
+        actions: [set_state, trigger]
+        rate_limit: 30/hr
+
+  # Global outbound limits (Protection Layer)
+  global_limits:
+    total_writes_per_hour: 120
+    writes_per_minute: 10
+
+  # Write control (Protection Layer enforces, LLM cannot override)
+  write_control:
+    require_llm_decision: true          # All writes must come from LLM
+    require_owner_approval: false       # Writes are trusted within bounds
+    log_all_writes: true                # Audit trail
+
+  # Blocked patterns in write parameters
+  blocked_write_patterns:
+    - pattern: "*password*"
+    - pattern: "*secret*"
+    - pattern: "*credential*"
+```
+
+### 5.1 Legacy openhab Rules
+
+> **Note:** openhab-specific rules are being migrated to System Channel.
+> These rules remain for backwards compatibility.
 
 ```yaml
 openhab:
-  # Joi can NEVER write to openhab
+  # Joi can NEVER write to openhab (enforced by mode: read in system_channel)
   mode: read_only
 
   # Allowed data sources
@@ -818,11 +915,110 @@ def enforce_agent_action(action: str, context: dict) -> PolicyResult:
         if is_rate_limited('agent.proactive_per_day'):
             return PolicyResult.DENY("Proactive limit reached", log_level="INFO")
 
-    # 3. openhab write attempt (should never happen)
+    # 3. openhab write attempt (should never happen - legacy check)
     if action == 'openhab_write':
         log_security_event("CRITICAL", "Attempted openhab write blocked")
         return PolicyResult.DENY("openhab is read-only", log_level="CRITICAL")
 
+    return PolicyResult.ALLOW()
+```
+
+### System Channel Inbound (Any Source → Joi)
+
+```python
+def enforce_system_inbound(event: dict) -> PolicyResult:
+    """
+    Enforce policy on incoming System Channel event.
+    This is part of the PROTECTION LAYER - LLM cannot influence these checks.
+    """
+    source = event.get('source')
+
+    # 1. Source must be registered
+    if source not in get_registered_sources():
+        return PolicyResult.DENY("Unknown source", log_level="WARN")
+
+    source_config = get_source_config(source)
+
+    # 2. Verify Nebula identity matches config
+    if not verify_nebula_identity(source_config['nebula_name']):
+        return PolicyResult.DENY("Nebula identity mismatch", log_level="WARN")
+
+    # 3. Source must allow reads (mode: read or read-write)
+    if source_config['mode'] not in ['read', 'read-write']:
+        return PolicyResult.DENY("Source is write-only", log_level="INFO")
+
+    # 4. Event type must be allowed for this source
+    allowed_types = source_config['inbound']['event_types']
+    if event['event_type'] not in allowed_types:
+        return PolicyResult.DENY("Event type not allowed", log_level="INFO")
+
+    # 5. Rate limit per source
+    if is_rate_limited(f"system.inbound.{source}"):
+        return PolicyResult.DENY("Rate limited", log_level="INFO")
+
+    # 6. Deduplication
+    if is_duplicate_event(event['event_id']):
+        return PolicyResult.DENY("Duplicate event", log_level="DEBUG")
+
+    # 7. Timestamp validation
+    if not is_timestamp_valid(event['timestamp']):
+        return PolicyResult.DENY("Timestamp out of range", log_level="INFO")
+
+    log_policy_decision("system_inbound", "ALLOW", source=source, event_type=event['event_type'])
+    return PolicyResult.ALLOW()
+```
+
+### System Channel Outbound (Joi → Any Source)
+
+```python
+def enforce_system_outbound(action: dict) -> PolicyResult:
+    """
+    Enforce policy on outgoing System Channel action.
+    This is part of the PROTECTION LAYER - LLM cannot bypass these checks.
+
+    IMPORTANT: All writes are LLM-gated (LLM must decide to perform the action),
+    but the Protection Layer enforces hard limits that LLM cannot override.
+    """
+    source = action.get('source')
+
+    # 1. Source must be registered
+    if source not in get_registered_sources():
+        return PolicyResult.DENY("Unknown target source", log_level="WARN")
+
+    source_config = get_source_config(source)
+
+    # 2. Source must allow writes (mode: write or read-write)
+    if source_config['mode'] not in ['write', 'read-write']:
+        log_security_event("WARN", f"Write attempt to read-only source: {source}")
+        return PolicyResult.DENY("Source is read-only", log_level="WARN")
+
+    # 3. Action must be in allowed list for this source
+    allowed_actions = source_config['outbound']['actions']
+    if action['action'] not in allowed_actions:
+        return PolicyResult.DENY("Action not allowed", log_level="WARN")
+
+    # 4. Per-source rate limit
+    if is_rate_limited(f"system.outbound.{source}"):
+        return PolicyResult.DENY("Source rate limited", log_level="INFO")
+
+    # 5. Global write rate limit (Protection Layer hard cap)
+    if is_rate_limited("system.outbound.global"):
+        return PolicyResult.DENY("Global write limit exceeded", log_level="WARN")
+
+    # 6. Verify this came from LLM decision (no automated writes)
+    triggered_by = action.get('context', {}).get('triggered_by')
+    if triggered_by != 'llm_decision':
+        log_security_event("CRITICAL", f"Non-LLM write attempt: {triggered_by}")
+        return PolicyResult.DENY("Only LLM-initiated writes allowed", log_level="CRITICAL")
+
+    # 7. Check for blocked patterns in parameters
+    params_str = json.dumps(action.get('parameters', {})).lower()
+    for pattern in POLICY['system_channel.blocked_write_patterns']:
+        if fnmatch.fnmatch(params_str, pattern['pattern']):
+            return PolicyResult.DENY(f"Blocked pattern in write: {pattern['pattern']}", log_level="WARN")
+
+    log_policy_decision("system_outbound", "ALLOW",
+                        source=source, action=action['action'])
     return PolicyResult.ALLOW()
 ```
 
@@ -1115,12 +1311,23 @@ alerts:
 
 ### Where Policy Engine Is Called
 
+The Policy Engine is part of the **Protection Layer** and runs independently of the LLM.
+
 ```
+INTERACTIVE CHANNEL:
 1. mesh receives Signal → PolicyEngine.enforce_inbound_signal() → Agent
-2. openhab sends event → PolicyEngine.enforce_inbound_openhab() → Agent
-3. Agent wants to respond → PolicyEngine.enforce_outbound_signal() → mesh
-4. Agent wants to call LLM → PolicyEngine.enforce_agent_action('llm_call') → Ollama
-5. Impulse triggers proactive → PolicyEngine.enforce_agent_action('proactive_message') → ...
+2. Agent wants to respond → PolicyEngine.enforce_outbound_signal() → mesh
+
+SYSTEM CHANNEL:
+3. Any source sends event → PolicyEngine.enforce_system_inbound() → Agent
+4. Agent wants to write → PolicyEngine.enforce_system_outbound() → Target system
+
+AGENT ACTIONS:
+5. Agent wants to call LLM → PolicyEngine.enforce_agent_action('llm_call') → Ollama
+6. Impulse triggers proactive → PolicyEngine.enforce_agent_action('proactive_message') → ...
+
+LEGACY (deprecated, routes to System Channel):
+7. openhab sends event → PolicyEngine.enforce_inbound_openhab() → Agent
 ```
 
 ### API for Agent
@@ -1132,18 +1339,31 @@ class PolicyEngine:
         self.rate_limiter = RateLimiter()
         self.logger = PolicyLogger()
 
+    # Interactive Channel
     def check_inbound_signal(self, message: dict) -> PolicyResult:
         ...
 
+    def check_outbound_signal(self, message: dict) -> PolicyResult:
+        ...
+
+    # System Channel
+    def check_system_inbound(self, event: dict) -> PolicyResult:
+        """Check incoming event from any registered source."""
+        ...
+
+    def check_system_outbound(self, action: dict) -> PolicyResult:
+        """Check outgoing action to any registered source."""
+        ...
+
+    # Legacy (routes to check_system_inbound)
     def check_inbound_openhab(self, event: dict) -> PolicyResult:
         ...
 
-    def check_outbound(self, message: dict) -> PolicyResult:
-        ...
-
+    # Agent actions
     def check_action(self, action: str, context: dict) -> PolicyResult:
         ...
 
+    # Monitoring
     def get_rate_limit_status(self) -> dict:
         """Get current rate limit status for monitoring."""
         ...
@@ -1157,6 +1377,15 @@ class PolicyEngine:
 
 ## Summary
 
+### Architecture
+
+| Layer | Role | LLM Control |
+|-------|------|-------------|
+| **Protection Layer** | Guards ecosystem (rate limits, circuit breakers, validation) | None - LLM cannot bypass |
+| **LLM Agent Layer** | Makes decisions (reads, writes, notifications) | Full - trusted within bounds |
+
+### Interactive Channel (Signal)
+
 | What | Rule | Enforcement |
 |------|------|-------------|
 | Who can message Joi | Owner (canonical ID) | `identity.allowed_senders` |
@@ -1167,5 +1396,24 @@ class PolicyEngine:
 | What content allowed | No URLs, no code, max 2KB | `content.output` |
 | What goes to critical | Fire, storm, security, etc. | `channels.critical_triggers` |
 | Quiet hours | 23:00-07:00, weekends 09:00 | `time_rules.quiet_hours` |
+
+### System Channel
+
+| What | Rule | Enforcement |
+|------|------|-------------|
+| Registered sources | openhab, zabbix, actuator, calendar | `system_channel.sources` |
+| Source access modes | read, write, read-write | `system_channel.sources.*.mode` |
+| Write control | LLM-gated (all writes require LLM decision) | `triggered_by: llm_decision` |
+| Owner approval | Not required (writes trusted within bounds) | - |
+| Per-source rate limit | Configurable per source | `system_channel.sources.*.rate_limit` |
+| Global write limit | 120/hr across all sources | `system_channel.global_limits` |
+| Blocked patterns | No passwords, secrets, credentials | `system_channel.blocked_write_patterns` |
+
+### Legacy (openhab)
+
+| What | Rule | Enforcement |
+|------|------|-------------|
 | openhab mode | Read-only always | `openhab.mode: read_only` |
 | IoT flood protection | Dedup, 3 alerts max, flapping detect | `iot_events` |
+
+> **Note:** openhab is migrating to System Channel with `mode: read`.

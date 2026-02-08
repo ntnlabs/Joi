@@ -1,17 +1,62 @@
 # Joi API Contracts
 
-> API specification for communication between mesh, joi, and openhab.
-> Version: 1.0 (Draft)
-> Last updated: 2026-02-04
+> API specification for communication between mesh, joi, and external systems.
+> Version: 1.1 (Draft)
+> Last updated: 2026-02-08
 
 ## Overview
 
-All APIs use JSON over HTTPS. Authentication via Nebula mesh for all channels:
+Joi has two communication channels, both protected by a two-layer security model:
+
+### Two-Layer Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     PROTECTION LAYER                            │
+│           (raw automation, LLM has NO control)                  │
+│                                                                 │
+│  • Rate limiters (hard caps, no override)                       │
+│  • Circuit breakers (trip on runaway behavior)                  │
+│  • Input/output validation                                      │
+│  • Replay protection, watchdogs, emergency stop                 │
+│                                                                 │
+│  Runs on: Joi VM, mesh VM — independently of LLM                │
+└─────────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      LLM AGENT LAYER                            │
+│              (trusted for decisions within bounds)              │
+│                                                                 │
+│  • Decides what to read/write via System Channel                │
+│  • Decides what/when to notify owner via Interactive Channel    │
+│  • All writes go through LLM (no automated writes)              │
+│                                                                 │
+│  Runs on: Joi VM — trusted for normal operations                │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Communication Channels
+
+| Channel | Purpose | Direction | Example |
+|---------|---------|-----------|---------|
+| **Interactive** | Human communication | Bidirectional | Signal messaging |
+| **System** | Machine-to-machine | Bidirectional | openhab, Zabbix, actuators |
+
+> **See also:** `system-channel.md` for full System Channel specification.
+
+### API Summary
+
+All APIs use JSON over HTTPS. Authentication via Nebula mesh:
 
 | Channel | Transport | Auth | Port |
 |---------|-----------|------|------|
-| mesh ↔ joi | Nebula tunnel | Nebula cert | 8443/8444 |
-| openhab → joi | Nebula tunnel | Nebula cert | 8445 |
+| mesh ↔ joi (Interactive) | Nebula tunnel | Nebula cert + HMAC | 8443/8444 |
+| System Channel (inbound) | Nebula tunnel | Nebula cert | 8445 |
+| System Channel (outbound) | Nebula tunnel | Nebula cert | varies |
+
+> **Note:** openhab endpoints are being migrated to the generic System Channel API.
+> Legacy `/api/v1/openhab/*` endpoints remain as aliases. See `system-channel.md` → "Migration".
 
 > **Architecture Decision:** All three VMs (mesh, joi, openhab) are Nebula mesh nodes. This simplifies auth to a single PKI and ensures all traffic is certificate-authenticated and encrypted.
 
@@ -248,6 +293,10 @@ POST https://mesh:8444/api/v1/message/outbound
 
 ## 3. OpenHAB Events: openhab → joi
 
+> **Migration Notice:** These endpoints are legacy. New integrations should use the generic
+> System Channel API (`POST /api/v1/system/event`). See `system-channel.md` for details.
+> These endpoints will continue to work as aliases to the System Channel handler.
+
 openhab pushes events to joi via webhooks. Different event types may use different endpoints for routing/rate limiting.
 
 ### Base URL
@@ -408,6 +457,65 @@ POST /api/v1/openhab/state
 - `event_id` used for deduplication (reject if seen in last 30 minutes)
 - Sensor batches: max 50 readings per request
 - Rate limits per endpoint (see below)
+
+---
+
+## 4. System Channel (Generic)
+
+The System Channel provides a unified, type-agnostic interface for machine-to-machine communication. It replaces the openhab-specific endpoints with a generic pattern that supports any registered source.
+
+> **Full specification:** See `system-channel.md`
+
+### Key Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **Source** | Registered external system (openhab, zabbix, calendar, actuator) |
+| **Access Mode** | `read`, `write`, or `read-write` per source |
+| **Inbound** | Events FROM systems TO Joi |
+| **Outbound** | Actions FROM Joi TO systems |
+
+### Inbound Events (Any Source → Joi)
+
+```
+POST https://joi:8445/api/v1/system/event
+```
+
+```json
+{
+  "source": "zabbix",
+  "event_id": "<uuid>",
+  "event_type": "problem",
+  "timestamp": 1707400000000,
+  "priority": "high",
+  "data": { /* source-specific payload */ }
+}
+```
+
+### Outbound Actions (Joi → Any Source)
+
+```
+POST https://<source-endpoint>:<port>/api/v1/action
+```
+
+```json
+{
+  "action": "acknowledge",
+  "action_id": "<uuid>",
+  "target": { "id": "12345", "type": "problem" },
+  "parameters": { "message": "Acknowledged by Joi" },
+  "context": { "triggered_by": "llm_decision" }
+}
+```
+
+### Write Control
+
+All System Channel writes are **LLM-gated**:
+- LLM decides when to perform actions (no automated writes)
+- Protection Layer enforces rate limits (LLM cannot override)
+- No owner approval required (writes trusted within bounds)
+
+> **See also:** `system-channel.md` → "Two-Layer Architecture" for full security model.
 
 ---
 
