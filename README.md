@@ -1,3 +1,5 @@
+<img src="img/artwork.jpg" alt="Artwork" width="350" align="right">
+
 # Joi
 
 **Security-focused offline AI personal assistant**
