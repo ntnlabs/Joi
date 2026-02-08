@@ -93,11 +93,28 @@ The Protection Layer ensures that even if the LLM is prompt-injected, jailbroken
 │                              │     │ │ zabbix   [RW]   │ │     │
 │                              │     │ │ calendar [RW]   │ │     │
 │                              │     │ │ actuator [W]    │ │     │
+│                              │     │ │ imagegen [RW]   │ │     │
 │                              │     │ └─────────────────┘ │     │
 │                              │     └─────────────────────┘     │
 │  ┌───────────────────────────┴───────────────────────────────┐  │
 │  │                   PROTECTION LAYER                        │  │
 │  │      (output validation, rate limits, circuit breakers)   │  │
+│  └───────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+
+                              ▲
+                              │ Nebula mesh (isolated)
+                              ▼
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    IMAGE GENERATOR VM                           │
+│                   (completely isolated)                         │
+│                                                                 │
+│  ┌───────────────────────────────────────────────────────────┐  │
+│  │  Image Generation LLM (Stable Diffusion, SDXL, Flux)      │  │
+│  │  • GPU-accelerated                                        │  │
+│  │  • No network access (Nebula only)                        │  │
+│  │  • Async request/response                                 │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -201,6 +218,34 @@ system_channel:
           - update_event
           - delete_event
         rate_limit: 30/hr
+
+    # Read-write: LLM-based image generation (async)
+    imagegen:
+      mode: read-write
+      nebula_name: "imagegen"
+      endpoint: "imagegen.homelab.example"
+      async: true                          # Async request/response pattern
+      inbound:
+        port: 8450
+        event_types:
+          - generation_complete            # Image ready
+          - generation_failed              # Generation failed
+          - generation_progress            # Optional: progress updates
+        rate_limit: 60/hr
+      outbound:
+        port: 8451
+        actions:
+          - generate                       # Request image generation
+          - cancel                         # Cancel pending generation
+        rate_limit: 10/hr                  # GPU-intensive, limit requests
+        timeout_seconds: 300               # 5 min max for generation
+      content:
+        max_prompt_length: 2000            # Limit prompt size
+        allowed_formats: [png, jpg, webp]
+        max_resolution: 1024               # Max width/height
+        blocked_patterns:                  # Content policy
+          - pattern: "*.explicit.*"
+          - pattern: "*.violent.*"
 ```
 
 ---
@@ -460,6 +505,146 @@ Unchanged from current `api-contracts.md`. Events use:
 }
 ```
 
+### Image Generator (read-write, async)
+
+The Image Generator is a special source: it's an LLM-based system (Stable Diffusion, SDXL, Flux, etc.) running on a completely isolated VM. It uses an async request/response pattern due to generation time.
+
+**Architecture:**
+
+```
+┌─────────────┐                      ┌─────────────────────────┐
+│   Joi VM    │                      │   Image Generator VM    │
+│             │   1. generate req    │                         │
+│  LLM Agent ─┼─────────────────────►│  Queue                  │
+│             │                      │    ↓                    │
+│             │                      │  GPU Worker             │
+│             │   2. generation_     │    ↓                    │
+│             │◄─────────────────────┼─ Image Gen LLM          │
+│             │      complete        │  (SD, SDXL, Flux)       │
+└─────────────┘                      └─────────────────────────┘
+```
+
+**Why Separate VM?**
+- **Isolation:** Image generation LLM is completely separate from Joi's decision-making LLM
+- **Resource Management:** GPU can be dedicated or shared without affecting Joi
+- **Security:** Compromised image gen cannot affect Joi core
+- **Flexibility:** Can swap image gen models without touching Joi
+
+**Outbound Actions (Joi → Image Generator):**
+
+```json
+{
+  "action": "generate",
+  "action_id": "<uuid>",
+  "target": {
+    "id": "default",               // Generator profile
+    "type": "generator"
+  },
+  "parameters": {
+    "prompt": "A serene mountain landscape at sunset, photorealistic",
+    "negative_prompt": "blurry, low quality, distorted",
+    "format": "png",
+    "width": 1024,
+    "height": 768,
+    "seed": null,                  // null = random
+    "steps": 30,                   // Generation steps
+    "guidance_scale": 7.5
+  },
+  "context": {
+    "triggered_by": "llm_decision",
+    "purpose": "user_requested",   // Why generating: user_requested, proactive, etc.
+    "conversation_id": "<id>"      // For context tracking
+  }
+}
+```
+
+**Inbound Events (Image Generator → Joi):**
+
+Generation complete:
+```json
+{
+  "source": "imagegen",
+  "event_id": "img-complete-xyz",
+  "event_type": "generation_complete",
+  "timestamp": 1707400030000,
+  "priority": "normal",
+  "data": {
+    "action_id": "<original-action-id>",  // Links to request
+    "status": "success",
+    "image": {
+      "format": "png",
+      "width": 1024,
+      "height": 768,
+      "size_bytes": 1245678,
+      "path": "/data/generated/img-xyz.png",  // Local path on Joi VM
+      "checksum": "sha256:abc123..."
+    },
+    "generation_time_ms": 25000,
+    "seed_used": 42,
+    "model": "sdxl-1.0"
+  }
+}
+```
+
+Generation failed:
+```json
+{
+  "source": "imagegen",
+  "event_id": "img-failed-xyz",
+  "event_type": "generation_failed",
+  "timestamp": 1707400030000,
+  "priority": "normal",
+  "data": {
+    "action_id": "<original-action-id>",
+    "status": "failed",
+    "error": {
+      "code": "content_policy",
+      "message": "Prompt blocked by content policy"
+    }
+  }
+}
+```
+
+**Image Delivery:**
+
+Images are transferred via shared storage (not embedded in JSON):
+1. Image Generator writes to shared volume: `/data/generated/`
+2. Joi VM mounts the same volume (read-only)
+3. Event contains path to file
+4. Joi reads the image when needed (e.g., to send via Signal)
+
+**Content Policy:**
+
+Image generation has additional content filtering:
+```yaml
+imagegen_policy:
+  # Blocked content (Protection Layer enforces)
+  blocked_patterns:
+    - "explicit"
+    - "nsfw"
+    - "violent"
+    - "gore"
+    - "child"
+    - "illegal"
+
+  # LLM should also filter, but Protection Layer is backstop
+  prompt_validation:
+    max_length: 2000
+    require_ascii: false          # Allow unicode
+    normalize_unicode: true       # NFKC normalization
+```
+
+**Rate Limits:**
+
+Image generation is GPU-intensive, so stricter limits apply:
+```yaml
+imagegen_limits:
+  requests_per_hour: 10           # Max generation requests
+  concurrent_requests: 2          # Max parallel generations
+  queue_depth: 5                  # Max pending requests
+  timeout_seconds: 300            # 5 min max per generation
+```
+
 ---
 
 ## LLM Integration
@@ -491,6 +676,19 @@ llm_tools:
   system_list:
     description: "List registered systems and their capabilities"
     parameters: {}
+
+  # Generate an image (convenience wrapper for imagegen source)
+  image_generate:
+    description: "Generate an image using the image generation LLM"
+    parameters:
+      prompt: string              # What to generate
+      negative_prompt: string     # What to avoid (optional)
+      format: string              # png, jpg, webp (default: png)
+      width: integer              # Image width (default: 1024, max: 1024)
+      height: integer             # Image height (default: 1024, max: 1024)
+    returns:
+      async: true                 # Returns immediately, result via event
+      action_id: string           # Use to track completion
 ```
 
 ### Example LLM Decision Flow
@@ -516,6 +714,33 @@ llm_tools:
    └─► send_message(channel="direct", priority="high", ...)
 
 5. Both actions go through Policy Engine before execution
+```
+
+### Example: Image Generation Flow
+
+```
+1. Owner asks via Signal: "Can you create an image of a sunset over mountains?"
+
+2. LLM decides:
+   "Owner requested an image. I should generate it."
+   └─► image_generate(prompt="sunset over mountains, photorealistic, warm colors")
+
+3. Agent executes:
+   └─► system_write(source="imagegen", action="generate", ...)
+   └─► Returns action_id: "img-req-123"
+
+4. Agent responds to owner:
+   "I'm generating that image for you. It'll be ready shortly."
+
+5. [25 seconds later] Image Generator sends event:
+   └─► event_type: "generation_complete"
+   └─► image.path: "/data/generated/img-xyz.png"
+
+6. Agent loop picks up completion event:
+   └─► Reads image from shared volume
+   └─► Sends image to owner via Signal (mesh handles media)
+
+7. Owner receives: [image] "Here's the sunset over mountains!"
 ```
 
 ### Context for LLM Decisions
@@ -834,9 +1059,9 @@ protection_layer:
 
 3. **Schema Validation:** JSON Schema per source for stricter event validation.
 
-4. **Async Actions:** Long-running actions with callback on completion.
+4. **Action Batching:** Multiple related actions in a single request.
 
-5. **Action Batching:** Multiple related actions in a single request.
+5. **Additional LLM Services:** Text-to-speech, speech-to-text, translation on separate VMs.
 
 ---
 
@@ -853,4 +1078,15 @@ protection_layer:
 | **Notifications** | LLM decides if/when to inform owner |
 | **Authentication** | Nebula certificates |
 | **Rate Limits** | Protection Layer enforces hard caps (LLM cannot override) |
+| **Async Sources** | Supported (e.g., imagegen) with request/response pattern |
 | **Migration** | Gradual, legacy openhab endpoints as aliases |
+
+### Registered Sources
+
+| Source | Mode | Type | Description |
+|--------|------|------|-------------|
+| openhab | read | Sync | Home automation events |
+| zabbix | read-write | Sync | Monitoring alerts + acknowledgments |
+| calendar | read-write | Sync | Calendar events + scheduling |
+| actuator | write | Sync | Device control commands |
+| imagegen | read-write | **Async** | LLM-based image generation |
