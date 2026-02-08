@@ -89,11 +89,17 @@ The Protection Layer ensures that even if the LLM is prompt-injected, jailbroken
 │    │                   │     │     │ ┌─────────────────┐ │     │
 │    │ mesh ◄──► Signal  │     │     │ │ Source Registry │ │     │
 │    │ (human comms)     │     │     │ │                 │ │     │
-│    └───────────────────┘     │     │ │ openhab  [R]    │ │     │
-│                              │     │ │ zabbix   [RW]   │ │     │
-│                              │     │ │ calendar [RW]   │ │     │
-│                              │     │ │ actuator [W]    │ │     │
-│                              │     │ │ imagegen [RW]   │ │     │
+│    └───────────────────┘     │     │ │ DATA SOURCES:   │ │     │
+│                              │     │ │  openhab  [R]   │ │     │
+│                              │     │ │  zabbix   [RW]  │ │     │
+│                              │     │ │  calendar [RW]  │ │     │
+│                              │     │ │  actuator [W]   │ │     │
+│                              │     │ │                 │ │     │
+│                              │     │ │ LLM SERVICES:   │ │     │
+│                              │     │ │  imagegen [RW]  │ │     │
+│                              │     │ │  websearch[RW]  │ │     │
+│                              │     │ │  tts      [RW]  │ │     │
+│                              │     │ │  codeexec [RW]  │ │     │
 │                              │     │ └─────────────────┘ │     │
 │                              │     └─────────────────────┘     │
 │  ┌───────────────────────────┴───────────────────────────────┐  │
@@ -107,15 +113,20 @@ The Protection Layer ensures that even if the LLM is prompt-injected, jailbroken
                               ▼
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                    IMAGE GENERATOR VM                           │
-│                   (completely isolated)                         │
+│                     LLM SERVICE VMs                             │
+│               (completely isolated, specialized)                │
 │                                                                 │
-│  ┌───────────────────────────────────────────────────────────┐  │
-│  │  Image Generation LLM (Stable Diffusion, SDXL, Flux)      │  │
-│  │  • GPU-accelerated                                        │  │
-│  │  • No network access (Nebula only)                        │  │
-│  │  • Async request/response                                 │  │
-│  └───────────────────────────────────────────────────────────┘  │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐  │
+│  │ imagegen VM     │  │ websearch VM    │  │ tts VM          │  │
+│  │ • SD/SDXL/Flux  │  │ • Browser agent │  │ • TTS models    │  │
+│  │ • GPU-accel     │  │ • Internet only │  │ • CPU/GPU       │  │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘  │
+│                                                                 │
+│  Common properties:                                             │
+│  • No access to Joi core (Nebula mesh only)                     │
+│  • Async request/response pattern                               │
+│  • Own resource limits (GPU/CPU/memory)                         │
+│  • Results via events or shared storage                         │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -505,30 +516,57 @@ Unchanged from current `api-contracts.md`. Events use:
 }
 ```
 
-### Image Generator (read-write, async)
+### LLM Services (Compute Sources)
 
-The Image Generator is a special source: it's an LLM-based system (Stable Diffusion, SDXL, Flux, etc.) running on a completely isolated VM. It uses an async request/response pattern due to generation time.
+LLM Services are a special category of System Channel sources: **LLM-based compute services** running on completely isolated VMs. They extend Joi's capabilities without affecting the core agent.
+
+**Pattern:** Type-agnostic, just like data sources. Any LLM-based service fits this pattern.
+
+**Examples:**
+| Service | VM | Purpose |
+|---------|-----|---------|
+| imagegen | Image Generator VM | Generate images (SD, SDXL, Flux) |
+| videogen | Video Generator VM | Generate videos (Sora-like) |
+| websearch | Search Agent VM | LLM-powered internet search/browsing |
+| tts | TTS VM | Text-to-speech synthesis |
+| stt | STT VM | Speech-to-text transcription |
+| translate | Translation VM | Multi-language translation |
+| codeexec | Sandbox VM | Safe code execution |
 
 **Architecture:**
 
 ```
 ┌─────────────┐                      ┌─────────────────────────┐
-│   Joi VM    │                      │   Image Generator VM    │
-│             │   1. generate req    │                         │
-│  LLM Agent ─┼─────────────────────►│  Queue                  │
+│   Joi VM    │                      │   LLM Service VM        │
+│             │   1. request         │   (any type)            │
+│  LLM Agent ─┼─────────────────────►│                         │
+│  (decision) │                      │  Queue                  │
 │             │                      │    ↓                    │
-│             │                      │  GPU Worker             │
-│             │   2. generation_     │    ↓                    │
-│             │◄─────────────────────┼─ Image Gen LLM          │
-│             │      complete        │  (SD, SDXL, Flux)       │
+│             │   2. complete/       │  Worker (GPU/CPU)       │
+│             │◄─────────────────────┼─    ↓                   │
+│             │      result          │  Service LLM            │
 └─────────────┘                      └─────────────────────────┘
 ```
 
-**Why Separate VM?**
-- **Isolation:** Image generation LLM is completely separate from Joi's decision-making LLM
-- **Resource Management:** GPU can be dedicated or shared without affecting Joi
-- **Security:** Compromised image gen cannot affect Joi core
-- **Flexibility:** Can swap image gen models without touching Joi
+**Why Separate VMs?**
+- **Isolation:** Service LLM is completely separate from Joi's decision-making LLM
+- **Resource Management:** GPU/CPU resources don't affect Joi core
+- **Security:** Compromised service cannot affect Joi (no lateral movement)
+- **Flexibility:** Swap models, add services without touching Joi
+- **Specialization:** Each VM optimized for its task (GPU for images, CPU for search)
+
+**Common Characteristics:**
+- All are `read-write` mode (request → response)
+- Most are `async: true` (long-running operations)
+- All communicate via System Channel (Nebula mesh)
+- All have their own rate limits and content policies
+- Results delivered via events (or shared storage for binary data)
+
+---
+
+### imagegen (Image Generation)
+
+Generates images using diffusion models (Stable Diffusion, SDXL, Flux, etc.).
 
 **Outbound Actions (Joi → Image Generator):**
 
@@ -647,6 +685,136 @@ imagegen_limits:
 
 ---
 
+### websearch (LLM-Powered Internet Search)
+
+An LLM agent on a separate VM that can browse the internet, search, and synthesize information.
+
+**Why Separate VM?**
+- **Network isolation:** Only websearch VM has internet access (via controlled proxy)
+- **Security:** If browsing agent is compromised by malicious page, Joi is unaffected
+- **Specialization:** Can use a model optimized for search/summarization
+
+**Source Registry:**
+```yaml
+websearch:
+  mode: read-write
+  nebula_name: "websearch"
+  endpoint: "websearch.homelab.example"
+  async: true
+  inbound:
+    port: 8452
+    event_types:
+      - search_complete
+      - search_failed
+    rate_limit: 30/hr
+  outbound:
+    port: 8453
+    actions:
+      - search                     # Web search query
+      - fetch                      # Fetch specific URL
+      - summarize                  # Summarize a page
+    rate_limit: 30/hr
+    timeout_seconds: 120
+```
+
+**Outbound Actions:**
+
+```json
+{
+  "action": "search",
+  "action_id": "<uuid>",
+  "target": {
+    "id": "default",
+    "type": "search_engine"
+  },
+  "parameters": {
+    "query": "latest news about renewable energy",
+    "max_results": 5,
+    "include_snippets": true,
+    "date_range": "past_week"
+  },
+  "context": {
+    "triggered_by": "llm_decision",
+    "purpose": "user_question"
+  }
+}
+```
+
+**Inbound Events:**
+
+```json
+{
+  "source": "websearch",
+  "event_id": "search-xyz",
+  "event_type": "search_complete",
+  "timestamp": 1707400015000,
+  "priority": "normal",
+  "data": {
+    "action_id": "<original-action-id>",
+    "status": "success",
+    "results": [
+      {
+        "title": "Renewable Energy Report 2026",
+        "url": "https://example.com/report",
+        "snippet": "Global renewable capacity increased by 25%...",
+        "source": "example.com"
+      }
+    ],
+    "summary": "Recent developments show significant growth in renewable energy...",
+    "search_time_ms": 8500
+  }
+}
+```
+
+---
+
+### Additional LLM Services (Examples)
+
+These follow the same pattern and can be added as needed:
+
+**videogen (Video Generation):**
+```yaml
+videogen:
+  mode: read-write
+  async: true
+  outbound:
+    actions: [generate, cancel]
+    rate_limit: 5/hr              # Very resource-intensive
+    timeout_seconds: 600          # 10 min for video
+```
+
+**tts (Text-to-Speech):**
+```yaml
+tts:
+  mode: read-write
+  async: true
+  outbound:
+    actions: [synthesize]
+    rate_limit: 60/hr
+    timeout_seconds: 30
+  content:
+    max_text_length: 5000
+    voices: [en-female-1, en-male-1, sk-female-1]
+```
+
+**codeexec (Sandboxed Code Execution):**
+```yaml
+codeexec:
+  mode: read-write
+  async: true
+  outbound:
+    actions: [execute, cancel]
+    rate_limit: 30/hr
+    timeout_seconds: 60
+  sandbox:
+    languages: [python, javascript, bash]
+    max_memory_mb: 512
+    max_cpu_seconds: 30
+    network: false                 # No network in sandbox
+```
+
+---
+
 ## LLM Integration
 
 ### Available Tools for LLM
@@ -677,9 +845,13 @@ llm_tools:
     description: "List registered systems and their capabilities"
     parameters: {}
 
-  # Generate an image (convenience wrapper for imagegen source)
+  # --- LLM Service convenience wrappers ---
+  # These map to system_write calls to specific sources
+
+  # Generate an image
   image_generate:
     description: "Generate an image using the image generation LLM"
+    source: imagegen
     parameters:
       prompt: string              # What to generate
       negative_prompt: string     # What to avoid (optional)
@@ -689,6 +861,52 @@ llm_tools:
     returns:
       async: true                 # Returns immediately, result via event
       action_id: string           # Use to track completion
+
+  # Search the web
+  web_search:
+    description: "Search the internet for information"
+    source: websearch
+    parameters:
+      query: string               # Search query
+      max_results: integer        # Number of results (default: 5)
+      date_range: string          # past_day, past_week, past_month, any
+    returns:
+      async: true
+      action_id: string
+
+  # Fetch and summarize a URL
+  web_fetch:
+    description: "Fetch a web page and summarize its content"
+    source: websearch
+    parameters:
+      url: string                 # URL to fetch
+      summarize: boolean          # Whether to summarize (default: true)
+    returns:
+      async: true
+      action_id: string
+
+  # Text-to-speech (if available)
+  speak:
+    description: "Convert text to speech audio"
+    source: tts
+    parameters:
+      text: string                # Text to speak
+      voice: string               # Voice ID
+      format: string              # mp3, wav, ogg
+    returns:
+      async: true
+      action_id: string
+
+  # Execute code in sandbox (if available)
+  code_execute:
+    description: "Execute code in an isolated sandbox"
+    source: codeexec
+    parameters:
+      language: string            # python, javascript, bash
+      code: string                # Code to execute
+    returns:
+      async: true
+      action_id: string
 ```
 
 ### Example LLM Decision Flow
@@ -1083,10 +1301,24 @@ protection_layer:
 
 ### Registered Sources
 
+**Data Sources** (external systems):
 | Source | Mode | Type | Description |
 |--------|------|------|-------------|
 | openhab | read | Sync | Home automation events |
 | zabbix | read-write | Sync | Monitoring alerts + acknowledgments |
 | calendar | read-write | Sync | Calendar events + scheduling |
 | actuator | write | Sync | Device control commands |
-| imagegen | read-write | **Async** | LLM-based image generation |
+
+**LLM Services** (isolated compute VMs):
+| Source | Mode | Type | Description |
+|--------|------|------|-------------|
+| imagegen | read-write | Async | Image generation (SD, SDXL, Flux) |
+| websearch | read-write | Async | LLM-powered internet search |
+| tts | read-write | Async | Text-to-speech synthesis |
+| codeexec | read-write | Async | Sandboxed code execution |
+
+All LLM Services run on isolated VMs with:
+- No access to Joi core (Nebula mesh only)
+- Their own resource limits (GPU/CPU/memory)
+- Async request/response pattern
+- Results via events or shared storage
