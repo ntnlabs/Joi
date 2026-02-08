@@ -2,7 +2,7 @@
 
 **Security-focused offline AI personal assistant**
 
-Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceleration. It integrates with home automation (read-only) and communicates via Signal messaging through a secure proxy.
+Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceleration. It communicates via Signal messaging, integrates with external systems through a generic System Channel, and can leverage isolated LLM services for extended capabilities.
 
 ## Status
 
@@ -11,47 +11,81 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 ## Key Features
 
 - **Air-gapped**: Joi VM has no direct internet access
-- **Signal messaging**: Secure communication via proxy VM
-- **Home automation**: Read-only integration with openHAB
+- **Signal messaging**: Human communication via secure proxy VM
+- **System Channel**: Type-agnostic interface for external systems (openhab, Zabbix, actuators)
+- **LLM Services**: Isolated VMs for image generation, web search, and more
+- **Two-layer security**: Protection Layer (automation) + LLM Agent Layer (decisions)
+- **Behavior modes**: Companion (proactive) or Assistant (request-response only)
 - **GPU accelerated**: RTX 3060 via Thunderbolt eGPU
-- **Policy engine**: Enforces security constraints on all actions
-- **Defense in depth**: Multiple security layers (Nebula mesh, rate limits, input sanitization)
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        INTERNET                             │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────┐
-│              mesh VM (Ubuntu 24 LTS)                        │
-│              Signal bot + Nebula lighthouse                 │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ Nebula mesh VPN
-┌─────────────────────▼───────────────────────────────────────┐
-│          Proxmox Host ──── eGPU (RTX 3060)                  │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │                 Joi VM (isolated)                      │ │
-│  │   LLM (Llama 3.1 8B) + Policy Engine + Memory Store    │ │
-│  └────────────────────────────────────────────────────────┘ │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ Nebula mesh (read-only)
-┌─────────────────────▼───────────────────────────────────────┐
-│                    openHAB                                  │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                          INTERNET                               │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────────┐
+│                mesh VM (Ubuntu 24 LTS)                          │
+│                Signal bot + Nebula lighthouse                   │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ Nebula mesh VPN
+┌───────────────────────────▼─────────────────────────────────────┐
+│              Proxmox Host ──── eGPU (RTX 3060)                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │                     Joi VM (isolated)                      │ │
+│  │  ┌──────────────────────────────────────────────────────┐  │ │
+│  │  │              PROTECTION LAYER                        │  │ │
+│  │  │    (rate limits, circuit breakers, validation)       │  │ │
+│  │  └──────────────────────────────────────────────────────┘  │ │
+│  │                          │                                 │ │
+│  │  ┌───────────────────────▼──────────────────────────────┐  │ │
+│  │  │   LLM Agent (Llama 3.1 8B) + Policy Engine + Memory  │  │ │
+│  │  └───────────────────────┬──────────────────────────────┘  │ │
+│  │            ┌─────────────┴─────────────┐                   │ │
+│  │            ▼                           ▼                   │ │
+│  │   Interactive Channel          System Channel              │ │
+│  │   (Signal ↔ human)             (machine-to-machine)        │ │
+│  └────────────────────────────────────────────────────────────┘ │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ Nebula mesh
+          ┌─────────────────┼─────────────────┐
+          ▼                 ▼                 ▼
+    ┌──────────┐      ┌──────────┐      ┌──────────┐
+    │ openhab  │      │ Zabbix   │      │ LLM Svc  │
+    │ [read]   │      │ [r/w]    │      │ VMs      │
+    └──────────┘      └──────────┘      └──────────┘
 ```
 
-## Security Model
+## Two-Layer Security
 
-| Principle | Implementation |
-|-----------|----------------|
-| No WAN access | Joi VM on isolated network, no default route |
-| Authenticated transport | Nebula mesh VPN with certificate auth |
-| Read-only home automation | Policy engine blocks all writes to openHAB |
-| Rate limiting | Per-user/per-conversation limits |
-| Input sanitization | Unicode normalization, length limits, pattern blocking |
-| Prompt injection defense | Layered: input framing, output validation, policy engine |
+| Layer | Role | LLM Control |
+|-------|------|-------------|
+| **Protection** | Rate limits, circuit breakers, validation | None - cannot be bypassed |
+| **LLM Agent** | Decides reads, writes, notifications | Trusted within bounds |
+
+## Behavior Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| **companion** | Proactive, organic engagement ("Wind" behavior) | Personal use |
+| **assistant** | Request-response only, no proactive messages | Professional/enterprise |
+
+## Communication Channels
+
+| Channel | Purpose | Direction |
+|---------|---------|-----------|
+| **Interactive** | Human communication (Signal) | Bidirectional |
+| **System** | Machine-to-machine (openhab, Zabbix, etc.) | Read/Write/Both per source |
+
+## LLM Services (Isolated VMs)
+
+| Service | Purpose | Mode |
+|---------|---------|------|
+| imagegen | Image generation (SD, SDXL, Flux) | Async |
+| websearch | LLM-powered internet search | Async |
+| tts | Text-to-speech | Async |
+| codeexec | Sandboxed code execution | Async |
 
 ## Documentation
 
@@ -60,10 +94,11 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 | [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) | Quick overview |
 | [Joi-architecture-v2.md](Joi-architecture-v2.md) | Current architecture (security-hardened) |
 | [Joi-threat-model.md](Joi-threat-model.md) | Threat analysis and mitigations |
+| [system-channel.md](system-channel.md) | System Channel & LLM Services specification |
 | [api-contracts.md](api-contracts.md) | API specifications |
 | [policy-engine.md](policy-engine.md) | Security policy rules |
 | [memory-store-schema.md](memory-store-schema.md) | Database schema |
-| [agent-loop-design.md](agent-loop-design.md) | Agent behavior design |
+| [agent-loop-design.md](agent-loop-design.md) | Agent behavior & modes |
 | [prompt-injection-defenses.md](prompt-injection-defenses.md) | Prompt injection mitigations |
 | [Plan.md](Plan.md) | Implementation plan |
 | [Alt-Plan.md](Alt-Plan.md) | Alternative implementation approach |

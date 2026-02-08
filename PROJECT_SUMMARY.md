@@ -1,14 +1,24 @@
 # Joi - Project Summary
 
-> Quick reference for understanding this project. Last updated: 2026-02-04
+> Quick reference for understanding this project. Last updated: 2026-02-08
 
 ## What is Joi?
 
-Joi is a **security-focused, offline AI personal assistant** running as a Proxmox VM with GPU acceleration. It integrates with home automation (openhab.homelab.example) and communicates via Signal messaging.
+Joi is a **security-focused, offline AI personal assistant** running as a Proxmox VM with GPU acceleration. It communicates via Signal messaging, integrates with external systems through a generic System Channel, and can leverage isolated LLM services for extended capabilities.
 
 ## Project Status
 
 **Phase: Architecture/Planning** - No implementation code yet, only documentation.
+
+## Key Concepts
+
+| Concept | Description |
+|---------|-------------|
+| **Two-Layer Security** | Protection Layer (automation, LLM cannot bypass) + LLM Agent Layer (trusted decisions) |
+| **Interactive Channel** | Human communication via Signal (bidirectional) |
+| **System Channel** | Machine-to-machine communication (type-agnostic, read/write/both per source) |
+| **LLM Services** | Isolated VMs for image generation, web search, TTS, code execution |
+| **Behavior Modes** | `companion` (proactive, organic) or `assistant` (request-response only) |
 
 ## Technology Stack
 
@@ -19,9 +29,9 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 | LLM Requirements | Uncensored + Slovak | No restrictive filters, good Slovak support |
 | Hardware | ASUS NUC 13 Pro + RTX 3060 eGPU | Proxmox host with GPU passthrough |
 | Virtualization | Proxmox VE | Joi runs as isolated VM |
-| Messaging | Signal | Via secure proxy VM |
-| Mesh VPN | Nebula | Proxy ↔ Joi encrypted tunnel |
-| Home Automation | openhab.homelab.example | Read-only access only |
+| Messaging | Signal | Via secure proxy VM (Interactive Channel) |
+| Mesh VPN | Nebula | All VMs on encrypted mesh |
+| System Channel | Generic API | openhab, Zabbix, actuators, LLM Services |
 | Database | SQLite + SQLCipher | Encrypted local storage |
 | Proxy Host | mesh.homelab.example | Ubuntu 24 LTS, 2GB RAM, 16GB disk |
 
@@ -30,42 +40,50 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      INTERNET                                │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-┌─────────────────────▼───────────────────────────────────────┐
-│         mesh.homelab.example (Ubuntu 24 LTS)                 │
-│         - Signal bot + Nebula lighthouse                     │
-│         - 2GB RAM, 16GB disk                                 │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ (Nebula mesh VPN tunnel)
-┌─────────────────────▼───────────────────────────────────────┐
-│     ASUS NUC 13 Pro (Proxmox Host) ──TB4──► eGPU (RTX 3060) │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │                    joi VM (GPU Passthrough)            │ │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │ │
-│  │  │ Llama 3.1   │  │ Policy      │  │ Memory      │    │ │
-│  │  │ 8B + CUDA   │  │ Engine      │  │ Store       │    │ │
-│  │  └─────────────┘  └─────────────┘  └─────────────┘    │ │
-│  └────────────────────────────────────────────────────────┘ │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ (LAN only, mTLS, read-only)
-┌─────────────────────▼───────────────────────────────────────┐
-│              openhab.homelab.example                         │
-│              (Home Automation, read-only)                    │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                         INTERNET                                │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+┌───────────────────────────▼─────────────────────────────────────┐
+│              mesh.homelab.example (Ubuntu 24 LTS)               │
+│              Signal bot + Nebula lighthouse                     │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ Nebula mesh VPN
+┌───────────────────────────▼─────────────────────────────────────┐
+│       ASUS NUC 13 Pro (Proxmox Host) ──TB4──► eGPU (RTX 3060)   │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │                      joi VM (GPU Passthrough)              │ │
+│  │  ┌──────────────────────────────────────────────────────┐  │ │
+│  │  │   PROTECTION LAYER (rate limits, circuit breakers)  │  │ │
+│  │  └──────────────────────────────────────────────────────┘  │ │
+│  │  ┌──────────────────────────────────────────────────────┐  │ │
+│  │  │   LLM Agent + Policy Engine + Memory Store           │  │ │
+│  │  └──────────────────────┬───────────────────────────────┘  │ │
+│  │           ┌─────────────┴─────────────┐                    │ │
+│  │           ▼                           ▼                    │ │
+│  │  Interactive Channel          System Channel               │ │
+│  │  (Signal ↔ human)             (machine-to-machine)         │ │
+│  └────────────────────────────────────────────────────────────┘ │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │ Nebula mesh
+          ┌─────────────────┼─────────────────┐
+          ▼                 ▼                 ▼
+┌──────────────┐     ┌──────────────┐   ┌──────────────┐
+│   openhab    │     │   Zabbix     │   │  LLM Service │
+│   [read]     │     │   [r/w]      │   │  VMs (async) │
+└──────────────┘     └──────────────┘   └──────────────┘
 ```
 
 ## Key Security Principles
 
 1. **Air-gapped**: Joi VM has NO direct internet access (isolated VM network)
-2. **Isolated VM network**: Dedicated vmbr1 for joi ↔ mesh ↔ openhab traffic
-3. **Read-only home automation**: Cannot control devices, only observe
-4. **Encrypted storage**: SQLCipher for DB, LUKS for Proxmox host
-5. **Nebula mesh**: Encrypted, certificate-authenticated mesh ↔ joi tunnel
-6. **Policy engine**: Enforces constraints on agent actions
-7. **Trusted LLMs only**: No Chinese models (supply chain security)
+2. **Two-layer security**: Protection Layer (automation, LLM cannot bypass) + LLM Agent Layer
+3. **Isolated VM network**: Dedicated vmbr1 for joi ↔ mesh ↔ system channel traffic
+4. **LLM-gated writes**: All intentional writes go through LLM decision; Protection Layer is separate
+5. **Encrypted storage**: SQLCipher for DB, LUKS for Proxmox host
+6. **Nebula mesh**: Encrypted, certificate-authenticated tunnel for all VMs
+7. **Policy engine**: Enforces constraints on agent actions
+8. **Trusted LLMs only**: No Chinese models (supply chain security)
 
 ## Documentation Files
 
@@ -73,7 +91,8 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 |------|---------|
 | `AGENTS.md` | Development guidelines, coding standards, planned structure |
 | `Joi-architecture-v2.md` | Current architecture (security-hardened) |
-| `Joi-architecture.md` | Original high-level architecture |
+| `system-channel.md` | System Channel & LLM Services specification |
+| `agent-loop-design.md` | Agent behavior, impulse system, behavior modes |
 | `Joi-threat-model.md` | Threat analysis, attack surfaces, mitigations |
 
 ## Planned Directory Structure

@@ -11,10 +11,22 @@ This document identifies threats to the Joi system and proposes mitigations. It 
 | Conversation history | High | High - personal data | Medium | Low |
 | Long-term memory store | High | High - behavioral patterns | High - affects agent behavior | Medium |
 | LLM model weights | Medium | Low - public model | High - backdoor risk | High |
-| openhab event stream | Medium | Medium - presence patterns | High - false events | Medium |
+| System Channel sources | Medium | Medium - operational data | High - false events/writes | Medium |
+| LLM Service VMs | Medium | Low - isolated compute | High - malicious output | Medium |
 | HMAC keys | Critical | High - auth bypass | High | High |
 | Proxmox host hardware | Medium | Physical access = full compromise | High | High |
 | GPU (eGPU enclosure) | Low | Physical access to GPU | Medium | Medium |
+| Generated images/content | Low | Medium - could contain private info | Low | Low |
+
+### New Assets (System Channel & LLM Services)
+
+| Asset | Description | Risk if Compromised |
+|-------|-------------|---------------------|
+| System Channel sources | openhab, Zabbix, actuators, calendar | False events, unauthorized writes |
+| imagegen VM | Image generation service | Inappropriate content, resource abuse |
+| websearch VM | Internet search agent | Fetch malicious content, exfiltration vector |
+| tts/stt VMs | Speech services | Audio manipulation |
+| codeexec VM | Sandboxed code execution | Sandbox escape, resource abuse |
 
 ## 2. Threat Actors
 
@@ -22,11 +34,13 @@ This document identifies threats to the Joi system and proposes mitigations. It 
 |-------|------------|------------|--------|
 | **Remote attacker** | Data theft, botnet, curiosity | High technical skill | Internet only (blocked by design) |
 | **LAN attacker** | Lateral movement, data theft | Medium-high skill | Same network segment |
-| **Compromised IoT device** | Pivot point | Low (automated) | LAN, possibly openhab |
+| **Compromised IoT device** | Pivot point | Low (automated) | LAN, possibly System Channel |
 | **Malicious household member** | Surveillance, mischief | Low-medium skill | Physical + LAN |
 | **Physical intruder** | Hardware theft | Low skill | Physical access |
-| **Compromised openhab** | Inject false events | Medium (automated) | Direct connection to Joi |
+| **Compromised System Channel source** | Inject false events, intercept writes | Medium (automated) | Direct connection to Joi |
+| **Compromised LLM Service VM** | Lateral movement, malicious output | Medium | Nebula mesh only |
 | **Supply chain** | Backdoor, cryptomining | High skill | Model weights, dependencies |
+| **Malicious web content** | Prompt injection via websearch | Medium | websearch VM only |
 
 ## 3. Attack Surfaces
 
@@ -50,21 +64,37 @@ This document identifies threats to the Joi system and proposes mitigations. It 
 │  │        ASUS NUC 13 Pro (Proxmox Host)               │       │
 │  │  ┌───────────────────────────────────────────────┐  │       │
 │  │  │              Joi VM (GPU Passthrough)         │  │       │
-│  │  │  ┌──────────┐ ┌────────────┐ ┌─────────────┐  │  │       │
-│  │  │  │ LLM Core │ │ Policy     │ │ Memory Store│  │  │       │
-│  │  │  │ (RTX3060)│ │ Engine     │ │ (SQLCipher) │  │  │       │
-│  │  │  └──────────┘ └────────────┘ └─────────────┘  │  │       │
-│  │  │       ▲                                       │  │       │
-│  │  │       │        ┌─────────────┐                │  │       │
-│  │  │       └────────│ Event       │◄── openhab    │  │       │
-│  │  │                │ Normalizer  │    (push/pull) │  │       │
-│  │  │                └─────────────┘                │  │       │
+│  │  │  ┌────────────────────────────────────────┐   │  │       │
+│  │  │  │         PROTECTION LAYER               │   │  │       │
+│  │  │  │  (rate limits, circuit breakers, etc.) │   │  │       │
+│  │  │  └────────────────────────────────────────┘   │  │       │
+│  │  │  ┌────────────────────────────────────────┐   │  │       │
+│  │  │  │ LLM Agent + Policy Engine + Memory     │   │  │       │
+│  │  │  └──────────────────┬─────────────────────┘   │  │       │
+│  │  │         ┌───────────┴───────────┐             │  │       │
+│  │  │         ▼                       ▼             │  │       │
+│  │  │  Interactive Channel     System Channel       │  │       │
+│  │  │  (Signal ↔ human)        (machine-to-machine) │  │       │
 │  │  └───────────────────────────────────────────────┘  │       │
 │  │                         │ TB4                       │       │
 │  │                    [eGPU: RTX 3060]                 │       │
 │  └─────────────────────────────────────────────────────┘       │
-│                            ▲                                    │
-│                    [Proxmox Console / SSH]                      │
+│                            │ Nebula mesh                        │
+│          ┌─────────────────┼─────────────────┐                 │
+│          ▼                 ▼                 ▼                 │
+│   ┌──────────────┐  ┌──────────────┐  ┌──────────────┐        │
+│   │ openhab      │  │ Zabbix       │  │ LLM Service  │        │
+│   │ [read]       │  │ [read-write] │  │ VMs          │        │
+│   └──────────────┘  └──────────────┘  └──────────────┘        │
+│                                              │                 │
+│                            ┌─────────────────┼─────────────┐   │
+│                            ▼                 ▼             ▼   │
+│                      ┌──────────┐     ┌──────────┐  ┌────────┐│
+│                      │ imagegen │     │websearch │  │  tts   ││
+│                      └──────────┘     └────┬─────┘  └────────┘│
+│                                            │ (internet)       │
+│                                            ▼                   │
+│                                     [INTERNET - websearch only]│
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -72,13 +102,23 @@ This document identifies threats to the Joi system and proposes mitigations. It 
 
 | Surface | Exposure | Protocol | Authentication |
 |---------|----------|----------|----------------|
-| mesh ↔ joi tunnel | Nebula overlay | Nebula (UDP 4242) | Nebula certificates |
-| mesh webhook (inbound to joi) | Nebula | HTTPS over Nebula | Nebula cert |
-| joi webhook (outbound to mesh) | Nebula | HTTPS over Nebula | Nebula cert |
-| openhab event stream | Nebula | HTTPS over Nebula | Nebula cert (openhab is mesh node) |
+| mesh ↔ joi (Interactive Channel) | Nebula overlay | HTTPS over Nebula | Nebula cert + HMAC |
+| System Channel inbound | Nebula overlay | HTTPS over Nebula | Nebula cert |
+| System Channel outbound | Nebula overlay | HTTPS over Nebula | Nebula cert |
+| LLM Service VMs | Nebula overlay | HTTPS over Nebula | Nebula cert |
+| websearch → Internet | Internet | HTTPS | N/A (outbound only) |
 | Local terminal | Physical/LAN | TTY/SSH | Key-based SSH |
 | Proxmox host disk | Physical | Filesystem | LUKS encryption |
-| Signal servers | Internet | Signal Protocol | Signal credentials |
+| Signal servers | Internet (via mesh) | Signal Protocol | Signal credentials |
+
+### Two-Layer Security Model
+
+| Layer | What it Protects | LLM Control |
+|-------|------------------|-------------|
+| **Protection Layer** | Rate limits, circuit breakers, input validation, watchdogs | None - LLM cannot bypass |
+| **LLM Agent Layer** | Decision-making for reads, writes, notifications | Trusted within bounds |
+
+> **Key insight:** Even if LLM is compromised (prompt injection, jailbreak), the Protection Layer limits blast radius.
 
 ## 4. Threats by Component
 
@@ -159,17 +199,87 @@ signal-cli operates differently from the now-defunct signald:
 - O4: Use TLS for openhab connection, even on LAN
 - O5: ✓ **RESOLVED** - openhab joins Nebula mesh, certificate-based auth
 
-### 4.4 LLM and Agent Behavior
+### 4.4 System Channel (Generic)
+
+The System Channel is a type-agnostic interface for machine-to-machine communication. Sources can be read-only, write-only, or read-write.
+
+| ID | Threat | Impact | Likelihood | Risk |
+|----|--------|--------|------------|------|
+| SC1 | Compromised source sends malicious events | Prompt injection, false context | Medium | **High** |
+| SC2 | LLM writes to unauthorized system | Unintended actions in external system | Low | **High** |
+| SC3 | Replay attack on System Channel | Duplicate writes, confusion | Low | Medium |
+| SC4 | Rate limit bypass on writes | Flood external systems | Low | Medium |
+| SC5 | Attacker spoofs source identity | Inject false events or intercept writes | Low | **High** |
+| SC6 | LLM manipulated to write malicious data | Attack external system via Joi | Medium | **High** |
+
+**Mitigations:**
+- SC1: Same as O1 - sanitize all events, strict schema validation
+- SC2: Policy engine enforces allowed actions per source; Protection Layer rate limits
+- SC3: Nonce/sequence number validation, deduplication window
+- SC4: Protection Layer enforces hard limits LLM cannot bypass
+- SC5: ✓ **RESOLVED** - All sources on Nebula mesh with certificate auth
+- SC6: All writes require `triggered_by: llm_decision`; output validation; rate limits
+
+**Key Protection:** Two-layer architecture ensures that even if LLM is prompt-injected to write malicious data:
+1. Protection Layer rate limits cap total writes (e.g., 60/hr)
+2. Policy engine validates action is in allowed list for that source
+3. Output validation blocks forbidden patterns
+4. Circuit breaker trips on rapid-fire writes
+
+### 4.5 LLM Services (Isolated VMs)
+
+LLM Services are compute services on isolated VMs (imagegen, websearch, tts, codeexec).
+
+| ID | Threat | Impact | Likelihood | Risk |
+|----|--------|--------|------------|------|
+| LS1 | imagegen produces inappropriate content | Offensive/harmful images | Medium | Medium |
+| LS2 | websearch fetches malicious content | Prompt injection via web page | Medium | **High** |
+| LS3 | websearch used for data exfiltration | Leak conversation/memory via search queries | Low | **High** |
+| LS4 | codeexec sandbox escape | Attacker gains control of codeexec VM | Low | **High** |
+| LS5 | LLM Service VM compromised | Lateral movement attempt to Joi | Low | Medium |
+| LS6 | Resource exhaustion on LLM Service | DoS on image/video generation | Medium | Low |
+| LS7 | Malicious output from LLM Service | Trojaned image, malicious code result | Low | Medium |
+
+**Mitigations:**
+- LS1: Content policy in Protection Layer blocks forbidden prompts; model-level safety
+- LS2: websearch VM isolated; results sanitized before reaching Joi LLM; structured output format
+- LS3: Audit log on all search queries; query validation; no raw memory/conversation in queries
+- LS4: Minimal sandbox (gVisor/Firecracker); no network; resource limits; isolated VM
+- LS5: LLM Service VMs have NO access to Joi core; Nebula mesh only; separate certs
+- LS6: Per-service rate limits (e.g., imagegen 10/hr); queue depth limits
+- LS7: Validate all output; don't execute returned code without sandbox; image format validation
+
+**websearch Specific Risks:**
+```
+┌─────────────┐                      ┌─────────────────────────┐
+│   Joi VM    │   query (logged)     │   websearch VM          │
+│             │─────────────────────►│                         │
+│  [no query  │                      │  ┌─────────────────┐    │
+│   contains  │                      │  │ Browser Agent   │────┼──► INTERNET
+│   secrets]  │                      │  │ (fetch, search) │    │
+│             │◄─────────────────────│  └─────────────────┘    │
+│             │   results (sanitized)│                         │
+└─────────────┘                      └─────────────────────────┘
+```
+
+**websearch Mitigations:**
+1. Query validation: No raw conversation, no memory content, length limits
+2. Result sanitization: Strip scripts, truncate, structured format
+3. Isolated VM: Only websearch has internet; Joi cannot reach internet
+4. Audit: All queries logged; anomaly detection for exfiltration patterns
+
+### 4.7 LLM and Agent Behavior
 
 | ID | Threat | Impact | Likelihood | Risk |
 |----|--------|--------|------------|------|
 | L1 | Prompt injection via Signal message | Joi executes attacker instructions | High | **Critical** |
-| L2 | Prompt injection via openhab event | Joi manipulated by crafted device names | Medium | **High** |
+| L2 | Prompt injection via System Channel event | Joi manipulated by crafted data | Medium | **High** |
 | L3 | Hallucination triggers unwanted action | Spam messages, false alerts | High | Medium |
 | L4 | Agent loop runaway | Infinite messages, resource exhaustion | Medium | Medium |
 | L5 | Model weights backdoored | Persistent compromise | Low | **Critical** |
-| L7 | Untrusted model provenance | Supply chain attack | Medium | **High** |
-| L6 | Context window overflow | Degraded responses, crashes | Medium | Low |
+| L6 | Untrusted model provenance | Supply chain attack | Medium | **High** |
+| L7 | Context window overflow | Degraded responses, crashes | Medium | Low |
+| L8 | LLM manipulated to abuse System Channel writes | Attack external systems | Medium | **High** |
 
 **Mitigations:**
 - L1: Strict input framing, system prompt hardening, output validation
@@ -177,10 +287,22 @@ signal-cli operates differently from the now-defunct signald:
 - L3: Output sanity checks, rate limits, confidence thresholds
 - L4: Circuit breaker (max actions per time window), watchdog process
 - L5: Verify model checksums, use trusted sources only
-- L7: **POLICY** - Only use models from trusted Western sources (Meta, Google, Microsoft). Chinese models (Qwen, DeepSeek) are BANNED.
-- L6: Sliding context window, summarization, hard limits
+- L6: **POLICY** - Only use models from trusted Western sources (Meta, Google, Microsoft). Chinese models (Qwen, DeepSeek) are BANNED.
+- L7: Sliding context window, summarization, hard limits
+- L8: All writes LLM-gated but Protection Layer enforces hard limits; output validation
 
-### 4.5 Memory Store
+**Behavior Mode Impact on Threats:**
+
+| Threat | companion mode | assistant mode |
+|--------|---------------|----------------|
+| L3 (Hallucination spam) | Higher risk - proactive messages | Lower risk - no proactive |
+| L4 (Runaway loop) | Higher risk - impulse system | Lower risk - request-response only |
+| Proactive abuse | Possible | **Eliminated** |
+| Attack surface | Larger (impulse, proactive queue) | Smaller |
+
+> **Note:** `assistant` mode reduces attack surface by eliminating proactive behavior. Consider using it for high-security deployments.
+
+### 4.9 Memory Store
 
 | ID | Threat | Impact | Likelihood | Risk |
 |----|--------|--------|------------|------|
@@ -195,7 +317,7 @@ signal-cli operates differently from the now-defunct signald:
 - M3: Memory validation, anomaly detection, periodic review
 - M4: Retention policies, automatic pruning, size limits
 
-### 4.6 Physical and Local Access
+### 4.10 Physical and Local Access
 
 | ID | Threat | Impact | Likelihood | Risk |
 |----|--------|--------|------------|------|
@@ -213,7 +335,7 @@ signal-cli operates differently from the now-defunct signald:
 - PH5: UPS, tamper detection (optional)
 - PH6: Physical security; VRAM is volatile (no persistent data risk)
 
-### 4.7 Network (LAN)
+### 4.11 Network (LAN)
 
 | ID | Threat | Impact | Likelihood | Risk |
 |----|--------|--------|------------|------|
@@ -363,6 +485,6 @@ This threat model should be reviewed:
 
 ---
 
-*Document version: 1.2*
-*Last updated: 2026-02-04*
-*Based on: Joi-architecture-v2.md (all VMs on Nebula mesh)*
+*Document version: 1.3*
+*Last updated: 2026-02-08*
+*Based on: Joi-architecture-v2.md, system-channel.md (System Channel, LLM Services, behavior modes)*
