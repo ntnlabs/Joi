@@ -26,12 +26,12 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
-│                mesh VM (Ubuntu 24 LTS)                          │
+│                         mesh VM                                 │
 │                Signal bot + Nebula lighthouse                   │
 └───────────────────────────┬─────────────────────────────────────┘
                             │ Nebula mesh VPN
 ┌───────────────────────────▼─────────────────────────────────────┐
-│              Proxmox Host ──── eGPU (RTX 3060)                  │
+│                      Host ──── eGPU                             │
 │  ┌────────────────────────────────────────────────────────────┐ │
 │  │                     Joi VM (isolated)                      │ │
 │  │  ┌──────────────────────────────────────────────────────┐  │ │
@@ -103,7 +103,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 | [Plan.md](Plan.md) | Implementation plan |
 | [Alt-Plan.md](Alt-Plan.md) | Alternative implementation approach |
 
-## Tech Stack
+## Tech Stack (minimum)
 
 - **LLM**: Llama 3.1 8B (uncensored variant)
 - **Runtime**: Ollama with OpenAI-compatible API
