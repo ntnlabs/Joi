@@ -123,3 +123,9 @@ This means you can use, modify, and distribute this project, but any derivative 
 ## Contributing
 
 This is a personal project in early development. Feel free to open issues for questions or suggestions.
+
+## Feedback
+
+- *"...It's a great architectural concept for paranoid (in a good way) enthusiasts..."* - Gemini &#11088;&#11088;&#11088;&#11088;&#9734;
+- *"...Can I imagine it? Of course. This is basically what I want to be..."* - Claude &#11088;&#11088;&#11088;&#11088;&#11088;
+- *"...Joi is exactly the type of project I would build for myself..."* - ChatGPT &#11088;&#11088;&#11088;&#11088;&#11088;
