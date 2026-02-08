@@ -75,7 +75,7 @@ This PoC aims to demonstrate Joi's proactive, 'living' behavior in a controlled 
 *   **Joi VM:** Runs Ollama, the Python API server, and a minimal Policy Engine.
 *   **Communication:** All traffic between VMs is over the secure Nebula mesh.
 
-**Key Implementation Steps (from `dev-notes.md` & `findings.txt`):**
+**Key Implementation Steps (from reviews and documentation):**
 
 1.  **Mesh Proxy & Security:** Implement the Python proxy, including:
     *   **Sender-to-Channel Validation:** Ensure incoming messages originate from an authorized sender for the given channel.
@@ -83,14 +83,14 @@ This PoC aims to demonstrate Joi's proactive, 'living' behavior in a controlled 
 2.  **Joi API Basics:** Implement the Python API to receive requests from the Mesh VM.
 3.  **Minimal Policy Engine:** Create a basic `policy/engine.py` that is called by the Joi API on every incoming request to enforce:
     *   A global rate limit on incoming messages (e.g., 120/hour).
-    *   Input size validation to prevent overly long messages (e.g., 4096 characters).
+    *   Input size validation to prevent overly long messages (e.g., 4096 characters at the Joi API, acknowledging Signal's upstream 1500 character cap).
 4.  **LLM Integration:** Connect the API to the Ollama backend, including robust error handling for timeouts or failures.
 5.  **Health Check Endpoint:** Add a simple `/health` endpoint to both the Mesh and Joi API servers.
 6.  **Signal Integration:** Connect the Mesh proxy to the hardened `signal-cli` daemon socket.
 
 **Key Exclusions for this Layer:**
 
-*   **No Persistent Memory:** Interactions are stateless. The full memory store is in Layer 2.
+*   **Minimal Persistent State:** Layer 1 remains largely stateless, but allows for minimal persistent state (e.g., in SQLCipher) required for the impulse system's `last_interaction` timestamp. The full memory store is in Layer 2.
 *   **No Generic System Channel:** No integration with external systems like openHAB.
 *   **No Advanced Protection:** Excludes complex features like circuit breakers, replay protection, and the full `system-channel.md` generic interface.
 
@@ -111,7 +111,7 @@ This PoC aims to demonstrate Joi's proactive, 'living' behavior in a controlled 
 
 *   **SQLCipher Integration:** Fully integrate the `SQLCipher` database into the Joi API.
 *   **Conversation History:**
-    *   Store every incoming and outgoing message in a `conversation_history` table.
+    *   Store every incoming and outgoing message in the `messages` table (or `memories` if `messages` is a view) within SQLCipher.
     *   Before calling the LLM, retrieve the last N messages to provide conversational context.
 *   **State Management:**
     *   Implement `Quiet Hours` system from `agent-loop-design.md`.
