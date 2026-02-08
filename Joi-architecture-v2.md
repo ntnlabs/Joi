@@ -362,6 +362,159 @@ joi-challenger (every 30s) ────► mesh-watchdog
 > (via TPM, keyfile, or network) would allow an attacker who gains VM access to
 > simply reboot and regain access.
 
+**Maintenance Mode (USB Key):**
+
+The mesh heartbeat shutdown creates an operational problem: how to perform planned
+mesh maintenance (updates, reboots) without triggering joi shutdown?
+
+Solution: A physical USB key with cryptographic proof enables maintenance mode.
+
+```
+┌─────────────────────────────────────────────────┐
+│ Maintenance USB Key                             │
+│  └── /maintenance/key.pem (Ed25519 private key) │
+└─────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────┐
+│ Joi Config (/etc/joi/maintenance-pubkey.pem)    │
+│  └── Ed25519 public key                         │
+└─────────────────────────────────────────────────┘
+```
+
+**Activation Flow:**
+
+1. Owner plugs USB key into Proxmox host (passed through to joi VM)
+2. Joi detects USB mount via udev rule
+3. Joi reads private key from `/maintenance/key.pem`
+4. Joi generates random challenge nonce
+5. Joi signs challenge with private key
+6. Joi verifies signature against stored public key
+7. If valid → maintenance mode activated, heartbeat suspended
+8. Joi logs: `MAINTENANCE_MODE_ACTIVATED source=usb_key`
+9. USB removal (or timeout) → normal operation resumes
+
+**USB Detection (udev rule):**
+```bash
+# /etc/udev/rules.d/99-maintenance-key.rules
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_LABEL}=="JOI_MAINTENANCE", \
+  RUN+="/usr/local/bin/joi-maintenance-check"
+```
+
+**Verification Script:**
+```bash
+#!/bin/bash
+# /usr/local/bin/joi-maintenance-check
+
+MOUNT_POINT="/mnt/maintenance-key"
+PRIVATE_KEY="$MOUNT_POINT/maintenance/key.pem"
+PUBLIC_KEY="/etc/joi/maintenance-pubkey.pem"
+CHALLENGE_FILE="/tmp/maintenance-challenge"
+
+# Mount the USB
+mkdir -p "$MOUNT_POINT"
+mount -o ro LABEL=JOI_MAINTENANCE "$MOUNT_POINT" || exit 1
+
+# Check if key exists
+if [[ ! -f "$PRIVATE_KEY" ]]; then
+    logger -t joi-maintenance "No private key found on USB"
+    umount "$MOUNT_POINT"
+    exit 1
+fi
+
+# Generate challenge
+openssl rand -hex 32 > "$CHALLENGE_FILE"
+
+# Sign challenge with USB private key
+SIGNATURE=$(openssl pkeyutl -sign -inkey "$PRIVATE_KEY" \
+    -in "$CHALLENGE_FILE" | base64 -w0)
+
+# Verify signature with stored public key
+echo "$SIGNATURE" | base64 -d | \
+    openssl pkeyutl -verify -pubin -inkey "$PUBLIC_KEY" \
+    -in "$CHALLENGE_FILE"
+
+if [[ $? -eq 0 ]]; then
+    logger -t joi-maintenance "MAINTENANCE_MODE_ACTIVATED source=usb_key"
+    touch /var/run/joi-maintenance-mode
+    # Notify joi-challenger to suspend heartbeat checks
+    systemctl kill -s USR1 joi-challenger
+else
+    logger -t joi-maintenance "MAINTENANCE_KEY_INVALID"
+fi
+
+# Cleanup
+shred -u "$CHALLENGE_FILE"
+umount "$MOUNT_POINT"
+```
+
+**Deactivation (USB removal):**
+```bash
+# /etc/udev/rules.d/99-maintenance-key.rules (continued)
+ACTION=="remove", ENV{ID_FS_LABEL}=="JOI_MAINTENANCE", \
+  RUN+="/usr/local/bin/joi-maintenance-end"
+
+# /usr/local/bin/joi-maintenance-end
+#!/bin/bash
+rm -f /var/run/joi-maintenance-mode
+systemctl kill -s USR2 joi-challenger
+logger -t joi-maintenance "MAINTENANCE_MODE_DEACTIVATED"
+```
+
+**Security Properties:**
+| Property | Guarantee |
+|----------|-----------|
+| Physical presence | USB must be plugged into Proxmox host |
+| Cryptographic proof | Private key required (can't clone by USB ID alone) |
+| No network path | Mesh cannot trigger maintenance mode |
+| Public key safe | Stored public key is not secret |
+| Audit trail | All activations/deactivations logged |
+| Fail-secure | Invalid key → mode not activated |
+
+**Key Generation:**
+```bash
+# Generate key pair (on air-gapped machine)
+openssl genpkey -algorithm ED25519 -out maintenance-key.pem
+openssl pkey -in maintenance-key.pem -pubout -out maintenance-pubkey.pem
+
+# Install public key on joi
+sudo install -o root -g root -m 0644 maintenance-pubkey.pem /etc/joi/maintenance-pubkey.pem
+
+# Prepare USB key (FAT32 for compatibility)
+# Label MUST be "JOI_MAINTENANCE"
+sudo mkfs.vfat -n JOI_MAINTENANCE /dev/sdX1
+sudo mount /dev/sdX1 /mnt/usb
+sudo mkdir /mnt/usb/maintenance
+sudo cp maintenance-key.pem /mnt/usb/maintenance/key.pem
+sudo umount /mnt/usb
+
+# Securely delete original private key
+shred -u maintenance-key.pem
+```
+
+**Multiple Keys (optional):**
+
+For redundancy, multiple public keys can be authorized:
+```bash
+# /etc/joi/maintenance-pubkeys/
+#   ├── primary.pem      (carried by owner)
+#   └── backup.pem       (stored in safe)
+```
+
+Verification script checks against all keys in directory.
+
+**Timeout Safety:**
+
+Optional maximum maintenance duration prevents forgotten USB:
+```yaml
+# /etc/joi/config.yaml
+maintenance:
+  max_duration_minutes: 60  # Auto-exit after 1 hour
+  warning_at_minutes: 50    # Log warning before timeout
+```
+
+After timeout, maintenance mode deactivates even if USB still present.
+Owner must re-insert USB to extend.
+
 **Known-Good Hashes (stored on joi):**
 ```yaml
 # /etc/joi/mesh-baseline.yaml

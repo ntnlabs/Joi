@@ -327,13 +327,17 @@ LLM Services are compute services on isolated VMs (imagegen, websearch, tts, cod
 | PH4 | USB attack on host (malicious device) | Code execution | Low | Medium |
 | PH5 | Power supply tampering / eGPU disconnect | DoS, hardware damage | Low | Low |
 | PH6 | eGPU enclosure theft | GPU loss, potential data on VRAM | Low | Low |
+| PH7 | Maintenance USB key stolen/cloned | Attacker can disable heartbeat protection | Low | **High** |
+| PH8 | Forged maintenance USB (wrong label) | Attempt to trigger maintenance mode | Low | Low |
 
 **Mitigations:**
 - PH1, PH2: LUKS encryption on Proxmox host, encrypted VM disk images
 - PH3: Strong authentication (key-based SSH), Proxmox 2FA, disable password login
-- PH4: Disable unused USB ports in BIOS/firmware
+- PH4: Disable unused USB ports in BIOS/firmware (except for maintenance key port)
 - PH5: UPS, tamper detection (optional)
 - PH6: Physical security; VRAM is volatile (no persistent data risk)
+- PH7: Ed25519 cryptographic verification (USB ID alone is not sufficient); keep maintenance key in secure location; backup key in separate safe
+- PH8: Cryptographic verification rejects invalid keys; logs all attempts
 
 ### 4.11 Network (LAN)
 
@@ -363,9 +367,10 @@ Likelihood  │            │ M3, M4        │ J2, O1, O5, │
             │            │               │ N1, N2, M1, │
             │            │               │ PH3         │
 ────────────┼────────────┼───────────────┼─────────────┼─────────────────
-Low         │ L6, PH5    │ P6, P9, J3,   │ P3, P5, P7  │ L5
-Likelihood  │            │ O4, N3, N4,   │ P10, O3, M2 │
-            │            │ PH4           │ PH1, PH2    │
+Low         │ L6, PH5,   │ P6, P9, J3,   │ P3, P5, P7  │ L5
+Likelihood  │ PH8        │ O4, N3, N4,   │ P10, O3, M2 │
+            │            │ PH4           │ PH1, PH2,   │
+            │            │               │ PH7         │
 ```
 
 > **Note:** P8 (credential exposure via process args) and P11 (signal-cli version expiry) are Medium likelihood/High impact because they are mitigated by using daemon mode and following the update schedule respectively.

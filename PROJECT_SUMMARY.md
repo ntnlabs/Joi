@@ -84,6 +84,8 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 6. **Nebula mesh**: Encrypted, certificate-authenticated tunnel for all VMs
 7. **Policy engine**: Enforces constraints on agent actions
 8. **Trusted LLMs only**: No Chinese models (supply chain security)
+9. **Mesh integrity**: Joi shuts down if mesh fails heartbeat (potential compromise)
+10. **Maintenance USB key**: Physical USB with Ed25519 key enables planned mesh maintenance
 
 ## Documentation Files
 
