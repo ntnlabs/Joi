@@ -7,6 +7,8 @@
 - openhab is read-only to Joi (ingest all events, no control).
 - Security-first transport and validation across all boundaries.
 
+> **Implementation:** See local `dev-notes.md` for tech stack, project structure, and development notes. Code lives in `execution/joi/` and `execution/mesh/`.
+
 ## Hardware Platform
 - **Host:** ASUS NUC 13 Pro NUC13ANHI7 (i7-1360P, Thunderbolt 4)
 - **Virtualization:** Proxmox VE
