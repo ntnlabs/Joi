@@ -74,6 +74,15 @@ JOI_LOG_LEVEL=INFO
 # JOI_MEMORY_KEY=<generated-key>
 ```
 
+### /var/lib/joi/system-prompt.txt
+
+Custom system prompt for Joi's personality. Optional - if missing, uses default.
+
+```text
+You are Joi, a helpful personal AI assistant...
+(customize as needed)
+```
+
 ### /var/lib/joi/memory.db
 
 SQLite database containing:
