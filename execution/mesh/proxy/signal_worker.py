@@ -16,10 +16,61 @@ from policy import MeshPolicy
 
 logger = logging.getLogger("mesh.signal_worker")
 
+
+# --- Dedupe Cache ---
+
+class MessageDedupeCache:
+    """Thread-safe cache to prevent duplicate message processing."""
+
+    def __init__(self, ttl_seconds: int = 3600, max_size: int = 10000):
+        self._cache: Dict[str, float] = {}
+        self._lock = threading.Lock()
+        self._ttl = ttl_seconds
+        self._max_size = max_size
+        self._last_prune = time.time()
+
+    def check_and_add(self, message_id: str) -> bool:
+        """
+        Check if message_id is a duplicate.
+        Returns True if it's a NEW message (not seen before).
+        Returns False if it's a DUPLICATE (already processed).
+        """
+        now = time.time()
+        with self._lock:
+            # Prune old entries periodically (every 5 minutes)
+            if now - self._last_prune > 300:
+                self._prune(now)
+                self._last_prune = now
+
+            if message_id in self._cache:
+                return False  # Duplicate
+
+            self._cache[message_id] = now
+            return True  # New message
+
+    def _prune(self, now: float) -> None:
+        """Remove entries older than TTL."""
+        cutoff = now - self._ttl
+        expired = [k for k, v in self._cache.items() if v < cutoff]
+        for k in expired:
+            del self._cache[k]
+
+        # If still too large, remove oldest entries
+        if len(self._cache) > self._max_size:
+            sorted_items = sorted(self._cache.items(), key=lambda x: x[1])
+            to_remove = len(self._cache) - self._max_size
+            for k, _ in sorted_items[:to_remove]:
+                del self._cache[k]
+
+        if expired:
+            logger.debug("Pruned %d expired dedupe entries", len(expired))
+
+
 # Global RPC client (shared between receiver thread and HTTP server)
 _rpc: Optional[JsonRpcStdioClient] = None
 _rpc_lock = threading.Lock()
 _account: str = ""
+_dedupe_cache = MessageDedupeCache()
 
 
 # --- Flask app for outbound API ---
@@ -286,6 +337,13 @@ def main() -> None:
                     if payload is None:
                         logger.info("Skipping unsupported Signal event")
                         continue
+
+                    # Dedupe check - drop if we've seen this message_id before
+                    message_id = payload.get("message_id")
+                    if not _dedupe_cache.check_and_add(message_id):
+                        logger.info("Dropping duplicate message_id=%s", message_id)
+                        continue
+
                     decision = policy.evaluate_inbound(payload)
                     if not decision.allowed:
                         sender = payload.get("sender", {}).get("transport_id", "unknown")
