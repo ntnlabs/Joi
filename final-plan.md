@@ -214,3 +214,41 @@ This layer includes a dedicated and budgeted effort for rigorous security testin
 ## Communication Platform Decision (Future Consideration)
 
 The decision regarding the ultimate secure mobile communication platform (Silentel, Bittium, SINA) will be made once the core Joi functionality is proven. The MVP will rely on the current Signal integration. Transitioning to a certified platform would involve replacing the `signal-cli` integration with the chosen vendor's secure gateway/SDK in the Mesh VM, likely exposing a similar internal API for Joi to interact with.
+
+---
+
+## Milestones
+
+### 2026-02-10: Layer 0/1 Basic Functionality Operational
+
+**Achieved:** End-to-end message flow working: Signal → mesh → Joi → Ollama → mesh → Signal
+
+**Components:**
+- **Mesh VM (172.22.22.1):**
+  - `mesh-signal-worker` service handling both inbound and outbound
+  - signal-cli JSON-RPC stdio mode (not socket - config lock issue)
+  - Policy enforcement (unknown sender drop, rate limiting)
+  - Message dedupe cache (1hr TTL, prevents replay)
+  - Flask HTTP server on port 8444 for outbound API
+
+- **Joi VM (172.22.22.2):**
+  - Ollama in Docker with GPU passthrough (GTX 1650)
+  - Model: llama3
+  - FastAPI server on port 8443
+  - System prompt defines Joi identity
+  - No conversation context yet (stateless)
+
+**Key Files:**
+- `execution/mesh/proxy/signal_worker.py` - unified inbound/outbound worker
+- `execution/joi/api/server.py` - Joi API with LLM integration
+- `execution/joi/llm/client.py` - Ollama client
+
+**Tech Stack:**
+- Python (Flask, FastAPI, httpx)
+- signal-cli 0.x (JSON-RPC stdio mode)
+- Ollama (Docker)
+
+**Known Limitations:**
+- No conversation memory (each message independent)
+- Single hardcoded system prompt (no per-user/per-group customization)
+- Typing indicators logged as "Skipping unsupported Signal event" (expected)
