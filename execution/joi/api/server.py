@@ -1,0 +1,212 @@
+import logging
+import os
+import sys
+import time
+from typing import Any, Dict, Optional
+
+import httpx
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+
+# Add parent dir to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from config import load_settings
+from llm import OllamaClient
+
+logger = logging.getLogger("joi.api")
+
+settings = load_settings()
+
+app = FastAPI(title="joi-api", version="0.1.0")
+
+# Initialize Ollama client
+llm = OllamaClient(
+    base_url=settings.ollama_url,
+    model=settings.ollama_model,
+    timeout=60.0,
+)
+
+# System prompt for Joi
+SYSTEM_PROMPT = """You are Joi, a helpful personal AI assistant. You are friendly, concise, and helpful.
+Keep your responses brief and to the point unless asked for more detail.
+You communicate via Signal messenger, so keep messages reasonably short."""
+
+
+# --- Request/Response Models (per api-contracts.md) ---
+
+class InboundSender(BaseModel):
+    id: str
+    transport_id: str
+    display_name: Optional[str] = None
+
+
+class InboundConversation(BaseModel):
+    type: str  # "direct" or "group"
+    id: str
+
+
+class InboundContent(BaseModel):
+    type: str  # "text", "reaction", etc.
+    text: Optional[str] = None
+    reaction: Optional[str] = None
+    transport_native: Optional[Dict[str, Any]] = None
+
+
+class InboundMessage(BaseModel):
+    transport: str
+    message_id: str
+    sender: InboundSender
+    conversation: InboundConversation
+    priority: str = "normal"
+    content: InboundContent
+    timestamp: int
+    quote: Optional[Dict[str, Any]] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class InboundResponse(BaseModel):
+    status: str
+    message_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+# --- Endpoints ---
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "model": settings.ollama_model}
+
+
+@app.post("/api/v1/message/inbound", response_model=InboundResponse)
+def receive_message(msg: InboundMessage):
+    """
+    Receive a message from mesh proxy, process with LLM, send response back.
+    """
+    logger.info(
+        "Received message_id=%s from=%s type=%s",
+        msg.message_id,
+        msg.sender.id,
+        msg.content.type,
+    )
+
+    # Only handle text messages for now
+    if msg.content.type != "text" or not msg.content.text:
+        logger.info("Skipping non-text message type=%s", msg.content.type)
+        return InboundResponse(status="ok", message_id=msg.message_id)
+
+    user_text = msg.content.text.strip()
+    if not user_text:
+        return InboundResponse(status="ok", message_id=msg.message_id)
+
+    # Generate response from LLM
+    logger.info("Generating LLM response for: %s", user_text[:50])
+    llm_response = llm.generate(prompt=user_text, system=SYSTEM_PROMPT)
+
+    if llm_response.error:
+        logger.error("LLM error: %s", llm_response.error)
+        return InboundResponse(
+            status="error",
+            message_id=msg.message_id,
+            error=f"llm_error: {llm_response.error}",
+        )
+
+    response_text = llm_response.text.strip()
+    if not response_text:
+        logger.warning("LLM returned empty response")
+        response_text = "I'm not sure how to respond to that."
+
+    logger.info("LLM response: %s", response_text[:50])
+
+    # Send response back via mesh
+    send_result = _send_to_mesh(
+        recipient_id=msg.sender.id,
+        recipient_transport_id=msg.sender.transport_id,
+        conversation=msg.conversation,
+        text=response_text,
+        reply_to=msg.message_id,
+    )
+
+    if not send_result:
+        logger.error("Failed to send response to mesh")
+        return InboundResponse(
+            status="error",
+            message_id=msg.message_id,
+            error="mesh_send_failed",
+        )
+
+    return InboundResponse(status="ok", message_id=msg.message_id)
+
+
+def _send_to_mesh(
+    recipient_id: str,
+    recipient_transport_id: str,
+    conversation: InboundConversation,
+    text: str,
+    reply_to: Optional[str] = None,
+) -> bool:
+    """Send a message back to mesh for delivery via Signal."""
+    url = f"{settings.mesh_url}/api/v1/message/outbound"
+
+    payload = {
+        "transport": "signal",
+        "recipient": {
+            "id": recipient_id,
+            "transport_id": recipient_transport_id,
+        },
+        "priority": "normal",
+        "delivery": {
+            "target": conversation.type,
+            "group_id": conversation.id if conversation.type == "group" else None,
+        },
+        "content": {
+            "type": "text",
+            "text": text,
+        },
+        "reply_to": reply_to,
+        "escalated": False,
+        "voice_response": False,
+    }
+
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        if data.get("status") == "ok":
+            logger.info("Sent response to mesh successfully")
+            return True
+        else:
+            logger.error("Mesh returned error: %s", data.get("error"))
+            return False
+
+    except Exception as exc:
+        logger.error("Failed to send to mesh: %s", exc)
+        return False
+
+
+# --- Main ---
+
+def main():
+    import uvicorn
+
+    logging.basicConfig(
+        level=getattr(logging, settings.log_level),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+
+    logger.info("Starting Joi API on %s:%d", settings.bind_host, settings.bind_port)
+    logger.info("Ollama: %s (model: %s)", settings.ollama_url, settings.ollama_model)
+    logger.info("Mesh: %s", settings.mesh_url)
+
+    uvicorn.run(
+        app,
+        host=settings.bind_host,
+        port=settings.bind_port,
+        log_level=settings.log_level.lower(),
+    )
+
+
+if __name__ == "__main__":
+    main()
