@@ -19,6 +19,8 @@ def health():
 def send_test(recipient: str, message: str):
     if os.getenv("MESH_ENABLE_TEST", "0") != "1":
         raise HTTPException(status_code=403, detail="Test endpoint disabled")
+    if settings.signal_mode != "socket":
+        raise HTTPException(status_code=409, detail="send_test requires socket mode")
 
     payload = {
         "account": os.getenv("SIGNAL_ACCOUNT", ""),
