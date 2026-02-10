@@ -1,9 +1,12 @@
 import logging
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from flask import Flask, jsonify, request
 
 from config import load_settings
 from forwarder import forward_to_joi
@@ -12,6 +15,94 @@ from policy import MeshPolicy
 
 
 logger = logging.getLogger("mesh.signal_worker")
+
+# Global RPC client (shared between receiver thread and HTTP server)
+_rpc: Optional[JsonRpcStdioClient] = None
+_rpc_lock = threading.Lock()
+_account: str = ""
+
+
+# --- Flask app for outbound API ---
+flask_app = Flask("mesh-outbound")
+flask_app.logger.setLevel(logging.WARNING)  # Quiet Flask logs
+
+
+@flask_app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "mode": "worker"})
+
+
+@flask_app.route("/api/v1/message/outbound", methods=["POST"])
+def send_outbound():
+    """Handle outbound messages from Joi."""
+    global _rpc, _account
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"status": "error", "error": "invalid_json"}), 400
+
+    # Extract fields from request (per api-contracts.md)
+    recipient = data.get("recipient", {})
+    transport_id = recipient.get("transport_id")
+    content = data.get("content", {})
+    text = content.get("text")
+    delivery = data.get("delivery", {})
+    target = delivery.get("target", "direct")
+    group_id = delivery.get("group_id")
+
+    if not transport_id and target != "group":
+        return jsonify({"status": "error", "error": "missing_recipient"}), 400
+    if not text:
+        return jsonify({"status": "error", "error": "missing_text"}), 400
+
+    # Build signal-cli payload
+    payload: Dict[str, Any] = {
+        "account": _account,
+        "message": text,
+    }
+
+    if target == "group":
+        if not group_id:
+            return jsonify({"status": "error", "error": "missing_group_id"}), 400
+        payload["groupId"] = group_id
+    else:
+        payload["recipients"] = [transport_id]
+
+    # Send via signal-cli
+    with _rpc_lock:
+        if _rpc is None:
+            return jsonify({"status": "error", "error": "rpc_not_ready"}), 503
+        try:
+            result = _rpc.call("send", payload, timeout=30.0)
+        except Exception as exc:
+            logger.error("Signal send failed: %s", exc)
+            return jsonify({"status": "error", "error": str(exc)}), 500
+
+    if "error" in result:
+        logger.warning("Signal send error: %s", result["error"])
+        return jsonify({"status": "error", "error": str(result["error"])}), 500
+
+    # Extract timestamp from result
+    sent_at = None
+    res = result.get("result")
+    if isinstance(res, dict):
+        sent_at = res.get("timestamp")
+    elif isinstance(res, list) and res:
+        sent_at = res[0].get("timestamp")
+
+    logger.info("Sent message to %s", transport_id or group_id)
+    return jsonify({
+        "status": "ok",
+        "data": {
+            "message_id": str(sent_at) if sent_at else None,
+            "transport": "signal",
+            "sent_at": sent_at,
+            "delivered": False,
+        }
+    })
+
+
+# --- Helper functions ---
 
 def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -30,7 +121,6 @@ def _extract_messages(notifications: List[Dict[str, Any]]) -> List[Dict[str, Any
             continue
         params = item.get("params")
         if isinstance(params, dict):
-            # signal-cli can send a single event dict or {"result": [events]}
             result = params.get("result")
             if isinstance(result, list):
                 messages.extend(_as_list_of_dicts(result))
@@ -67,7 +157,6 @@ def _normalize_signal_message(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if isinstance(emoji, str):
             content_reaction = emoji
     elif message_text is None:
-        # For now we only forward text/reaction. Other types are logged and skipped.
         return None
 
     source = envelope.get("source")
@@ -131,13 +220,25 @@ def _normalize_signal_message(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+def run_http_server(port: int):
+    """Run Flask server in a thread."""
+    # Use werkzeug directly to avoid Flask dev server warnings
+    from werkzeug.serving import make_server
+    server = make_server("0.0.0.0", port, flask_app, threaded=True)
+    logger.info("HTTP server listening on port %d", port)
+    server.serve_forever()
+
+
 def main() -> None:
+    global _rpc, _account
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings()
-    account = os.getenv("SIGNAL_ACCOUNT", "")
-    if not account:
+    _account = os.getenv("SIGNAL_ACCOUNT", "")
+    if not _account:
         raise SystemExit("SIGNAL_ACCOUNT not set")
 
+    http_port = int(os.getenv("MESH_WORKER_HTTP_PORT", "8444"))
     notification_wait_seconds = float(os.getenv("MESH_SIGNAL_POLL_SECONDS", "5"))
     signal_cli_bin = os.getenv("SIGNAL_CLI_BIN", "/usr/local/bin/signal-cli")
     signal_cli_config_dir = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/var/lib/signal-cli")
@@ -152,7 +253,7 @@ def main() -> None:
 
     policy = MeshPolicy(policy_file)
 
-    rpc = JsonRpcStdioClient(
+    _rpc = JsonRpcStdioClient(
         [
             signal_cli_bin,
             "--config",
@@ -165,10 +266,14 @@ def main() -> None:
     logger.info("Signal worker started (on-connection notifications)")
     logger.info("Policy loaded from %s", policy_file)
 
+    # Start HTTP server in background thread
+    http_thread = threading.Thread(target=run_http_server, args=(http_port,), daemon=True)
+    http_thread.start()
+
     try:
         while True:
             try:
-                notification = rpc.pop_notification(timeout=notification_wait_seconds)
+                notification = _rpc.pop_notification(timeout=notification_wait_seconds)
                 if notification is None:
                     continue
 
@@ -195,7 +300,7 @@ def main() -> None:
                 logger.error("signal_worker error: %s", exc)
                 time.sleep(1)
     finally:
-        rpc.close()
+        _rpc.close()
 
 
 if __name__ == "__main__":
