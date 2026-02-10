@@ -13,18 +13,6 @@ from policy import MeshPolicy
 
 logger = logging.getLogger("mesh.signal_worker")
 
-
-def _receive_messages(rpc: JsonRpcStdioClient, account: str, timeout_s: int) -> List[Dict[str, Any]]:
-    params = {"account": account, "timeout": timeout_s}
-    result = rpc.call("receive", params)
-    if "error" in result:
-        raise RuntimeError(result["error"])
-    rpc_result = result.get("result")
-    if isinstance(rpc_result, list):
-        return rpc_result
-    return []
-
-
 def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
@@ -150,8 +138,7 @@ def main() -> None:
     if not account:
         raise SystemExit("SIGNAL_ACCOUNT not set")
 
-    poll_seconds = int(os.getenv("MESH_SIGNAL_POLL_SECONDS", "5"))
-    timeout_s = int(os.getenv("MESH_SIGNAL_TIMEOUT", "10"))
+    notification_wait_seconds = float(os.getenv("MESH_SIGNAL_POLL_SECONDS", "5"))
     signal_cli_bin = os.getenv("SIGNAL_CLI_BIN", "/usr/local/bin/signal-cli")
     signal_cli_config_dir = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/var/lib/signal-cli")
     policy_file = os.getenv("MESH_POLICY_FILE", "/etc/mesh-proxy/policy.json")
@@ -171,19 +158,21 @@ def main() -> None:
             "--config",
             signal_cli_config_dir,
             "jsonRpc",
-            "--receive-mode=manual",
+            "--receive-mode=on-connection",
         ]
     )
 
-    logger.info("Signal worker started (manual receive)")
+    logger.info("Signal worker started (on-connection notifications)")
     logger.info("Policy loaded from %s", policy_file)
 
     try:
         while True:
             try:
-                inline_messages = _receive_messages(rpc, account, timeout_s)
-                notification_messages = _extract_messages(rpc.pop_all_notifications())
-                messages = inline_messages + notification_messages
+                notification = rpc.pop_notification(timeout=notification_wait_seconds)
+                if notification is None:
+                    continue
+
+                messages = _extract_messages([notification])
 
                 if messages:
                     logger.info("Received %d message(s) from Signal", len(messages))
@@ -204,8 +193,7 @@ def main() -> None:
                     forward_to_joi(payload)
             except Exception as exc:  # noqa: BLE001
                 logger.error("signal_worker error: %s", exc)
-
-            time.sleep(poll_seconds)
+                time.sleep(1)
     finally:
         rpc.close()
 
