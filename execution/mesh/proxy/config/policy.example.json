@@ -1,0 +1,24 @@
+{
+  "identity": {
+    "allowed_senders": [
+      "+<REDACTED>"
+    ],
+    "groups": {
+      "GROUP_ID_HERE": {
+        "participants": [
+          "+<REDACTED>"
+        ]
+      }
+    }
+  },
+  "rate_limits": {
+    "inbound": {
+      "max_per_hour": 120,
+      "max_per_minute": 20
+    }
+  },
+  "validation": {
+    "max_text_length": 1500,
+    "max_timestamp_skew_ms": 300000
+  }
+}

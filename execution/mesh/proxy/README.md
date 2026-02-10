@@ -62,6 +62,7 @@ curl -X POST "http://127.0.0.1:8444/send_test?recipient=+<REDACTED>&message=hell
 - `SIGNAL_ACCOUNT` (required for `/send_test` and worker)
 - `SIGNAL_CLI_BIN` (default: /usr/local/bin/signal-cli)
 - `SIGNAL_CLI_CONFIG_DIR` (default: /var/lib/signal-cli)
+- `MESH_POLICY_FILE` (default: /etc/mesh-proxy/policy.json)
 
 ## Forwarding to Joi (optional)
 
@@ -80,6 +81,8 @@ This is the recommended mode for production on mesh VM.
 ```bash
 sudo cp systemd/mesh-signal-worker.service /etc/systemd/system/
 sudo cp systemd/mesh-signal-worker.env.example /etc/default/mesh-signal-worker
+sudo mkdir -p /etc/mesh-proxy
+sudo cp config/policy.example.json /etc/mesh-proxy/policy.json
 ```
 
 2. Edit account and options:
