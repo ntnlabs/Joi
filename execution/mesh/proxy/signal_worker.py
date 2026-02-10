@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 from config import load_settings
 from forwarder import forward_to_joi
 from jsonrpc_stdio import JsonRpcStdioClient
+from policy import MeshPolicy
 
 
 logger = logging.getLogger("mesh.signal_worker")
@@ -153,11 +154,16 @@ def main() -> None:
     timeout_s = int(os.getenv("MESH_SIGNAL_TIMEOUT", "10"))
     signal_cli_bin = os.getenv("SIGNAL_CLI_BIN", "/usr/local/bin/signal-cli")
     signal_cli_config_dir = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/var/lib/signal-cli")
+    policy_file = os.getenv("MESH_POLICY_FILE", "/etc/mesh-proxy/policy.json")
 
     if not Path(signal_cli_bin).exists():
         raise SystemExit(f"SIGNAL_CLI_BIN not found: {signal_cli_bin}")
     if not Path(signal_cli_config_dir).exists():
         raise SystemExit(f"SIGNAL_CLI_CONFIG_DIR not found: {signal_cli_config_dir}")
+    if not Path(policy_file).exists():
+        raise SystemExit(f"MESH_POLICY_FILE not found: {policy_file}")
+
+    policy = MeshPolicy(policy_file)
 
     rpc = JsonRpcStdioClient(
         [
@@ -170,6 +176,7 @@ def main() -> None:
     )
 
     logger.info("Signal worker started (manual receive)")
+    logger.info("Policy loaded from %s", policy_file)
 
     try:
         while True:
@@ -184,6 +191,14 @@ def main() -> None:
                     payload = _normalize_signal_message(msg)
                     if payload is None:
                         logger.info("Skipping unsupported Signal event")
+                        continue
+                    decision = policy.evaluate_inbound(payload)
+                    if not decision.allowed:
+                        sender = payload.get("sender", {}).get("transport_id", "unknown")
+                        if decision.reason == "unknown_sender":
+                            logger.info("Dropping unknown sender=%s", sender)
+                        else:
+                            logger.warning("Dropping sender=%s reason=%s", sender, decision.reason)
                         continue
                     logger.info("Forwarding message_id=%s to Joi", payload.get("message_id"))
                     forward_to_joi(payload)
