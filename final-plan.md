@@ -213,7 +213,7 @@ This layer includes a dedicated and budgeted effort for rigorous security testin
 
 ## Communication Platform Decision (Future Consideration)
 
-The decision regarding the ultimate secure mobile communication platform (Silentel, Bittium, SINA) will be made once the core Joi functionality is proven. The MVP will rely on the current Signal integration. Transitioning to a certified platform would involve replacing the `signal-cli` integration with the chosen vendor's secure gateway/SDK in the Mesh VM, likely exposing a similar internal API for Joi to interact with.
+The decision regarding the ultimate secure mobile communication platform will be made once the core Joi functionality is proven. The MVP will rely on the current Signal integration. Transitioning to a certified platform would involve replacing the `signal-cli` integration with the chosen vendor's secure gateway/SDK in the Mesh VM, likely exposing a similar internal API for Joi to interact with.
 
 ---
 
