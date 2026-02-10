@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from config import load_settings
@@ -150,12 +151,19 @@ def main() -> None:
 
     poll_seconds = int(os.getenv("MESH_SIGNAL_POLL_SECONDS", "5"))
     timeout_s = int(os.getenv("MESH_SIGNAL_TIMEOUT", "10"))
+    signal_cli_bin = os.getenv("SIGNAL_CLI_BIN", "/usr/local/bin/signal-cli")
+    signal_cli_config_dir = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/var/lib/signal-cli")
+
+    if not Path(signal_cli_bin).exists():
+        raise SystemExit(f"SIGNAL_CLI_BIN not found: {signal_cli_bin}")
+    if not Path(signal_cli_config_dir).exists():
+        raise SystemExit(f"SIGNAL_CLI_CONFIG_DIR not found: {signal_cli_config_dir}")
 
     rpc = JsonRpcStdioClient(
         [
-            "/usr/local/bin/signal-cli",
+            signal_cli_bin,
             "--config",
-            "/var/lib/signal-cli",
+            signal_cli_config_dir,
             "jsonRpc",
             "--receive-mode=manual",
         ]
