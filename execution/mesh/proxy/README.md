@@ -18,14 +18,14 @@ pip install -r requirements.txt
 ./run-worker.sh
 ```
 
-## signal-cli JSON-RPC mode (manual receive)
+## signal-cli JSON-RPC mode (on-connection notifications)
 
-For the worker to poll `receive`, run signal-cli in JSON-RPC mode with manual receive:
+The worker uses notification-driven receive mode and does not poll `receive`.
 
 The worker uses stdio JSON-RPC and spawns `signal-cli` directly:
 
 ```bash
-signal-cli --config /var/lib/signal-cli jsonRpc --receive-mode=manual
+signal-cli --config /var/lib/signal-cli jsonRpc --receive-mode=on-connection
 ```
 
 Note: socket mode is not supported by this build.
@@ -60,6 +60,7 @@ curl -X POST "http://127.0.0.1:8444/send_test?recipient=+<REDACTED>&message=hell
 - `MESH_LOG_DIR` (default: /var/log/mesh-proxy)
 - `MESH_ENABLE_TEST` (default: 0)
 - `SIGNAL_ACCOUNT` (required for `/send_test` and worker)
+- `MESH_SIGNAL_POLL_SECONDS` (default: 5; notification wait timeout)
 - `SIGNAL_CLI_BIN` (default: /usr/local/bin/signal-cli)
 - `SIGNAL_CLI_CONFIG_DIR` (default: /var/lib/signal-cli)
 - `MESH_POLICY_FILE` (default: /etc/mesh-proxy/policy.json)
