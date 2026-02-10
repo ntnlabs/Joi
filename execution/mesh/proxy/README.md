@@ -68,3 +68,34 @@ Set to enable forwarding from the signal worker:
 - `MESH_ENABLE_FORWARD=1`
 - `MESH_JOI_INBOUND_URL` (default: http://joi:8443/api/v1/message/inbound)
 - `MESH_FORWARD_TIMEOUT` (default: 5 seconds)
+
+## Run Worker as systemd (`signal` user)
+
+This is the recommended mode for production on mesh VM.
+
+1. Install unit and env file:
+
+```bash
+sudo cp systemd/mesh-signal-worker.service /etc/systemd/system/
+sudo cp systemd/mesh-signal-worker.env.example /etc/default/mesh-signal-worker
+```
+
+2. Edit account and options:
+
+```bash
+sudo nano /etc/default/mesh-signal-worker
+```
+
+3. Stop old `signal-cli` daemon service if it is still enabled:
+
+```bash
+sudo systemctl disable --now signal-cli
+```
+
+4. Enable/start worker:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now mesh-signal-worker
+sudo systemctl status mesh-signal-worker
+```
