@@ -38,10 +38,28 @@ memory = MemoryStore(
 # Number of recent messages to include in context
 CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "10"))
 
-# System prompt for Joi
-SYSTEM_PROMPT = """You are Joi, a helpful personal AI assistant. You are friendly, concise, and helpful.
+# System prompt - loaded from file or fallback to default
+SYSTEM_PROMPT_FILE = os.getenv("JOI_SYSTEM_PROMPT_FILE", "/var/lib/joi/system-prompt.txt")
+DEFAULT_SYSTEM_PROMPT = """You are Joi, a helpful personal AI assistant. You are friendly, concise, and helpful.
 Keep your responses brief and to the point unless asked for more detail.
 You communicate via Signal messenger, so keep messages reasonably short."""
+
+
+def _load_system_prompt() -> str:
+    """Load system prompt from file, or use default if file doesn't exist."""
+    try:
+        with open(SYSTEM_PROMPT_FILE, "r") as f:
+            prompt = f.read().strip()
+            if prompt:
+                return prompt
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning("Failed to load system prompt from %s: %s", SYSTEM_PROMPT_FILE, e)
+    return DEFAULT_SYSTEM_PROMPT
+
+
+SYSTEM_PROMPT = _load_system_prompt()
 
 
 # --- Request/Response Models (per api-contracts.md) ---
@@ -263,6 +281,10 @@ def main():
     logger.info("Memory: %s (context: %d messages)",
                 os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
                 CONTEXT_MESSAGE_COUNT)
+    if os.path.exists(SYSTEM_PROMPT_FILE):
+        logger.info("System prompt: %s", SYSTEM_PROMPT_FILE)
+    else:
+        logger.info("System prompt: default (no file at %s)", SYSTEM_PROMPT_FILE)
 
     uvicorn.run(
         app,
