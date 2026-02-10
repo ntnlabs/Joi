@@ -1,0 +1,25 @@
+[Unit]
+Description=Joi AI Assistant API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=joi
+Group=joi
+WorkingDirectory=/opt/joi/execution/joi
+EnvironmentFile=-/etc/default/joi-api
+ExecStart=/usr/bin/python3 -m api.server
+Restart=always
+RestartSec=3
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/joi
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
