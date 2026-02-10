@@ -1,0 +1,20 @@
+# /etc/default/joi-api
+# Environment variables for Joi API service
+
+# API bind settings
+JOI_BIND_HOST=0.0.0.0
+JOI_BIND_PORT=8443
+
+# Ollama LLM settings
+JOI_OLLAMA_URL=http://localhost:11434
+JOI_OLLAMA_MODEL=llama3
+
+# Mesh proxy URL (use Nebula IP)
+JOI_MESH_URL=http://172.22.22.1:8444
+
+# Memory settings
+JOI_MEMORY_DB=/var/lib/joi/memory.db
+JOI_CONTEXT_MESSAGES=10
+
+# Logging
+JOI_LOG_LEVEL=INFO
