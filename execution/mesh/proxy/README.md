@@ -60,6 +60,8 @@ curl -X POST "http://127.0.0.1:8444/send_test?recipient=+<REDACTED>&message=hell
 - `MESH_LOG_DIR` (default: /var/log/mesh-proxy)
 - `MESH_ENABLE_TEST` (default: 0)
 - `SIGNAL_ACCOUNT` (required for `/send_test` and worker)
+- `SIGNAL_CLI_BIN` (default: /usr/local/bin/signal-cli)
+- `SIGNAL_CLI_CONFIG_DIR` (default: /var/lib/signal-cli)
 
 ## Forwarding to Joi (optional)
 
