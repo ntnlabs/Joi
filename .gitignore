@@ -7,6 +7,12 @@ checklists.md
 dev-notes.md
 duality-system.md
 
+# Data (databases, logs, runtime files)
+data/
+*.db
+*.db-wal
+*.db-shm
+
 # Python
 __pycache__/
 *.py[cod]
