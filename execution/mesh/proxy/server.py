@@ -2,13 +2,14 @@ import logging
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from config import ensure_log_dir, load_settings
-from jsonrpc_client import SignalJsonRpcClient
+from jsonrpc_stdio import JsonRpcStdioClient
 from rate_limiter import InboundRateLimiter
 
 
@@ -18,15 +19,29 @@ app = FastAPI(title="mesh-proxy", version="0.1.0")
 settings = load_settings()
 ensure_log_dir(settings.log_dir)
 
-# Socket client for outbound (requires signal-cli daemon mode)
-_rpc: Optional[SignalJsonRpcClient] = None
 
+def send_via_signal_cli(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Send a message via signal-cli using stdio JSON-RPC mode.
+    Spawns a short-lived signal-cli process for the send operation.
+    """
+    signal_cli_bin = os.getenv("SIGNAL_CLI_BIN", "/usr/local/bin/signal-cli")
+    signal_cli_config = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/var/lib/signal-cli")
 
-def get_rpc() -> SignalJsonRpcClient:
-    global _rpc
-    if _rpc is None:
-        _rpc = SignalJsonRpcClient(settings.signal_cli_socket)
-    return _rpc
+    if not Path(signal_cli_bin).exists():
+        raise RuntimeError(f"signal-cli not found: {signal_cli_bin}")
+
+    rpc = JsonRpcStdioClient([
+        signal_cli_bin,
+        "--config", signal_cli_config,
+        "jsonRpc",
+    ])
+
+    try:
+        result = rpc.call("send", payload, timeout=30.0)
+        return result
+    finally:
+        rpc.close()
 
 
 class OutboundRecipient(BaseModel):
@@ -89,7 +104,7 @@ def send_outbound(msg: OutboundMessage):
     Send a message from Joi to Signal.
 
     This endpoint is called by Joi API to send responses back to users.
-    Requires signal-cli running in daemon mode with socket.
+    Uses stdio JSON-RPC mode (spawns signal-cli subprocess).
     """
     request_id = str(uuid.uuid4())
     now_ms = int(time.time() * 1000)
@@ -97,12 +112,6 @@ def send_outbound(msg: OutboundMessage):
     account = os.getenv("SIGNAL_ACCOUNT", "")
     if not account:
         raise HTTPException(status_code=500, detail="SIGNAL_ACCOUNT not configured")
-
-    if settings.signal_mode != "socket":
-        raise HTTPException(
-            status_code=503,
-            detail="Outbound requires socket mode (signal-cli daemon)"
-        )
 
     # Validate transport
     if msg.transport != "signal":
@@ -183,8 +192,7 @@ def send_outbound(msg: OutboundMessage):
         logger.debug("reply_to not yet implemented: %s", msg.reply_to)
 
     try:
-        rpc = get_rpc()
-        result = rpc.call("send", payload)
+        result = send_via_signal_cli(payload)
     except Exception as exc:
         logger.error("Signal send failed: %s", exc)
         return OutboundResponse(
@@ -234,19 +242,22 @@ def send_test(recipient: str, message: str):
     """Legacy test endpoint - use /api/v1/message/outbound instead."""
     if os.getenv("MESH_ENABLE_TEST", "0") != "1":
         raise HTTPException(status_code=403, detail="Test endpoint disabled")
-    if settings.signal_mode != "socket":
-        raise HTTPException(status_code=409, detail="send_test requires socket mode")
+
+    account = os.getenv("SIGNAL_ACCOUNT", "")
+    if not account:
+        raise HTTPException(status_code=400, detail="SIGNAL_ACCOUNT not set")
 
     payload = {
-        "account": os.getenv("SIGNAL_ACCOUNT", ""),
+        "account": account,
         "recipients": [recipient],
         "message": message,
     }
-    if not payload["account"]:
-        raise HTTPException(status_code=400, detail="SIGNAL_ACCOUNT not set")
 
-    rpc = get_rpc()
-    result = rpc.call("send", payload)
+    try:
+        result = send_via_signal_cli(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
     if "error" in result:
-        raise HTTPException(status_code=500, detail=result["error"])
+        raise HTTPException(status_code=500, detail=str(result["error"]))
     return {"status": "ok", "result": result.get("result")}
