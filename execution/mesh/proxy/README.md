@@ -18,6 +18,16 @@ pip install -r requirements.txt
 ./run-worker.sh
 ```
 
+## signal-cli JSON-RPC mode (manual receive)
+
+For the worker to poll `receive`, run signal-cli in JSON-RPC mode with manual receive:
+
+```bash
+signal-cli --config /var/lib/signal-cli jsonRpc --receive-mode=manual --socket /var/run/signal-cli/socket
+```
+
+If using systemd, set `ExecStart` accordingly.
+
 ## Health
 
 ```bash

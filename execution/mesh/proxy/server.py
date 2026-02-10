@@ -22,7 +22,7 @@ def send_test(recipient: str, message: str):
 
     payload = {
         "account": os.getenv("SIGNAL_ACCOUNT", ""),
-        "recipient": recipient,
+        "recipients": [recipient],
         "message": message,
     }
     if not payload["account"]:
