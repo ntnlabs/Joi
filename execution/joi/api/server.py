@@ -31,7 +31,7 @@ llm = OllamaClient(
 
 # Initialize memory store
 memory = MemoryStore(
-    db_path=os.getenv("JOI_MEMORY_DB", "./data/joi_memory.db"),
+    db_path=os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
     encryption_key=os.getenv("JOI_MEMORY_KEY"),
 )
 
@@ -261,7 +261,7 @@ def main():
     logger.info("Ollama: %s (model: %s)", settings.ollama_url, settings.ollama_model)
     logger.info("Mesh: %s", settings.mesh_url)
     logger.info("Memory: %s (context: %d messages)",
-                os.getenv("JOI_MEMORY_DB", "./data/joi_memory.db"),
+                os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
                 CONTEXT_MESSAGE_COUNT)
 
     uvicorn.run(

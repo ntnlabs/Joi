@@ -345,10 +345,10 @@ def create_memory_store() -> MemoryStore:
     Factory function to create MemoryStore with settings from environment.
 
     Environment variables:
-        JOI_MEMORY_DB: Path to database file (default: ./data/joi_memory.db)
+        JOI_MEMORY_DB: Path to database file (default: /var/lib/joi/memory.db)
         JOI_MEMORY_KEY: SQLCipher encryption key (optional, for future use)
     """
-    db_path = os.getenv("JOI_MEMORY_DB", "./data/joi_memory.db")
+    db_path = os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db")
     encryption_key = os.getenv("JOI_MEMORY_KEY")
 
     return MemoryStore(db_path, encryption_key)
