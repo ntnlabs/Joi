@@ -1,0 +1,144 @@
+import logging
+from dataclasses import dataclass
+from typing import Optional
+
+import httpx
+
+logger = logging.getLogger("joi.llm")
+
+
+@dataclass
+class LLMResponse:
+    text: str
+    model: str
+    done: bool
+    error: Optional[str] = None
+
+
+class OllamaClient:
+    """Simple Ollama API client."""
+
+    def __init__(self, base_url: str, model: str, timeout: float = 60.0):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout = timeout
+
+    def generate(self, prompt: str, system: Optional[str] = None) -> LLMResponse:
+        """
+        Generate a response from the LLM.
+
+        Args:
+            prompt: The user's message
+            system: Optional system prompt
+
+        Returns:
+            LLMResponse with the generated text
+        """
+        url = f"{self.base_url}/api/generate"
+
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+        }
+
+        if system:
+            payload["system"] = system
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+
+            return LLMResponse(
+                text=data.get("response", ""),
+                model=data.get("model", self.model),
+                done=data.get("done", True),
+            )
+
+        except httpx.TimeoutException:
+            logger.error("Ollama request timed out")
+            return LLMResponse(
+                text="",
+                model=self.model,
+                done=False,
+                error="timeout",
+            )
+        except httpx.HTTPStatusError as exc:
+            logger.error("Ollama HTTP error: %s", exc)
+            return LLMResponse(
+                text="",
+                model=self.model,
+                done=False,
+                error=f"http_error: {exc.response.status_code}",
+            )
+        except Exception as exc:
+            logger.error("Ollama error: %s", exc)
+            return LLMResponse(
+                text="",
+                model=self.model,
+                done=False,
+                error=str(exc),
+            )
+
+    def chat(self, messages: list, system: Optional[str] = None) -> LLMResponse:
+        """
+        Chat completion with message history.
+
+        Args:
+            messages: List of {"role": "user"|"assistant", "content": "..."}
+            system: Optional system prompt
+
+        Returns:
+            LLMResponse with the generated text
+        """
+        url = f"{self.base_url}/api/chat"
+
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "stream": False,
+        }
+
+        if system:
+            # Prepend system message
+            payload["messages"] = [{"role": "system", "content": system}] + messages
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                resp = client.post(url, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+
+            message = data.get("message", {})
+            return LLMResponse(
+                text=message.get("content", ""),
+                model=data.get("model", self.model),
+                done=data.get("done", True),
+            )
+
+        except httpx.TimeoutException:
+            logger.error("Ollama chat timed out")
+            return LLMResponse(
+                text="",
+                model=self.model,
+                done=False,
+                error="timeout",
+            )
+        except httpx.HTTPStatusError as exc:
+            logger.error("Ollama chat HTTP error: %s", exc)
+            return LLMResponse(
+                text="",
+                model=self.model,
+                done=False,
+                error=f"http_error: {exc.response.status_code}",
+            )
+        except Exception as exc:
+            logger.error("Ollama chat error: %s", exc)
+            return LLMResponse(
+                text="",
+                model=self.model,
+                done=False,
+                error=str(exc),
+            )
