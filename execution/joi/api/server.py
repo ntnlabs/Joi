@@ -2,7 +2,8 @@ import logging
 import os
 import sys
 import time
-from typing import Any, Dict, Optional
+import uuid
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -13,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import load_settings
 from llm import OllamaClient
+from memory import MemoryStore
 
 logger = logging.getLogger("joi.api")
 
@@ -26,6 +28,15 @@ llm = OllamaClient(
     model=settings.ollama_model,
     timeout=60.0,
 )
+
+# Initialize memory store
+memory = MemoryStore(
+    db_path=os.getenv("JOI_MEMORY_DB", "./data/joi_memory.db"),
+    encryption_key=os.getenv("JOI_MEMORY_KEY"),
+)
+
+# Number of recent messages to include in context
+CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "10"))
 
 # System prompt for Joi
 SYSTEM_PROMPT = """You are Joi, a helpful personal AI assistant. You are friendly, concise, and helpful.
@@ -75,7 +86,15 @@ class InboundResponse(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "model": settings.ollama_model}
+    msg_count = memory.get_message_count()
+    return {
+        "status": "ok",
+        "model": settings.ollama_model,
+        "memory": {
+            "messages": msg_count,
+            "context_size": CONTEXT_MESSAGE_COUNT,
+        }
+    }
 
 
 @app.post("/api/v1/message/inbound", response_model=InboundResponse)
@@ -99,9 +118,29 @@ def receive_message(msg: InboundMessage):
     if not user_text:
         return InboundResponse(status="ok", message_id=msg.message_id)
 
-    # Generate response from LLM
-    logger.info("Generating LLM response for: %s", user_text[:50])
-    llm_response = llm.generate(prompt=user_text, system=SYSTEM_PROMPT)
+    # Store inbound message
+    memory.store_message(
+        message_id=msg.message_id,
+        direction="inbound",
+        content_type=msg.content.type,
+        content_text=user_text,
+        timestamp=msg.timestamp,
+        conversation_id=msg.conversation.id,
+        reply_to_id=msg.quote.get("message_id") if msg.quote else None,
+    )
+
+    # Build conversation context from recent messages
+    recent_messages = memory.get_recent_messages(
+        limit=CONTEXT_MESSAGE_COUNT,
+        conversation_id=msg.conversation.id,
+    )
+
+    # Convert to LLM chat format
+    chat_messages = _build_chat_messages(recent_messages)
+
+    # Generate response from LLM with conversation context
+    logger.info("Generating LLM response with %d messages of context", len(chat_messages))
+    llm_response = llm.chat(messages=chat_messages, system=SYSTEM_PROMPT)
 
     if llm_response.error:
         logger.error("LLM error: %s", llm_response.error)
@@ -119,6 +158,7 @@ def receive_message(msg: InboundMessage):
     logger.info("LLM response: %s", response_text[:50])
 
     # Send response back via mesh
+    outbound_message_id = str(uuid.uuid4())
     send_result = _send_to_mesh(
         recipient_id=msg.sender.id,
         recipient_transport_id=msg.sender.transport_id,
@@ -135,7 +175,28 @@ def receive_message(msg: InboundMessage):
             error="mesh_send_failed",
         )
 
+    # Store outbound message
+    memory.store_message(
+        message_id=outbound_message_id,
+        direction="outbound",
+        content_type="text",
+        content_text=response_text,
+        timestamp=int(time.time() * 1000),
+        conversation_id=msg.conversation.id,
+        reply_to_id=msg.message_id,
+    )
+
     return InboundResponse(status="ok", message_id=msg.message_id)
+
+
+def _build_chat_messages(messages: List) -> List[Dict[str, str]]:
+    """Convert stored messages to LLM chat format."""
+    chat_messages = []
+    for msg in messages:
+        if msg.content_text:
+            role = "user" if msg.direction == "inbound" else "assistant"
+            chat_messages.append({"role": role, "content": msg.content_text})
+    return chat_messages
 
 
 def _send_to_mesh(
@@ -199,6 +260,9 @@ def main():
     logger.info("Starting Joi API on %s:%d", settings.bind_host, settings.bind_port)
     logger.info("Ollama: %s (model: %s)", settings.ollama_url, settings.ollama_model)
     logger.info("Mesh: %s", settings.mesh_url)
+    logger.info("Memory: %s (context: %d messages)",
+                os.getenv("JOI_MEMORY_DB", "./data/joi_memory.db"),
+                CONTEXT_MESSAGE_COUNT)
 
     uvicorn.run(
         app,
