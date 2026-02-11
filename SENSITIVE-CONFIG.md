@@ -36,6 +36,10 @@ MESH_WORKER_HTTP_PORT=8444
           "+<OWNER_PHONE_NUMBER>"
         ],
         "names": ["Joi", "assistant"]
+      },
+      "<ANOTHER_GROUP_ID>": {
+        "participants": ["+<PHONE>"],
+        "names": []
       }
     }
   },
@@ -55,7 +59,7 @@ MESH_WORKER_HTTP_PORT=8444
 **Notes**:
 - Group IDs are base64-encoded. Get them with: `signal-cli -a +<ACCOUNT> listGroups`
 - `participants`: Who can trigger Joi responses (others are stored for context only)
-- `names`: Names Joi responds to in this group (e.g., "Joi, what time is it?")
+- `names`: Names Joi responds to in this group (e.g., "Joi, what time is it?"). If empty or omitted, falls back to `JOI_NAMES` env var on Joi VM.
 
 ### /var/lib/signal-cli/
 
