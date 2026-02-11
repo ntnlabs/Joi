@@ -191,12 +191,19 @@ class MemoryStore:
     def _init_schema(self) -> None:
         """Initialize database schema."""
         conn = self._connect()
+        # Run migrations first (for existing databases)
+        self._run_migrations(conn)
+        # Then create any missing tables/indexes
         conn.executescript(SCHEMA_SQL)
         conn.commit()
-        self._run_migrations(conn)
 
     def _run_migrations(self, conn: sqlite3.Connection) -> None:
         """Run database migrations for schema updates."""
+        # Check if messages table exists first
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
+        if not cursor.fetchone():
+            return  # Fresh database, no migrations needed
+
         # Check if archived column exists in messages table
         cursor = conn.execute("PRAGMA table_info(messages)")
         columns = [row[1] for row in cursor.fetchall()]
@@ -204,7 +211,6 @@ class MemoryStore:
         if "archived" not in columns:
             logger.info("Migration: Adding 'archived' column to messages table")
             conn.execute("ALTER TABLE messages ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_archived ON messages(archived, timestamp DESC)")
             conn.commit()
 
     def close(self) -> None:
