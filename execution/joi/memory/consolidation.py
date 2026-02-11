@@ -31,8 +31,8 @@ If no facts can be extracted, return an empty array: []
 
 Example output:
 [
-  {"category": "personal", "key": "name", "value": "Peter", "confidence": 1.0},
-  {"category": "preference", "key": "coffee", "value": "prefers black coffee", "confidence": 0.8}
+  {{"category": "personal", "key": "name", "value": "Peter", "confidence": 1.0}},
+  {{"category": "preference", "key": "coffee", "value": "prefers black coffee", "confidence": 0.8}}
 ]
 
 Conversation:
