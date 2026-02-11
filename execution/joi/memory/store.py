@@ -31,8 +31,33 @@ class Message:
     created_at: int
 
 
+@dataclass
+class UserFact:
+    """A fact about the user."""
+    id: int
+    category: str  # 'personal', 'preference', 'relationship', etc.
+    key: str
+    value: str
+    confidence: float
+    source: str  # 'stated', 'inferred', 'configured'
+    learned_at: int
+    last_verified_at: Optional[int]
+
+
+@dataclass
+class ContextSummary:
+    """A summarized conversation period."""
+    id: int
+    summary_type: str  # 'conversation', 'daily', 'weekly'
+    period_start: int
+    period_end: int
+    summary_text: str
+    message_count: int
+    created_at: int
+
+
 # Schema version for migrations
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # SQL for creating tables
 SCHEMA_SQL = """
@@ -67,7 +92,7 @@ CREATE TABLE IF NOT EXISTS system_state (
 
 -- Initialize default system state if not exists
 INSERT OR IGNORE INTO system_state (key, value) VALUES
-    ('schema_version', '1'),
+    ('schema_version', '2'),
     ('last_interaction_at', '0'),
     ('last_impulse_check_at', '0'),
     ('messages_sent_this_hour', '0'),
@@ -76,6 +101,40 @@ INSERT OR IGNORE INTO system_state (key, value) VALUES
     ('agent_state', '"idle"'),
     ('last_context_cleanup_at', '0'),
     ('last_memory_consolidation_at', '0');
+
+-- User facts table (long-term memory about user)
+CREATE TABLE IF NOT EXISTS user_facts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    category TEXT NOT NULL,
+    key TEXT NOT NULL,
+    value TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.8,
+    source TEXT NOT NULL,
+    source_message_id TEXT,
+    active INTEGER NOT NULL DEFAULT 1,
+    learned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+    last_referenced_at INTEGER,
+    last_verified_at INTEGER,
+    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+    UNIQUE(category, key, active)
+);
+
+CREATE INDEX IF NOT EXISTS idx_facts_category ON user_facts(category, active);
+CREATE INDEX IF NOT EXISTS idx_facts_active ON user_facts(active, confidence DESC);
+
+-- Context summaries table (compressed conversation history)
+CREATE TABLE IF NOT EXISTS context_summaries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    summary_type TEXT NOT NULL,
+    period_start INTEGER NOT NULL,
+    period_end INTEGER NOT NULL,
+    summary_text TEXT NOT NULL,
+    key_points_json TEXT,
+    message_count INTEGER,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+);
+
+CREATE INDEX IF NOT EXISTS idx_summaries_period ON context_summaries(summary_type, period_end DESC);
 """
 
 
@@ -306,6 +365,254 @@ class MemoryStore:
         """Get timestamp of last user interaction."""
         val = self.get_state("last_interaction_at", "0")
         return int(val) if val else 0
+
+    # --- User Facts Operations ---
+
+    def store_fact(
+        self,
+        category: str,
+        key: str,
+        value: str,
+        confidence: float = 0.8,
+        source: str = "inferred",
+        source_message_id: Optional[str] = None,
+    ) -> int:
+        """
+        Store or update a fact about the user.
+
+        If fact with same category+key exists, updates it.
+        """
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+
+        # Try to update existing active fact
+        cursor = conn.execute(
+            """
+            UPDATE user_facts
+            SET value = ?, confidence = ?, source = ?, source_message_id = ?,
+                last_verified_at = ?, updated_at = ?
+            WHERE category = ? AND key = ? AND active = 1
+            """,
+            (value, confidence, source, source_message_id, now_ms, now_ms, category, key)
+        )
+
+        if cursor.rowcount == 0:
+            # Insert new fact
+            cursor = conn.execute(
+                """
+                INSERT INTO user_facts (
+                    category, key, value, confidence, source, source_message_id,
+                    learned_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (category, key, value, confidence, source, source_message_id, now_ms, now_ms)
+            )
+
+        conn.commit()
+        logger.debug("Stored fact: %s.%s = %s (confidence: %.2f)", category, key, value, confidence)
+        return cursor.lastrowid or 0
+
+    def get_facts(
+        self,
+        min_confidence: float = 0.5,
+        category: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[UserFact]:
+        """Get active user facts, optionally filtered by category."""
+        conn = self._connect()
+
+        if category:
+            cursor = conn.execute(
+                """
+                SELECT id, category, key, value, confidence, source,
+                       learned_at, last_verified_at
+                FROM user_facts
+                WHERE active = 1 AND confidence >= ? AND category = ?
+                ORDER BY confidence DESC
+                LIMIT ?
+                """,
+                (min_confidence, category, limit)
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT id, category, key, value, confidence, source,
+                       learned_at, last_verified_at
+                FROM user_facts
+                WHERE active = 1 AND confidence >= ?
+                ORDER BY category, confidence DESC
+                LIMIT ?
+                """,
+                (min_confidence, limit)
+            )
+
+        return [
+            UserFact(
+                id=row["id"],
+                category=row["category"],
+                key=row["key"],
+                value=row["value"],
+                confidence=row["confidence"],
+                source=row["source"],
+                learned_at=row["learned_at"],
+                last_verified_at=row["last_verified_at"],
+            )
+            for row in cursor.fetchall()
+        ]
+
+    def get_facts_as_text(self, min_confidence: float = 0.5) -> str:
+        """Get facts formatted as text for LLM context."""
+        facts = self.get_facts(min_confidence=min_confidence)
+        if not facts:
+            return ""
+
+        lines = ["Known facts about the user:"]
+        by_category: Dict[str, List[UserFact]] = {}
+        for fact in facts:
+            by_category.setdefault(fact.category, []).append(fact)
+
+        for category, cat_facts in sorted(by_category.items()):
+            lines.append(f"\n{category.title()}:")
+            for fact in cat_facts:
+                lines.append(f"  - {fact.key}: {fact.value}")
+
+        return "\n".join(lines)
+
+    # --- Context Summaries Operations ---
+
+    def store_summary(
+        self,
+        summary_type: str,
+        period_start: int,
+        period_end: int,
+        summary_text: str,
+        message_count: int = 0,
+        key_points_json: Optional[str] = None,
+    ) -> int:
+        """Store a conversation summary."""
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+
+        cursor = conn.execute(
+            """
+            INSERT INTO context_summaries (
+                summary_type, period_start, period_end, summary_text,
+                key_points_json, message_count, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (summary_type, period_start, period_end, summary_text,
+             key_points_json, message_count, now_ms)
+        )
+        conn.commit()
+
+        logger.info("Stored %s summary for period %d-%d (%d messages)",
+                    summary_type, period_start, period_end, message_count)
+        return cursor.lastrowid or 0
+
+    def get_recent_summaries(
+        self,
+        summary_type: str = "conversation",
+        days: int = 7,
+        limit: int = 10,
+    ) -> List[ContextSummary]:
+        """Get recent summaries within the last N days."""
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        cutoff_ms = now_ms - (days * 24 * 60 * 60 * 1000)
+
+        cursor = conn.execute(
+            """
+            SELECT id, summary_type, period_start, period_end, summary_text,
+                   message_count, created_at
+            FROM context_summaries
+            WHERE summary_type = ? AND period_end > ?
+            ORDER BY period_end DESC
+            LIMIT ?
+            """,
+            (summary_type, cutoff_ms, limit)
+        )
+
+        return [
+            ContextSummary(
+                id=row["id"],
+                summary_type=row["summary_type"],
+                period_start=row["period_start"],
+                period_end=row["period_end"],
+                summary_text=row["summary_text"],
+                message_count=row["message_count"] or 0,
+                created_at=row["created_at"],
+            )
+            for row in cursor.fetchall()
+        ]
+
+    def get_summaries_as_text(self, days: int = 7) -> str:
+        """Get summaries formatted as text for LLM context."""
+        summaries = self.get_recent_summaries(days=days)
+        if not summaries:
+            return ""
+
+        lines = ["Recent conversation history:"]
+        for summary in reversed(summaries):  # Oldest first
+            # Format timestamp as date
+            from datetime import datetime
+            date_str = datetime.fromtimestamp(summary.period_end / 1000).strftime("%Y-%m-%d")
+            lines.append(f"\n[{date_str}]")
+            lines.append(summary.summary_text)
+
+        return "\n".join(lines)
+
+    # --- Messages for Summarization ---
+
+    def get_messages_for_summarization(
+        self,
+        older_than_ms: int,
+        limit: int = 200,
+    ) -> List[Message]:
+        """Get old messages that should be summarized."""
+        conn = self._connect()
+
+        cursor = conn.execute(
+            """
+            SELECT id, message_id, direction, channel, content_type,
+                   content_text, conversation_id, reply_to_id, timestamp, created_at
+            FROM messages
+            WHERE content_type = 'text' AND timestamp < ?
+            ORDER BY timestamp ASC
+            LIMIT ?
+            """,
+            (older_than_ms, limit)
+        )
+
+        return [
+            Message(
+                id=row["id"],
+                message_id=row["message_id"],
+                direction=row["direction"],
+                channel=row["channel"],
+                content_type=row["content_type"],
+                content_text=row["content_text"],
+                conversation_id=row["conversation_id"],
+                reply_to_id=row["reply_to_id"],
+                timestamp=row["timestamp"],
+                created_at=row["created_at"],
+            )
+            for row in cursor.fetchall()
+        ]
+
+    def delete_messages_before(self, before_ms: int) -> int:
+        """Delete messages older than timestamp."""
+        conn = self._connect()
+
+        cursor = conn.execute(
+            "DELETE FROM messages WHERE timestamp < ?",
+            (before_ms,)
+        )
+        conn.commit()
+
+        deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info("Deleted %d messages before %d", deleted, before_ms)
+        return deleted
 
     # --- Cleanup Operations ---
 

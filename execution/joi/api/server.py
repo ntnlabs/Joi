@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import load_settings
 from llm import OllamaClient
-from memory import MemoryStore
+from memory import MemoryConsolidator, MemoryStore
 
 logger = logging.getLogger("joi.api")
 
@@ -38,6 +38,13 @@ memory = MemoryStore(
 
 # Number of recent messages to include in context
 CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "10"))
+
+# Memory consolidation settings
+CONSOLIDATION_SILENCE_HOURS = float(os.getenv("JOI_CONSOLIDATION_SILENCE_HOURS", "1"))
+CONSOLIDATION_MAX_MESSAGES = int(os.getenv("JOI_CONSOLIDATION_MAX_MESSAGES", "200"))
+
+# Initialize memory consolidator
+consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
 
 # System prompt - loaded from file or fallback to default
 SYSTEM_PROMPT_FILE = os.getenv("JOI_SYSTEM_PROMPT_FILE", "/var/lib/joi/system-prompt.txt")
@@ -106,11 +113,15 @@ class InboundResponse(BaseModel):
 @app.get("/health")
 def health():
     msg_count = memory.get_message_count()
+    facts = memory.get_facts(min_confidence=0.0, limit=1000)
+    summaries = memory.get_recent_summaries(days=30, limit=100)
     return {
         "status": "ok",
         "model": settings.ollama_model,
         "memory": {
             "messages": msg_count,
+            "facts": len(facts),
+            "summaries": len(summaries),
             "context_size": CONTEXT_MESSAGE_COUNT,
         }
     }
@@ -157,9 +168,12 @@ def receive_message(msg: InboundMessage):
     # Convert to LLM chat format
     chat_messages = _build_chat_messages(recent_messages)
 
+    # Build enriched system prompt with facts and summaries
+    enriched_prompt = _build_enriched_prompt()
+
     # Generate response from LLM with conversation context
     logger.info("Generating LLM response with %d messages of context", len(chat_messages))
-    llm_response = llm.chat(messages=chat_messages, system=SYSTEM_PROMPT)
+    llm_response = llm.chat(messages=chat_messages, system=enriched_prompt)
 
     if llm_response.error:
         logger.error("LLM error: %s", llm_response.error)
@@ -205,6 +219,9 @@ def receive_message(msg: InboundMessage):
         reply_to_id=msg.message_id,
     )
 
+    # Check if memory consolidation needed (runs async-ish, only if conditions met)
+    _maybe_run_consolidation()
+
     return InboundResponse(status="ok", message_id=msg.message_id)
 
 
@@ -216,6 +233,42 @@ def _build_chat_messages(messages: List) -> List[Dict[str, str]]:
             role = "user" if msg.direction == "inbound" else "assistant"
             chat_messages.append({"role": role, "content": msg.content_text})
     return chat_messages
+
+
+def _build_enriched_prompt() -> str:
+    """Build system prompt enriched with user facts and recent summaries."""
+    parts = [SYSTEM_PROMPT]
+
+    # Add user facts
+    facts_text = memory.get_facts_as_text(min_confidence=0.6)
+    if facts_text:
+        parts.append("\n\n" + facts_text)
+
+    # Add recent conversation summaries
+    summaries_text = memory.get_summaries_as_text(days=7)
+    if summaries_text:
+        parts.append("\n\n" + summaries_text)
+
+    return "".join(parts)
+
+
+def _maybe_run_consolidation() -> None:
+    """Run memory consolidation if needed (after silence or message threshold)."""
+    try:
+        result = consolidator.run_consolidation(
+            silence_threshold_ms=int(CONSOLIDATION_SILENCE_HOURS * 3600 * 1000),
+            max_messages_before_consolidation=CONSOLIDATION_MAX_MESSAGES,
+            keep_recent_messages=CONTEXT_MESSAGE_COUNT,
+        )
+        if result["ran"]:
+            logger.info(
+                "Memory consolidation: facts=%d, summarized=%d, deleted=%d",
+                result["facts_extracted"],
+                result["messages_summarized"],
+                result["messages_deleted"],
+            )
+    except Exception as e:
+        logger.error("Consolidation error: %s", e)
 
 
 def _send_to_mesh(
