@@ -1,20 +1,48 @@
 # /etc/default/joi-api
 # Environment variables for Joi API service
+# Copy to /etc/default/joi-api and adjust as needed
 
-# API bind settings
+# --- Core ---
 JOI_BIND_HOST=0.0.0.0
 JOI_BIND_PORT=8443
+JOI_LOG_LEVEL=INFO
 
-# Ollama LLM settings
+# --- LLM ---
 JOI_OLLAMA_URL=http://localhost:11434
 JOI_OLLAMA_MODEL=llama3
+JOI_LLM_TIMEOUT=180
 
-# Mesh proxy URL (use Nebula IP)
+# --- Mesh ---
+# Mesh proxy URL (vmbr1 IP)
 JOI_MESH_URL=http://172.22.22.1:8444
 
-# Memory settings
-JOI_MEMORY_DB=/var/lib/joi/memory.db
-JOI_CONTEXT_MESSAGES=10
+# --- Names ---
+# Names Joi responds to in groups (comma-separated)
+# Used as fallback when group has no "names" in policy.json
+JOI_NAMES=Joi
 
-# Logging
-JOI_LOG_LEVEL=INFO
+# --- Memory ---
+JOI_MEMORY_DB=/var/lib/joi/memory.db
+JOI_CONTEXT_MESSAGES=40
+
+# --- Consolidation ---
+# Hours of silence before consolidating old messages
+JOI_CONSOLIDATION_SILENCE_HOURS=1
+# Force consolidation when message count exceeds this
+JOI_CONSOLIDATION_MAX_MESSAGES=200
+# Set to 1 to archive messages instead of deleting
+JOI_CONSOLIDATION_ARCHIVE=0
+
+# --- RAG ---
+# Set to 0 to disable knowledge retrieval
+JOI_RAG_ENABLED=1
+# Max tokens for RAG context in prompts
+JOI_RAG_MAX_TOKENS=500
+
+# --- Prompts ---
+# Directory for per-user and per-group system prompts
+JOI_PROMPTS_DIR=/var/lib/joi/prompts
+
+# --- Encryption (future) ---
+# SQLCipher encryption key - uncomment when ready
+# JOI_MEMORY_KEY=<generate-with-openssl-rand-base64-32>
