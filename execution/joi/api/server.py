@@ -42,6 +42,7 @@ CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "10"))
 # Memory consolidation settings
 CONSOLIDATION_SILENCE_HOURS = float(os.getenv("JOI_CONSOLIDATION_SILENCE_HOURS", "1"))
 CONSOLIDATION_MAX_MESSAGES = int(os.getenv("JOI_CONSOLIDATION_MAX_MESSAGES", "200"))
+CONSOLIDATION_ARCHIVE = os.getenv("JOI_CONSOLIDATION_ARCHIVE", "0") == "1"  # Default: delete
 
 # Initialize memory consolidator
 consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
@@ -259,13 +260,16 @@ def _maybe_run_consolidation() -> None:
             silence_threshold_ms=int(CONSOLIDATION_SILENCE_HOURS * 3600 * 1000),
             max_messages_before_consolidation=CONSOLIDATION_MAX_MESSAGES,
             keep_recent_messages=CONTEXT_MESSAGE_COUNT,
+            archive_instead_of_delete=CONSOLIDATION_ARCHIVE,
         )
         if result["ran"]:
+            action = "archived" if CONSOLIDATION_ARCHIVE else "deleted"
             logger.info(
-                "Memory consolidation: facts=%d, summarized=%d, archived=%d",
+                "Memory consolidation: facts=%d, summarized=%d, %s=%d",
                 result["facts_extracted"],
                 result["messages_summarized"],
-                result["messages_archived"],
+                action,
+                result["messages_removed"],
             )
     except Exception as e:
         logger.error("Consolidation error: %s", e)

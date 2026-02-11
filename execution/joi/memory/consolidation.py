@@ -243,6 +243,7 @@ class MemoryConsolidator:
         silence_threshold_ms: int = 3600000,  # 1 hour
         max_messages_before_consolidation: int = 200,
         keep_recent_messages: int = 50,
+        archive_instead_of_delete: bool = False,
     ) -> Dict[str, Any]:
         """
         Run full memory consolidation.
@@ -255,6 +256,7 @@ class MemoryConsolidator:
             silence_threshold_ms: Consider conversation ended after this much silence
             max_messages_before_consolidation: Force consolidation at this count
             keep_recent_messages: Don't consolidate the most recent N messages
+            archive_instead_of_delete: If True, archive messages; if False, delete them
 
         Returns:
             Dict with consolidation results
@@ -268,7 +270,7 @@ class MemoryConsolidator:
             "reason": None,
             "facts_extracted": 0,
             "messages_summarized": 0,
-            "messages_archived": 0,
+            "messages_removed": 0,
         }
 
         # Check if consolidation needed
@@ -305,11 +307,13 @@ class MemoryConsolidator:
         if summary:
             results["messages_summarized"] = len(old_messages)
 
-            # Archive old messages (soft delete - keep the summary)
-            oldest_timestamp = min(m.timestamp for m in old_messages)
+            # Remove old messages (archive or delete based on setting)
             newest_timestamp = max(m.timestamp for m in old_messages)
-            archived = self.memory.archive_messages_before(newest_timestamp + 1)
-            results["messages_archived"] = archived
+            if archive_instead_of_delete:
+                removed = self.memory.archive_messages_before(newest_timestamp + 1)
+            else:
+                removed = self.memory.delete_messages_before(newest_timestamp + 1)
+            results["messages_removed"] = removed
 
         logger.info("Consolidation complete: %s", results)
         return results
