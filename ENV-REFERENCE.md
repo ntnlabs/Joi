@@ -19,6 +19,7 @@ Complete list of configurable environment variables for Joi system.
 | `JOI_OLLAMA_URL` | `http://localhost:11434` | Ollama API URL |
 | `JOI_OLLAMA_MODEL` | `llama3` | Model to use |
 | `JOI_LLM_TIMEOUT` | `180` | LLM request timeout in seconds |
+| `JOI_NAMES` | `Joi` | Names to respond to in groups (comma-separated) |
 
 ### System Prompts
 
