@@ -34,7 +34,8 @@ MESH_WORKER_HTTP_PORT=8444
       "<GROUP_ID_BASE64>": {
         "participants": [
           "+<OWNER_PHONE_NUMBER>"
-        ]
+        ],
+        "names": ["Joi", "assistant"]
       }
     }
   },
@@ -51,7 +52,10 @@ MESH_WORKER_HTTP_PORT=8444
 }
 ```
 
-**Note**: Group IDs are base64-encoded. Get them with: `signal-cli -a +<ACCOUNT> listGroups`
+**Notes**:
+- Group IDs are base64-encoded. Get them with: `signal-cli -a +<ACCOUNT> listGroups`
+- `participants`: Who can trigger Joi responses (others are stored for context only)
+- `names`: Names Joi responds to in this group (e.g., "Joi, what time is it?")
 
 ### /var/lib/signal-cli/
 
