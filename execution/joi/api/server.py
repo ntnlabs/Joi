@@ -55,15 +55,26 @@ consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
 # Ensure prompts directory exists
 ensure_prompts_dir()
 
-# Joi addressing patterns for group messages
-# Matches: "Joi", "joi", "Joi,", "joi:", "@Joi", etc. at start of message or standalone
-JOI_ADDRESS_PATTERNS = [
-    r"^@?joi[,:\s]",           # "Joi," "joi:" "@joi " at start
-    r"^@?joi$",                # Just "Joi" or "@Joi" alone
-    r"\s@joi[\s,:]",           # "@joi" in the middle
-    r"\s@joi$",                # "@joi" at the end
-]
-JOI_ADDRESS_REGEX = re.compile("|".join(JOI_ADDRESS_PATTERNS), re.IGNORECASE)
+# Names that Joi responds to in group messages (comma-separated)
+JOI_NAMES = [name.strip() for name in os.getenv("JOI_NAMES", "Joi").split(",") if name.strip()]
+
+
+def _build_address_regex(names: list) -> re.Pattern:
+    """Build regex pattern for addressing detection from list of names."""
+    patterns = []
+    for name in names:
+        # Escape special regex characters in name
+        escaped = re.escape(name)
+        patterns.extend([
+            rf"^@?{escaped}[,:\s]",    # "Name," "name:" "@name " at start
+            rf"^@?{escaped}$",          # Just "Name" or "@Name" alone
+            rf"\s@{escaped}[\s,:]",     # "@name" in the middle
+            rf"\s@{escaped}$",          # "@name" at the end
+        ])
+    return re.compile("|".join(patterns), re.IGNORECASE)
+
+
+JOI_ADDRESS_REGEX = _build_address_regex(JOI_NAMES)
 
 
 def _is_addressing_joi(text: str) -> bool:
