@@ -57,8 +57,19 @@ class ContextSummary:
     created_at: int
 
 
+@dataclass
+class KnowledgeChunk:
+    """A chunk of knowledge from a document."""
+    id: int
+    source: str  # document path or identifier
+    title: str
+    content: str
+    chunk_index: int
+    created_at: int
+
+
 # Schema version for migrations
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # SQL for creating tables
 SCHEMA_SQL = """
@@ -138,6 +149,42 @@ CREATE TABLE IF NOT EXISTS context_summaries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_summaries_period ON context_summaries(summary_type, period_end DESC);
+
+-- Knowledge chunks table (for RAG)
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL DEFAULT 0,
+    metadata_json TEXT,
+    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+    UNIQUE(source, chunk_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_source ON knowledge_chunks(source);
+
+-- FTS5 virtual table for full-text search
+CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+    title,
+    content,
+    content=knowledge_chunks,
+    content_rowid=id
+);
+
+-- Triggers to keep FTS in sync with knowledge_chunks
+CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge_chunks BEGIN
+    INSERT INTO knowledge_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge_chunks BEGIN
+    INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge_chunks BEGIN
+    INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
+    INSERT INTO knowledge_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+END;
 """
 
 
@@ -655,6 +702,163 @@ class MemoryStore:
         if deleted > 0:
             logger.info("Deleted %d messages before %d", deleted, before_ms)
         return deleted
+
+    # --- Knowledge Operations (RAG) ---
+
+    def store_knowledge_chunk(
+        self,
+        source: str,
+        title: str,
+        content: str,
+        chunk_index: int = 0,
+        metadata_json: Optional[str] = None,
+    ) -> int:
+        """Store a knowledge chunk for RAG retrieval."""
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+
+        cursor = conn.execute(
+            """
+            INSERT OR REPLACE INTO knowledge_chunks (
+                source, title, content, chunk_index, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (source, title, content, chunk_index, metadata_json, now_ms)
+        )
+        conn.commit()
+
+        logger.debug("Stored knowledge chunk: %s [%d]", source, chunk_index)
+        return cursor.lastrowid or 0
+
+    def search_knowledge(
+        self,
+        query: str,
+        limit: int = 5,
+    ) -> List[KnowledgeChunk]:
+        """
+        Search knowledge base using FTS5 full-text search.
+
+        Args:
+            query: Search query (supports FTS5 syntax)
+            limit: Maximum number of results
+
+        Returns:
+            List of matching KnowledgeChunk objects, ranked by relevance
+        """
+        conn = self._connect()
+
+        # Use FTS5 MATCH for full-text search
+        cursor = conn.execute(
+            """
+            SELECT k.id, k.source, k.title, k.content, k.chunk_index, k.created_at,
+                   bm25(knowledge_fts) as rank
+            FROM knowledge_chunks k
+            JOIN knowledge_fts f ON k.id = f.rowid
+            WHERE knowledge_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (query, limit)
+        )
+
+        return [
+            KnowledgeChunk(
+                id=row["id"],
+                source=row["source"],
+                title=row["title"],
+                content=row["content"],
+                chunk_index=row["chunk_index"],
+                created_at=row["created_at"],
+            )
+            for row in cursor.fetchall()
+        ]
+
+    def get_knowledge_by_source(self, source: str) -> List[KnowledgeChunk]:
+        """Get all chunks from a specific source."""
+        conn = self._connect()
+
+        cursor = conn.execute(
+            """
+            SELECT id, source, title, content, chunk_index, created_at
+            FROM knowledge_chunks
+            WHERE source = ?
+            ORDER BY chunk_index
+            """,
+            (source,)
+        )
+
+        return [
+            KnowledgeChunk(
+                id=row["id"],
+                source=row["source"],
+                title=row["title"],
+                content=row["content"],
+                chunk_index=row["chunk_index"],
+                created_at=row["created_at"],
+            )
+            for row in cursor.fetchall()
+        ]
+
+    def delete_knowledge_source(self, source: str) -> int:
+        """Delete all chunks from a source."""
+        conn = self._connect()
+
+        cursor = conn.execute(
+            "DELETE FROM knowledge_chunks WHERE source = ?",
+            (source,)
+        )
+        conn.commit()
+
+        deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info("Deleted %d chunks from source: %s", deleted, source)
+        return deleted
+
+    def get_knowledge_sources(self) -> List[Dict[str, Any]]:
+        """Get list of all knowledge sources with chunk counts."""
+        conn = self._connect()
+
+        cursor = conn.execute(
+            """
+            SELECT source, COUNT(*) as chunk_count, MAX(created_at) as last_updated
+            FROM knowledge_chunks
+            GROUP BY source
+            ORDER BY source
+            """
+        )
+
+        return [
+            {"source": row["source"], "chunk_count": row["chunk_count"], "last_updated": row["last_updated"]}
+            for row in cursor.fetchall()
+        ]
+
+    def get_knowledge_as_context(self, query: str, max_tokens: int = 1000) -> str:
+        """
+        Search knowledge and format as context for LLM.
+
+        Args:
+            query: Search query
+            max_tokens: Approximate max tokens (chars / 4)
+
+        Returns:
+            Formatted context string
+        """
+        chunks = self.search_knowledge(query, limit=10)
+        if not chunks:
+            return ""
+
+        lines = ["Relevant knowledge:"]
+        total_chars = 0
+        max_chars = max_tokens * 4  # Rough estimate
+
+        for chunk in chunks:
+            chunk_text = f"\n[{chunk.title}]\n{chunk.content}"
+            if total_chars + len(chunk_text) > max_chars:
+                break
+            lines.append(chunk_text)
+            total_chars += len(chunk_text)
+
+        return "\n".join(lines)
 
     # --- Cleanup Operations ---
 

@@ -44,6 +44,10 @@ CONSOLIDATION_SILENCE_HOURS = float(os.getenv("JOI_CONSOLIDATION_SILENCE_HOURS",
 CONSOLIDATION_MAX_MESSAGES = int(os.getenv("JOI_CONSOLIDATION_MAX_MESSAGES", "200"))
 CONSOLIDATION_ARCHIVE = os.getenv("JOI_CONSOLIDATION_ARCHIVE", "0") == "1"  # Default: delete
 
+# RAG settings
+RAG_ENABLED = os.getenv("JOI_RAG_ENABLED", "1") == "1"  # Default: enabled
+RAG_MAX_TOKENS = int(os.getenv("JOI_RAG_MAX_TOKENS", "500"))  # Max tokens for RAG context
+
 # Initialize memory consolidator
 consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
 
@@ -116,6 +120,8 @@ def health():
     msg_count = memory.get_message_count()
     facts = memory.get_facts(min_confidence=0.0, limit=1000)
     summaries = memory.get_recent_summaries(days=30, limit=100)
+    knowledge_sources = memory.get_knowledge_sources()
+    knowledge_chunks = sum(s["chunk_count"] for s in knowledge_sources)
     return {
         "status": "ok",
         "model": settings.ollama_model,
@@ -124,6 +130,11 @@ def health():
             "facts": len(facts),
             "summaries": len(summaries),
             "context_size": CONTEXT_MESSAGE_COUNT,
+        },
+        "rag": {
+            "enabled": RAG_ENABLED,
+            "sources": len(knowledge_sources),
+            "chunks": knowledge_chunks,
         }
     }
 
@@ -169,8 +180,8 @@ def receive_message(msg: InboundMessage):
     # Convert to LLM chat format
     chat_messages = _build_chat_messages(recent_messages)
 
-    # Build enriched system prompt with facts and summaries
-    enriched_prompt = _build_enriched_prompt()
+    # Build enriched system prompt with facts, summaries, and RAG
+    enriched_prompt = _build_enriched_prompt(user_text)
 
     # Generate response from LLM with conversation context
     logger.info("Generating LLM response with %d messages of context", len(chat_messages))
@@ -236,8 +247,8 @@ def _build_chat_messages(messages: List) -> List[Dict[str, str]]:
     return chat_messages
 
 
-def _build_enriched_prompt() -> str:
-    """Build system prompt enriched with user facts and recent summaries."""
+def _build_enriched_prompt(user_message: Optional[str] = None) -> str:
+    """Build system prompt enriched with user facts, summaries, and RAG context."""
     parts = [SYSTEM_PROMPT]
 
     # Add user facts
@@ -249,6 +260,13 @@ def _build_enriched_prompt() -> str:
     summaries_text = memory.get_summaries_as_text(days=7)
     if summaries_text:
         parts.append("\n\n" + summaries_text)
+
+    # Add RAG context if enabled and user message provided
+    if RAG_ENABLED and user_message:
+        rag_context = memory.get_knowledge_as_context(user_message, max_tokens=RAG_MAX_TOKENS)
+        if rag_context:
+            parts.append("\n\n" + rag_context)
+            logger.debug("Added RAG context for query: %s", user_message[:50])
 
     return "".join(parts)
 

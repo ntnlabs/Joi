@@ -43,6 +43,13 @@ Complete list of configurable environment variables for Joi system.
 | `JOI_CONSOLIDATION_MAX_MESSAGES` | `200` | Force consolidation at this message count |
 | `JOI_CONSOLIDATION_ARCHIVE` | `0` | Set to `1` to archive instead of delete |
 
+### RAG (Knowledge Retrieval)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_RAG_ENABLED` | `1` | Enable RAG knowledge retrieval |
+| `JOI_RAG_MAX_TOKENS` | `500` | Max tokens for RAG context |
+
 ---
 
 ## Mesh Signal Worker (`/etc/default/mesh-signal-worker`)
