@@ -268,7 +268,7 @@ class MemoryConsolidator:
             "reason": None,
             "facts_extracted": 0,
             "messages_summarized": 0,
-            "messages_deleted": 0,
+            "messages_archived": 0,
         }
 
         # Check if consolidation needed
@@ -305,11 +305,11 @@ class MemoryConsolidator:
         if summary:
             results["messages_summarized"] = len(old_messages)
 
-            # Delete old messages (keep the summary)
+            # Archive old messages (soft delete - keep the summary)
             oldest_timestamp = min(m.timestamp for m in old_messages)
             newest_timestamp = max(m.timestamp for m in old_messages)
-            deleted = self.memory.delete_messages_before(newest_timestamp + 1)
-            results["messages_deleted"] = deleted
+            archived = self.memory.archive_messages_before(newest_timestamp + 1)
+            results["messages_archived"] = archived
 
         logger.info("Consolidation complete: %s", results)
         return results
