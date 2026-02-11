@@ -716,6 +716,18 @@ class MemoryStore:
         """Hard delete messages older than timestamp (use archive_messages_before for soft delete)."""
         conn = self._connect()
 
+        # First, clear reply_to_id references to messages we're about to delete
+        # to avoid FOREIGN KEY constraint failures
+        conn.execute(
+            """
+            UPDATE messages SET reply_to_id = NULL
+            WHERE reply_to_id IN (
+                SELECT message_id FROM messages WHERE timestamp < ?
+            )
+            """,
+            (before_ms,)
+        )
+
         cursor = conn.execute(
             "DELETE FROM messages WHERE timestamp < ?",
             (before_ms,)
