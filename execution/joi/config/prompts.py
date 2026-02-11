@@ -23,9 +23,7 @@ logger = logging.getLogger("joi.config.prompts")
 PROMPTS_DIR = Path(os.getenv("JOI_PROMPTS_DIR", "/var/lib/joi/prompts"))
 
 # Default system prompt (fallback)
-DEFAULT_PROMPT = """You are Joi, a helpful personal AI assistant. You are friendly, concise, and helpful.
-Keep your responses brief and to the point unless asked for more detail.
-You communicate via Signal messenger, so keep messages reasonably short."""
+DEFAULT_PROMPT = """You are Joi, a helpful personal AI assistant. You are friendly, concise, and meaningful. Keep your responses brief and to the point unless asked for more detail. You communicate via Signal messenger, so keep messages reasonably short unless needed."""
 
 
 def _read_prompt_file(path: Path) -> Optional[str]:
