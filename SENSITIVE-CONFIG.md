@@ -35,7 +35,7 @@ MESH_WORKER_HTTP_PORT=8444
         "participants": [
           "+<OWNER_PHONE_NUMBER>"
         ],
-        "names": ["Joi", "assistant"]
+        "names": []
       },
       "<ANOTHER_GROUP_ID>": {
         "participants": ["+<PHONE>"],
