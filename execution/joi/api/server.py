@@ -55,8 +55,8 @@ consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
 # Ensure prompts directory exists
 ensure_prompts_dir()
 
-# Names that Joi responds to in group messages (comma-separated)
-JOI_NAMES = [name.strip() for name in os.getenv("JOI_NAMES", "Joi").split(",") if name.strip()]
+# Default names that Joi responds to in group messages (comma-separated)
+JOI_NAMES_DEFAULT = [name.strip() for name in os.getenv("JOI_NAMES", "Joi").split(",") if name.strip()]
 
 
 def _build_address_regex(names: list) -> re.Pattern:
@@ -74,12 +74,21 @@ def _build_address_regex(names: list) -> re.Pattern:
     return re.compile("|".join(patterns), re.IGNORECASE)
 
 
-JOI_ADDRESS_REGEX = _build_address_regex(JOI_NAMES)
+# Cache for compiled regexes per name list
+_address_regex_cache: Dict[tuple, re.Pattern] = {}
 
 
-def _is_addressing_joi(text: str) -> bool:
+def _is_addressing_joi(text: str, names: Optional[List[str]] = None) -> bool:
     """Check if the message is addressing Joi directly."""
-    return bool(JOI_ADDRESS_REGEX.search(text))
+    if names is None:
+        names = JOI_NAMES_DEFAULT
+
+    # Use cached regex if available
+    names_key = tuple(sorted(names))
+    if names_key not in _address_regex_cache:
+        _address_regex_cache[names_key] = _build_address_regex(names)
+
+    return bool(_address_regex_cache[names_key].search(text))
 
 
 # --- Request/Response Models (per api-contracts.md) ---
@@ -113,6 +122,7 @@ class InboundMessage(BaseModel):
     quote: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
     store_only: bool = False  # If True, store for context but don't respond
+    group_names: Optional[List[str]] = None  # Names Joi responds to in this group
 
 
 class InboundResponse(BaseModel):
@@ -165,20 +175,44 @@ def receive_message(msg: InboundMessage):
         msg.store_only,
     )
 
-    # Handle reactions - store but don't respond
+    # Handle reactions - store and respond briefly
     if msg.content.type == "reaction":
         emoji = msg.content.reaction or "?"
         logger.info("Received reaction %s from %s", emoji, msg.sender.transport_id)
+
+        reaction_text = f"[reacted with {emoji}]"
         memory.store_message(
             message_id=msg.message_id,
             direction="inbound",
             content_type="reaction",
-            content_text=f"[reacted with {emoji}]",
+            content_text=reaction_text,
             timestamp=msg.timestamp,
             conversation_id=msg.conversation.id,
             sender_id=msg.sender.transport_id,
             sender_name=msg.sender.display_name,
         )
+
+        # Generate brief reaction response (skip for store_only)
+        if not msg.store_only:
+            response_text = _generate_reaction_response(emoji, msg.conversation.id)
+            if response_text:
+                _send_to_mesh(
+                    recipient_id=msg.sender.id,
+                    recipient_transport_id=msg.sender.transport_id,
+                    conversation=msg.conversation,
+                    text=response_text,
+                    reply_to=None,
+                )
+                # Store outbound
+                memory.store_message(
+                    message_id=str(uuid.uuid4()),
+                    direction="outbound",
+                    content_type="text",
+                    content_text=response_text,
+                    timestamp=int(time.time() * 1000),
+                    conversation_id=msg.conversation.id,
+                )
+
         return InboundResponse(status="ok", message_id=msg.message_id)
 
     # Only handle text messages beyond this point
@@ -212,7 +246,9 @@ def receive_message(msg: InboundMessage):
         should_respond = False
     elif msg.conversation.type == "group":
         # Group message from allowed sender - only respond if Joi is addressed
-        if _is_addressing_joi(user_text):
+        # Use group-specific names if provided, otherwise fall back to default
+        names_to_check = msg.group_names if msg.group_names else None
+        if _is_addressing_joi(user_text, names=names_to_check):
             logger.info("Joi addressed in group message, will respond")
             should_respond = True
         else:
@@ -292,6 +328,41 @@ def receive_message(msg: InboundMessage):
     _maybe_run_consolidation()
 
     return InboundResponse(status="ok", message_id=msg.message_id)
+
+
+def _generate_reaction_response(emoji: str, conversation_id: str) -> Optional[str]:
+    """Generate a brief response to a reaction based on context."""
+    # Get recent context to understand what was reacted to
+    recent = memory.get_recent_messages(limit=5, conversation_id=conversation_id)
+    if not recent:
+        return None
+
+    # Find the last Joi message that was likely reacted to
+    last_joi_msg = None
+    for msg in reversed(recent):
+        if msg.direction == "outbound" and msg.content_text:
+            last_joi_msg = msg.content_text[:100]
+            break
+
+    if not last_joi_msg:
+        return None
+
+    # Generate brief contextual response
+    prompt = f"""The user reacted to your message with {emoji}.
+Your message was: "{last_joi_msg}"
+
+Respond very briefly (1-5 words) acknowledging the reaction in a natural way.
+Just the response, no explanation."""
+
+    response = llm.generate(prompt=prompt)
+    if response.error or not response.text:
+        return None
+
+    text = response.text.strip()
+    # Keep it short
+    if len(text) > 50:
+        return None
+    return text
 
 
 def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[str, str]]:

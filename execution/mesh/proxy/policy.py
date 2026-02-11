@@ -24,6 +24,7 @@ class MeshPolicy:
 
         groups = identity.get("groups", {})
         self.group_participants: Dict[str, Set[str]] = {}
+        self.group_names: Dict[str, List[str]] = {}
         if isinstance(groups, dict):
             for group_id, group_cfg in groups.items():
                 if not isinstance(group_cfg, dict):
@@ -33,6 +34,10 @@ class MeshPolicy:
                     self.group_participants[group_id] = {
                         p for p in participants if isinstance(p, str)
                     }
+                # Parse names for this group (names Joi responds to)
+                names = group_cfg.get("names", [])
+                if isinstance(names, list) and names:
+                    self.group_names[group_id] = [n for n in names if isinstance(n, str)]
 
         inbound_limits = self._config.get("rate_limits", {}).get("inbound", {})
         max_per_hour = int(inbound_limits.get("max_per_hour", 120))
@@ -98,6 +103,10 @@ class MeshPolicy:
             return PolicyDecision(False, limit_result.reason)
 
         return PolicyDecision(True, "ok")
+
+    def get_group_names(self, group_id: str) -> Optional[List[str]]:
+        """Get the names Joi responds to in a specific group."""
+        return self.group_names.get(group_id)
 
     @staticmethod
     def _sender_transport_id(payload: Dict[str, Any]) -> Optional[str]:
