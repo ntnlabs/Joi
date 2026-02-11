@@ -74,26 +74,41 @@ def parse_facts_json(response: str) -> List[Dict[str, Any]]:
     # If response starts with [ and ends with ], try to parse directly
     if response.startswith("["):
         try:
-            return json.loads(response)
+            parsed = json.loads(response)
+            if isinstance(parsed, list):
+                return parsed
         except json.JSONDecodeError:
             pass
 
     # Try to find JSON array in response
-    match = re.search(r'\[[\s\S]*\]', response)
+    match = re.search(r'\[[\s\S]*?\]', response)
     if match:
         try:
-            return json.loads(match.group())
+            parsed = json.loads(match.group())
+            if isinstance(parsed, list):
+                return parsed
         except json.JSONDecodeError:
             pass
 
-    logger.warning("Could not parse facts from LLM response")
+    logger.warning("Could not parse facts from LLM response: %s", response[:200])
     return []
 
 
-def validate_fact(fact: Dict[str, Any]) -> bool:
+def validate_fact(fact: Any) -> bool:
     """Validate a fact dict has required fields."""
+    if not isinstance(fact, dict):
+        return False
+
     required = ["category", "key", "value"]
     if not all(k in fact for k in required):
+        return False
+
+    # Ensure values are the right types
+    if not isinstance(fact.get("category"), str):
+        return False
+    if not isinstance(fact.get("key"), str):
+        return False
+    if fact.get("value") is None:
         return False
 
     valid_categories = ["personal", "preference", "relationship", "work", "routine", "interest"]
@@ -102,7 +117,13 @@ def validate_fact(fact: Dict[str, Any]) -> bool:
 
     # Confidence should be 0-1
     confidence = fact.get("confidence", 0.8)
-    if not isinstance(confidence, (int, float)) or confidence < 0 or confidence > 1:
+    try:
+        confidence = float(confidence)
+        if confidence < 0 or confidence > 1:
+            fact["confidence"] = 0.8
+        else:
+            fact["confidence"] = confidence
+    except (TypeError, ValueError):
         fact["confidence"] = 0.8
 
     return True
@@ -181,15 +202,21 @@ class MemoryConsolidator:
         valid_facts = [f for f in facts if validate_fact(f)]
 
         if store and valid_facts:
+            stored_count = 0
             for fact in valid_facts:
-                self.memory.store_fact(
-                    category=fact["category"],
-                    key=fact["key"],
-                    value=fact["value"],
-                    confidence=fact.get("confidence", 0.8),
-                    source="inferred",
-                )
-            logger.info("Extracted and stored %d facts", len(valid_facts))
+                try:
+                    self.memory.store_fact(
+                        category=fact["category"],
+                        key=fact["key"],
+                        value=str(fact["value"]),  # Ensure value is string
+                        confidence=float(fact.get("confidence", 0.8)),
+                        source="inferred",
+                    )
+                    stored_count += 1
+                except (KeyError, TypeError, ValueError) as e:
+                    logger.warning("Skipping malformed fact %s: %s", fact, e)
+            if stored_count:
+                logger.info("Extracted and stored %d facts", stored_count)
 
         return valid_facts
 
