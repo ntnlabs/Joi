@@ -763,7 +763,7 @@ class MemoryStore:
         Search knowledge base using FTS5 full-text search.
 
         Args:
-            query: Search query (supports FTS5 syntax)
+            query: Search query (plain text, will be sanitized)
             limit: Maximum number of results
 
         Returns:
@@ -771,19 +771,33 @@ class MemoryStore:
         """
         conn = self._connect()
 
-        # Use FTS5 MATCH for full-text search
-        cursor = conn.execute(
-            """
-            SELECT k.id, k.source, k.title, k.content, k.chunk_index, k.created_at,
-                   bm25(knowledge_fts) as rank
-            FROM knowledge_chunks k
-            JOIN knowledge_fts f ON k.id = f.rowid
-            WHERE knowledge_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (query, limit)
-        )
+        # Sanitize query for FTS5: extract words and wrap in quotes
+        # This prevents FTS5 special syntax from breaking the query
+        import re
+        words = re.findall(r'\w+', query)
+        if not words:
+            return []
+
+        # Join words with OR, each word quoted to treat as literal
+        fts_query = " OR ".join(f'"{word}"' for word in words[:20])  # Limit to 20 words
+
+        try:
+            # Use FTS5 MATCH for full-text search
+            cursor = conn.execute(
+                """
+                SELECT k.id, k.source, k.title, k.content, k.chunk_index, k.created_at,
+                       bm25(knowledge_fts) as rank
+                FROM knowledge_chunks k
+                JOIN knowledge_fts f ON k.id = f.rowid
+                WHERE knowledge_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (fts_query, limit)
+            )
+        except sqlite3.OperationalError as e:
+            logger.warning("FTS5 search failed: %s (query: %s)", e, fts_query[:100])
+            return []
 
         return [
             KnowledgeChunk(
