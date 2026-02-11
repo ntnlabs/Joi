@@ -23,10 +23,11 @@ settings = load_settings()
 app = FastAPI(title="joi-api", version="0.1.0")
 
 # Initialize Ollama client
+LLM_TIMEOUT = float(os.getenv("JOI_LLM_TIMEOUT", "180"))
 llm = OllamaClient(
     base_url=settings.ollama_url,
     model=settings.ollama_model,
-    timeout=60.0,
+    timeout=LLM_TIMEOUT,
 )
 
 # Initialize memory store
