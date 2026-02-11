@@ -11,6 +11,7 @@ from rate_limiter import InboundRateLimiter
 class PolicyDecision:
     allowed: bool
     reason: str
+    store_only: bool = False  # True = store for context, but don't respond
 
 
 class MeshPolicy:
@@ -71,11 +72,15 @@ class MeshPolicy:
             return PolicyDecision(False, "invalid_conversation")
 
         if convo_type == "group":
-            allowed = self.group_participants.get(convo_id)
-            if allowed is None:
+            allowed_participants = self.group_participants.get(convo_id)
+            if allowed_participants is None:
                 return PolicyDecision(False, "group_not_allowed")
-            if sender not in allowed:
-                return PolicyDecision(False, "group_participant_not_allowed")
+            # For groups: allow all messages from the group (for context)
+            # but mark non-allowed senders as store_only (Joi won't respond)
+            sender_allowed = sender in allowed_participants
+            if not sender_allowed:
+                # Forward for context but don't respond
+                return PolicyDecision(True, "store_only", store_only=True)
 
         validation_result = self._validate_content(payload)
         if not validation_result.allowed:

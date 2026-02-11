@@ -352,7 +352,14 @@ def main() -> None:
                         else:
                             logger.warning("Dropping sender=%s reason=%s", sender, decision.reason)
                         continue
-                    logger.info("Forwarding message_id=%s to Joi", payload.get("message_id"))
+
+                    # Add store_only flag to payload for Joi
+                    if decision.store_only:
+                        payload["store_only"] = True
+                        logger.info("Forwarding message_id=%s to Joi (store_only)", payload.get("message_id"))
+                    else:
+                        logger.info("Forwarding message_id=%s to Joi", payload.get("message_id"))
+
                     forward_to_joi(payload)
             except Exception as exc:  # noqa: BLE001
                 logger.error("signal_worker error: %s", exc)

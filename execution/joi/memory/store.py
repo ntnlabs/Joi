@@ -30,6 +30,8 @@ class Message:
     timestamp: int
     created_at: int
     archived: bool = False
+    sender_id: Optional[str] = None  # transport_id (phone number)
+    sender_name: Optional[str] = None  # display name
 
 
 @dataclass
@@ -84,6 +86,8 @@ CREATE TABLE IF NOT EXISTS messages (
     content_media_path TEXT,
     conversation_id TEXT,
     reply_to_id TEXT,
+    sender_id TEXT,
+    sender_name TEXT,
     timestamp INTEGER NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     processed INTEGER NOT NULL DEFAULT 0,
@@ -251,13 +255,23 @@ class MemoryStore:
         if not cursor.fetchone():
             return  # Fresh database, no migrations needed
 
-        # Check if archived column exists in messages table
+        # Check columns in messages table
         cursor = conn.execute("PRAGMA table_info(messages)")
         columns = [row[1] for row in cursor.fetchall()]
 
         if "archived" not in columns:
             logger.info("Migration: Adding 'archived' column to messages table")
             conn.execute("ALTER TABLE messages ADD COLUMN archived INTEGER NOT NULL DEFAULT 0")
+            conn.commit()
+
+        if "sender_id" not in columns:
+            logger.info("Migration: Adding 'sender_id' column to messages table")
+            conn.execute("ALTER TABLE messages ADD COLUMN sender_id TEXT")
+            conn.commit()
+
+        if "sender_name" not in columns:
+            logger.info("Migration: Adding 'sender_name' column to messages table")
+            conn.execute("ALTER TABLE messages ADD COLUMN sender_name TEXT")
             conn.commit()
 
     def close(self) -> None:
@@ -279,6 +293,8 @@ class MemoryStore:
         conversation_id: Optional[str] = None,
         reply_to_id: Optional[str] = None,
         content_media_path: Optional[str] = None,
+        sender_id: Optional[str] = None,
+        sender_name: Optional[str] = None,
     ) -> int:
         """
         Store a message in the database.
@@ -293,6 +309,8 @@ class MemoryStore:
             conversation_id: Conversation/thread ID
             reply_to_id: Message ID being replied to
             content_media_path: Local path if media attachment
+            sender_id: Sender's transport ID (phone number for Signal)
+            sender_name: Sender's display name
 
         Returns:
             Database row ID of inserted message
@@ -304,12 +322,14 @@ class MemoryStore:
             """
             INSERT OR IGNORE INTO messages (
                 message_id, direction, channel, content_type, content_text,
-                content_media_path, conversation_id, reply_to_id, timestamp, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                content_media_path, conversation_id, reply_to_id, sender_id, sender_name,
+                timestamp, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id, direction, channel, content_type, content_text,
-                content_media_path, conversation_id, reply_to_id, timestamp, now_ms
+                content_media_path, conversation_id, reply_to_id, sender_id, sender_name,
+                timestamp, now_ms
             )
         )
         conn.commit()
@@ -344,7 +364,8 @@ class MemoryStore:
             cursor = conn.execute(
                 """
                 SELECT id, message_id, direction, channel, content_type,
-                       content_text, conversation_id, reply_to_id, timestamp, created_at, archived
+                       content_text, conversation_id, reply_to_id, timestamp, created_at,
+                       archived, sender_id, sender_name
                 FROM messages
                 WHERE content_type = ? AND conversation_id = ? AND archived = 0
                 ORDER BY timestamp DESC
@@ -356,7 +377,8 @@ class MemoryStore:
             cursor = conn.execute(
                 """
                 SELECT id, message_id, direction, channel, content_type,
-                       content_text, conversation_id, reply_to_id, timestamp, created_at, archived
+                       content_text, conversation_id, reply_to_id, timestamp, created_at,
+                       archived, sender_id, sender_name
                 FROM messages
                 WHERE content_type = ? AND archived = 0
                 ORDER BY timestamp DESC
@@ -381,6 +403,8 @@ class MemoryStore:
                 timestamp=row["timestamp"],
                 created_at=row["created_at"],
                 archived=bool(row["archived"]),
+                sender_id=row["sender_id"],
+                sender_name=row["sender_name"],
             )
             for row in rows
         ]
