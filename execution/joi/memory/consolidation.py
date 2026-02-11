@@ -18,27 +18,25 @@ from .store import MemoryStore, Message
 logger = logging.getLogger("joi.memory.consolidation")
 
 # Prompt for extracting facts from conversation
-FACT_EXTRACTION_PROMPT = """Analyze this conversation and extract any facts about the user.
+FACT_EXTRACTION_PROMPT = """Extract facts about the user from this conversation.
 
-Return a JSON array of facts. Each fact should have:
-- category: one of "personal", "preference", "relationship", "work", "routine", "interest"
-- key: short identifier (e.g., "name", "favorite_food", "partner_name")
-- value: the fact itself
-- confidence: 0.0-1.0 how confident you are (1.0 = user explicitly stated, 0.6 = inferred)
+IMPORTANT: Return ONLY a valid JSON array. No explanations, no markdown, no text before or after.
 
-Only include facts that are clearly stated or strongly implied. Do not make assumptions.
-If no facts can be extracted, return an empty array: []
+Each fact must have exactly these 4 fields:
+- "category": one of: "personal", "preference", "relationship", "work", "routine", "interest"
+- "key": short identifier like "name", "job", "hobby", "partner_name"
+- "value": the actual fact as a string
+- "confidence": number between 0.0 and 1.0
 
-Example output:
-[
-  {{"category": "personal", "key": "name", "value": "Peter", "confidence": 1.0}},
-  {{"category": "preference", "key": "coffee", "value": "prefers black coffee", "confidence": 0.8}}
-]
+If no facts found, return exactly: []
+
+Example of correct output format:
+[{{"category": "personal", "key": "name", "value": "Peter", "confidence": 1.0}}, {{"category": "preference", "key": "coffee", "value": "likes black coffee", "confidence": 0.8}}]
 
 Conversation:
 {conversation}
 
-JSON array of extracted facts:"""
+JSON:"""
 
 # Prompt for summarizing conversation
 SUMMARIZATION_PROMPT = """Summarize this conversation concisely. Focus on:
