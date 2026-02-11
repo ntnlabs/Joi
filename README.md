@@ -8,7 +8,24 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ## Status
 
-**Phase: Architecture & Planning** - Documentation complete, implementation pending.
+**Phase: Layer 0/1 Implementation** - Core messaging and memory working.
+
+### Implemented
+- ✅ Signal integration (send/receive via signal-cli JSON-RPC)
+- ✅ Rate limiting & message deduplication
+- ✅ Policy-based sender filtering
+- ✅ Memory store (conversation context, 40 messages)
+- ✅ Long-term memory (facts extraction, summaries, consolidation)
+- ✅ RAG knowledge retrieval (FTS5 full-text search)
+- ✅ Group message handling (context-aware, address-triggered responses)
+- ✅ Per-user and per-group system prompts
+- ✅ Reaction handling (stored for context)
+
+### Pending
+- ⏳ Voice message transcription (Whisper)
+- ⏳ SQLCipher database encryption
+- ⏳ System Channel integration
+- ⏳ LLM Services (imagegen, websearch, etc.)
 
 ## Key Features
 

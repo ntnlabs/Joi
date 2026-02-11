@@ -26,15 +26,32 @@ MESH_WORKER_HTTP_PORT=8444
 
 ```json
 {
-  "allowed_senders": [
-    "+<OWNER_PHONE_NUMBER>"
-  ],
+  "identity": {
+    "allowed_senders": [
+      "+<OWNER_PHONE_NUMBER>"
+    ],
+    "groups": {
+      "<GROUP_ID_BASE64>": {
+        "participants": [
+          "+<OWNER_PHONE_NUMBER>"
+        ]
+      }
+    }
+  },
   "rate_limits": {
-    "max_per_minute": 10,
-    "max_per_hour": 120
+    "inbound": {
+      "max_per_hour": 120,
+      "max_per_minute": 20
+    }
+  },
+  "validation": {
+    "max_text_length": 1500,
+    "max_timestamp_skew_ms": 300000
   }
 }
 ```
+
+**Note**: Group IDs are base64-encoded. Get them with: `signal-cli -a +<ACCOUNT> listGroups`
 
 ### /var/lib/signal-cli/
 
@@ -55,33 +72,50 @@ Signal account data directory. Contains:
 # API settings
 JOI_BIND_HOST=0.0.0.0
 JOI_BIND_PORT=8443
+JOI_LOG_LEVEL=INFO
 
 # Ollama LLM
 JOI_OLLAMA_URL=http://localhost:11434
 JOI_OLLAMA_MODEL=llama3
+JOI_LLM_TIMEOUT=180
 
-# Mesh proxy (Nebula IP)
+# Mesh proxy (vmbr1 IP)
 JOI_MESH_URL=http://172.22.22.1:8444
+
+# Names to respond to in groups (comma-separated)
+JOI_NAMES=Joi
 
 # Memory database
 JOI_MEMORY_DB=/var/lib/joi/memory.db
-JOI_CONTEXT_MESSAGES=10
+JOI_CONTEXT_MESSAGES=40
 
-# Logging
-JOI_LOG_LEVEL=INFO
+# Consolidation
+JOI_CONSOLIDATION_SILENCE_HOURS=1
+JOI_CONSOLIDATION_MAX_MESSAGES=200
+JOI_CONSOLIDATION_ARCHIVE=0
+
+# RAG
+JOI_RAG_ENABLED=1
+JOI_RAG_MAX_TOKENS=500
 
 # Future: SQLCipher encryption key
 # JOI_MEMORY_KEY=<generated-key>
 ```
 
-### /var/lib/joi/system-prompt.txt
+### /var/lib/joi/prompts/
 
-Custom system prompt for Joi's personality. Optional - if missing, uses default.
+Per-user and per-group system prompts. Directory structure:
 
-```text
-You are Joi, a helpful personal AI assistant...
-(customize as needed)
 ```
+/var/lib/joi/prompts/
+├── default.txt              # Default prompt (optional)
+├── users/
+│   └── +<PHONE>.txt         # Per-user prompt for DMs
+└── groups/
+    └── <GROUP_ID>.txt       # Per-group prompt
+```
+
+**Note**: Group IDs with `/` or `+` characters are converted to `_` and `-` in filenames.
 
 ### /var/lib/joi/memory.db
 
