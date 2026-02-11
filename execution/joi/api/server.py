@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -12,7 +13,7 @@ from pydantic import BaseModel
 # Add parent dir to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from config import load_settings
+from config import load_settings, get_prompt_for_conversation, ensure_prompts_dir
 from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
 
@@ -51,28 +52,23 @@ RAG_MAX_TOKENS = int(os.getenv("JOI_RAG_MAX_TOKENS", "500"))  # Max tokens for R
 # Initialize memory consolidator
 consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
 
-# System prompt - loaded from file or fallback to default
-SYSTEM_PROMPT_FILE = os.getenv("JOI_SYSTEM_PROMPT_FILE", "/var/lib/joi/system-prompt.txt")
-DEFAULT_SYSTEM_PROMPT = """You are Joi, a helpful personal AI assistant. You are friendly, concise, and helpful.
-Keep your responses brief and to the point unless asked for more detail.
-You communicate via Signal messenger, so keep messages reasonably short."""
+# Ensure prompts directory exists
+ensure_prompts_dir()
+
+# Joi addressing patterns for group messages
+# Matches: "Joi", "joi", "Joi,", "joi:", "@Joi", etc. at start of message or standalone
+JOI_ADDRESS_PATTERNS = [
+    r"^@?joi[,:\s]",           # "Joi," "joi:" "@joi " at start
+    r"^@?joi$",                # Just "Joi" or "@Joi" alone
+    r"\s@joi[\s,:]",           # "@joi" in the middle
+    r"\s@joi$",                # "@joi" at the end
+]
+JOI_ADDRESS_REGEX = re.compile("|".join(JOI_ADDRESS_PATTERNS), re.IGNORECASE)
 
 
-def _load_system_prompt() -> str:
-    """Load system prompt from file, or use default if file doesn't exist."""
-    try:
-        with open(SYSTEM_PROMPT_FILE, "r") as f:
-            prompt = f.read().strip()
-            if prompt:
-                return prompt
-    except FileNotFoundError:
-        pass
-    except Exception as e:
-        logger.warning("Failed to load system prompt from %s: %s", SYSTEM_PROMPT_FILE, e)
-    return DEFAULT_SYSTEM_PROMPT
-
-
-SYSTEM_PROMPT = _load_system_prompt()
+def _is_addressing_joi(text: str) -> bool:
+    """Check if the message is addressing Joi directly."""
+    return bool(JOI_ADDRESS_REGEX.search(text))
 
 
 # --- Request/Response Models (per api-contracts.md) ---
@@ -105,6 +101,7 @@ class InboundMessage(BaseModel):
     timestamp: int
     quote: Optional[Dict[str, Any]] = None
     metadata: Optional[Dict[str, Any]] = None
+    store_only: bool = False  # If True, store for context but don't respond
 
 
 class InboundResponse(BaseModel):
@@ -143,12 +140,18 @@ def health():
 def receive_message(msg: InboundMessage):
     """
     Receive a message from mesh proxy, process with LLM, send response back.
+
+    For group messages:
+    - store_only=True: Store for context but don't respond (non-allowed senders)
+    - store_only=False: Check if Joi is addressed before responding
     """
     logger.info(
-        "Received message_id=%s from=%s type=%s",
+        "Received message_id=%s from=%s type=%s convo=%s store_only=%s",
         msg.message_id,
-        msg.sender.id,
+        msg.sender.transport_id,
         msg.content.type,
+        msg.conversation.type,
+        msg.store_only,
     )
 
     # Only handle text messages for now
@@ -160,7 +163,7 @@ def receive_message(msg: InboundMessage):
     if not user_text:
         return InboundResponse(status="ok", message_id=msg.message_id)
 
-    # Store inbound message
+    # Store inbound message (always store for context)
     memory.store_message(
         message_id=msg.message_id,
         direction="inbound",
@@ -169,7 +172,28 @@ def receive_message(msg: InboundMessage):
         timestamp=msg.timestamp,
         conversation_id=msg.conversation.id,
         reply_to_id=msg.quote.get("message_id") if msg.quote else None,
+        sender_id=msg.sender.transport_id,
+        sender_name=msg.sender.display_name,
     )
+
+    # Determine if we should respond
+    should_respond = True
+
+    if msg.store_only:
+        # Non-allowed sender in group - store only, no response
+        logger.info("Message stored for context only (store_only=True)")
+        should_respond = False
+    elif msg.conversation.type == "group":
+        # Group message from allowed sender - only respond if Joi is addressed
+        if _is_addressing_joi(user_text):
+            logger.info("Joi addressed in group message, will respond")
+            should_respond = True
+        else:
+            logger.info("Joi not addressed in group message, storing only")
+            should_respond = False
+
+    if not should_respond:
+        return InboundResponse(status="ok", message_id=msg.message_id)
 
     # Build conversation context from recent messages
     recent_messages = memory.get_recent_messages(
@@ -177,11 +201,17 @@ def receive_message(msg: InboundMessage):
         conversation_id=msg.conversation.id,
     )
 
-    # Convert to LLM chat format
-    chat_messages = _build_chat_messages(recent_messages)
+    # Convert to LLM chat format (with sender prefix for groups)
+    is_group = msg.conversation.type == "group"
+    chat_messages = _build_chat_messages(recent_messages, is_group=is_group)
 
-    # Build enriched system prompt with facts, summaries, and RAG
-    enriched_prompt = _build_enriched_prompt(user_text)
+    # Get per-conversation system prompt and enrich it
+    base_prompt = get_prompt_for_conversation(
+        conversation_type=msg.conversation.type,
+        conversation_id=msg.conversation.id,
+        sender_id=msg.sender.transport_id,
+    )
+    enriched_prompt = _build_enriched_prompt(base_prompt, user_text)
 
     # Generate response from LLM with conversation context
     logger.info("Generating LLM response with %d messages of context", len(chat_messages))
@@ -237,19 +267,30 @@ def receive_message(msg: InboundMessage):
     return InboundResponse(status="ok", message_id=msg.message_id)
 
 
-def _build_chat_messages(messages: List) -> List[Dict[str, str]]:
-    """Convert stored messages to LLM chat format."""
+def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[str, str]]:
+    """Convert stored messages to LLM chat format.
+
+    For group conversations, includes sender name prefix so Joi knows who said what.
+    """
     chat_messages = []
     for msg in messages:
         if msg.content_text:
             role = "user" if msg.direction == "inbound" else "assistant"
-            chat_messages.append({"role": role, "content": msg.content_text})
+
+            if role == "user" and is_group:
+                # For group messages, prefix with sender name/id
+                sender = msg.sender_name or msg.sender_id or "Unknown"
+                content = f"[{sender}]: {msg.content_text}"
+            else:
+                content = msg.content_text
+
+            chat_messages.append({"role": role, "content": content})
     return chat_messages
 
 
-def _build_enriched_prompt(user_message: Optional[str] = None) -> str:
+def _build_enriched_prompt(base_prompt: str, user_message: Optional[str] = None) -> str:
     """Build system prompt enriched with user facts, summaries, and RAG context."""
-    parts = [SYSTEM_PROMPT]
+    parts = [base_prompt]
 
     # Add user facts
     facts_text = memory.get_facts_as_text(min_confidence=0.6)
@@ -346,6 +387,8 @@ def _send_to_mesh(
 def main():
     import uvicorn
 
+    from config.prompts import PROMPTS_DIR
+
     logging.basicConfig(
         level=getattr(logging, settings.log_level),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
@@ -357,10 +400,7 @@ def main():
     logger.info("Memory: %s (context: %d messages)",
                 os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
                 CONTEXT_MESSAGE_COUNT)
-    if os.path.exists(SYSTEM_PROMPT_FILE):
-        logger.info("System prompt: %s", SYSTEM_PROMPT_FILE)
-    else:
-        logger.info("System prompt: default (no file at %s)", SYSTEM_PROMPT_FILE)
+    logger.info("Prompts directory: %s", PROMPTS_DIR)
 
     uvicorn.run(
         app,

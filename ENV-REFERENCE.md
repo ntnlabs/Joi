@@ -19,7 +19,22 @@ Complete list of configurable environment variables for Joi system.
 | `JOI_OLLAMA_URL` | `http://localhost:11434` | Ollama API URL |
 | `JOI_OLLAMA_MODEL` | `llama3` | Model to use |
 | `JOI_LLM_TIMEOUT` | `180` | LLM request timeout in seconds |
-| `JOI_SYSTEM_PROMPT_FILE` | `/var/lib/joi/system-prompt.txt` | Custom system prompt file (optional) |
+
+### System Prompts
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_PROMPTS_DIR` | `/var/lib/joi/prompts` | Directory for per-user/group prompts |
+
+Prompts directory structure:
+```
+/var/lib/joi/prompts/
+├── default.txt           # Default prompt for all
+├── users/
+│   └── <phone>.txt       # Per-user prompt (for DMs)
+└── groups/
+    └── <group_id>.txt    # Per-group prompt
+```
 
 ### Mesh Communication
 
@@ -106,6 +121,9 @@ JOI_CONTEXT_MESSAGES=40
 JOI_CONSOLIDATION_SILENCE_HOURS=1
 JOI_CONSOLIDATION_MAX_MESSAGES=200
 JOI_CONSOLIDATION_ARCHIVE=0
+
+# Prompts (optional, uses defaults if not set)
+# JOI_PROMPTS_DIR=/var/lib/joi/prompts
 ```
 
 ### Mesh Signal Worker (`/etc/default/mesh-signal-worker`)
@@ -136,7 +154,10 @@ MESH_FORWARD_TIMEOUT=120
 |------|---------|
 | `/etc/default/joi-api` | Environment variables |
 | `/var/lib/joi/memory.db` | SQLite database |
-| `/var/lib/joi/system-prompt.txt` | Custom system prompt (optional) |
+| `/var/lib/joi/prompts/` | Per-user and per-group system prompts |
+| `/var/lib/joi/prompts/default.txt` | Default system prompt |
+| `/var/lib/joi/prompts/users/<phone>.txt` | Per-user prompts for DMs |
+| `/var/lib/joi/prompts/groups/<group_id>.txt` | Per-group prompts |
 
 ### Mesh VM
 
