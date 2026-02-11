@@ -78,6 +78,75 @@ def _build_address_regex(names: list) -> re.Pattern:
 _address_regex_cache: Dict[tuple, re.Pattern] = {}
 
 
+# Patterns for "remember this" requests (English only for now)
+REMEMBER_PATTERNS = [
+    r"remember\s+that\s+(.+)",
+    r"don'?t\s+forget\s+that\s+(.+)",
+    r"keep\s+in\s+mind\s+that\s+(.+)",
+    r"my\s+name\s+is\s+(\w+)",
+    r"i'?m\s+called\s+(\w+)",
+    r"my\s+(\w+)\s+is\s+(.+)",  # "my birthday is March 5th"
+    r"i\s+(?:really\s+)?(?:like|love|hate|prefer)\s+(.+)",
+]
+REMEMBER_REGEX = re.compile("|".join(REMEMBER_PATTERNS), re.IGNORECASE)
+
+
+def _detect_remember_request(text: str) -> Optional[str]:
+    """Check if user is asking Joi to remember something. Returns the thing to remember."""
+    match = REMEMBER_REGEX.search(text)
+    if match:
+        # Return the first non-None group
+        for group in match.groups():
+            if group:
+                return group.strip()
+    return None
+
+
+def _extract_and_save_fact(text: str, remember_what: str) -> Optional[str]:
+    """Use LLM to extract a structured fact and save it. Returns confirmation message."""
+    prompt = f"""The user said: "{text}"
+They want me to remember: "{remember_what}"
+
+Extract this as a fact with these exact fields:
+- category: one of "personal", "preference", "relationship", "work", "routine", "interest"
+- key: short identifier (2-3 words max)
+- value: the fact itself
+
+Return ONLY valid JSON, no explanation:
+{{"category": "...", "key": "...", "value": "..."}}
+
+JSON:"""
+
+    try:
+        response = llm.generate(prompt=prompt)
+        if response.error:
+            logger.warning("LLM error extracting fact: %s", response.error)
+            return None
+
+        # Parse JSON
+        import json
+        text_resp = response.text.strip()
+        # Try to find JSON object
+        start = text_resp.find("{")
+        end = text_resp.rfind("}") + 1
+        if start >= 0 and end > start:
+            fact = json.loads(text_resp[start:end])
+            if all(k in fact for k in ["category", "key", "value"]):
+                memory.store_fact(
+                    category=fact["category"],
+                    key=fact["key"],
+                    value=str(fact["value"]),
+                    confidence=0.95,  # High confidence - user explicitly stated
+                    source="stated",
+                )
+                logger.info("Saved stated fact: %s.%s = %s", fact["category"], fact["key"], fact["value"])
+                return fact["value"]
+    except Exception as e:
+        logger.warning("Failed to extract/save fact: %s", e)
+
+    return None
+
+
 def _is_addressing_joi(text: str, names: Optional[List[str]] = None) -> bool:
     """Check if the message is addressing Joi directly."""
     if names is None:
@@ -237,6 +306,14 @@ def receive_message(msg: InboundMessage):
         sender_name=msg.sender.display_name,
     )
 
+    # Check for "remember this" requests (only from allowed senders)
+    saved_fact = None
+    if not msg.store_only:
+        remember_what = _detect_remember_request(user_text)
+        if remember_what:
+            logger.info("Detected remember request: %s", remember_what[:50])
+            saved_fact = _extract_and_save_fact(user_text, remember_what)
+
     # Determine if we should respond
     should_respond = True
 
@@ -275,6 +352,10 @@ def receive_message(msg: InboundMessage):
         sender_id=msg.sender.transport_id,
     )
     enriched_prompt = _build_enriched_prompt(base_prompt, user_text)
+
+    # Add hint if we just saved a fact
+    if saved_fact:
+        enriched_prompt += f"\n\n[You just saved this to memory: \"{saved_fact}\". Briefly acknowledge you'll remember it.]"
 
     # Generate response from LLM with conversation context
     logger.info("Generating LLM response with %d messages of context", len(chat_messages))
