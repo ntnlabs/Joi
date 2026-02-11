@@ -360,6 +360,14 @@ def main() -> None:
                     else:
                         logger.info("Forwarding message_id=%s to Joi", payload.get("message_id"))
 
+                    # Add group_names if this is a group message with configured names
+                    convo = payload.get("conversation", {})
+                    if convo.get("type") == "group":
+                        group_id = convo.get("id")
+                        group_names = policy.get_group_names(group_id)
+                        if group_names:
+                            payload["group_names"] = group_names
+
                     forward_to_joi(payload)
             except Exception as exc:  # noqa: BLE001
                 logger.error("signal_worker error: %s", exc)
