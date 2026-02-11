@@ -193,13 +193,31 @@ class MemoryConsolidator:
         conversation_text = format_messages_for_llm(messages)
         prompt = FACT_EXTRACTION_PROMPT.format(conversation=conversation_text)
 
-        response = self.llm.generate(prompt=prompt)
+        try:
+            response = self.llm.generate(prompt=prompt)
+        except Exception as e:
+            logger.error("LLM generate failed: %s", e)
+            return []
+
         if response.error:
             logger.error("LLM error during fact extraction: %s", response.error)
             return []
 
-        facts = parse_facts_json(response.text)
-        valid_facts = [f for f in facts if validate_fact(f)]
+        logger.debug("LLM response for facts: %s", response.text[:500] if response.text else "(empty)")
+
+        try:
+            facts = parse_facts_json(response.text)
+        except Exception as e:
+            logger.error("parse_facts_json failed: %s", e)
+            return []
+
+        valid_facts = []
+        for f in facts:
+            try:
+                if validate_fact(f):
+                    valid_facts.append(f)
+            except Exception as e:
+                logger.warning("validate_fact error for %s: %s", f, e)
 
         if store and valid_facts:
             stored_count = 0
@@ -325,12 +343,21 @@ class MemoryConsolidator:
 
         logger.info("Consolidating %d messages", len(old_messages))
 
-        # Extract facts
-        facts = self.extract_facts_from_messages(old_messages, store=True)
-        results["facts_extracted"] = len(facts)
+        # Extract facts (with error handling)
+        try:
+            facts = self.extract_facts_from_messages(old_messages, store=True)
+            results["facts_extracted"] = len(facts)
+        except Exception as e:
+            logger.error("Fact extraction failed: %s", e, exc_info=True)
+            results["facts_extracted"] = 0
 
-        # Summarize
-        summary = self.summarize_messages(old_messages, store=True)
+        # Summarize (with error handling)
+        try:
+            summary = self.summarize_messages(old_messages, store=True)
+        except Exception as e:
+            logger.error("Summarization failed: %s", e, exc_info=True)
+            summary = None
+
         if summary:
             results["messages_summarized"] = len(old_messages)
 
