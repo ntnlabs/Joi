@@ -79,14 +79,15 @@ _address_regex_cache: Dict[tuple, re.Pattern] = {}
 
 
 # Patterns for "remember this" requests (English only for now)
+# Must be explicit fact statements about the user, not general statements
 REMEMBER_PATTERNS = [
-    r"remember\s+that\s+(.+)",
-    r"don'?t\s+forget\s+that\s+(.+)",
-    r"keep\s+in\s+mind\s+that\s+(.+)",
-    r"my\s+name\s+is\s+(\w+)",
-    r"i'?m\s+called\s+(\w+)",
-    r"my\s+(\w+)\s+is\s+(.+)",  # "my birthday is March 5th"
-    r"i\s+(?:really\s+)?(?:like|love|hate|prefer)\s+(.+)",
+    r"remember\s+that\s+(?:i|my)\s+(.+)",  # "remember that I..." or "remember that my..."
+    r"don'?t\s+forget\s+that\s+(?:i|my)\s+(.+)",  # "don't forget that I/my..."
+    r"keep\s+in\s+mind\s+that\s+(?:i|my)\s+(.+)",  # "keep in mind that I/my..."
+    r"^my\s+name\s+is\s+(\w+)",  # "my name is X" at start
+    r"^i'?m\s+called\s+(\w+)",  # "I'm called X" at start
+    r"^my\s+(\w+)\s+is\s+(.+)",  # "my birthday is March 5th" at start
+    r"^i\s+(?:really\s+)?(?:like|love|hate|prefer)\s+(.+)",  # "I like X" at start
 ]
 REMEMBER_REGEX = re.compile("|".join(REMEMBER_PATTERNS), re.IGNORECASE)
 
