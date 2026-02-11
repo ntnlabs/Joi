@@ -165,9 +165,25 @@ def receive_message(msg: InboundMessage):
         msg.store_only,
     )
 
-    # Only handle text messages for now
+    # Handle reactions - store but don't respond
+    if msg.content.type == "reaction":
+        emoji = msg.content.reaction or "?"
+        logger.info("Received reaction %s from %s", emoji, msg.sender.transport_id)
+        memory.store_message(
+            message_id=msg.message_id,
+            direction="inbound",
+            content_type="reaction",
+            content_text=f"[reacted with {emoji}]",
+            timestamp=msg.timestamp,
+            conversation_id=msg.conversation.id,
+            sender_id=msg.sender.transport_id,
+            sender_name=msg.sender.display_name,
+        )
+        return InboundResponse(status="ok", message_id=msg.message_id)
+
+    # Only handle text messages beyond this point
     if msg.content.type != "text" or not msg.content.text:
-        logger.info("Skipping non-text message type=%s", msg.content.type)
+        logger.info("Skipping unsupported message type=%s", msg.content.type)
         return InboundResponse(status="ok", message_id=msg.message_id)
 
     user_text = msg.content.text.strip()
