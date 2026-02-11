@@ -262,10 +262,10 @@ def _maybe_run_consolidation() -> None:
         )
         if result["ran"]:
             logger.info(
-                "Memory consolidation: facts=%d, summarized=%d, deleted=%d",
+                "Memory consolidation: facts=%d, summarized=%d, archived=%d",
                 result["facts_extracted"],
                 result["messages_summarized"],
-                result["messages_deleted"],
+                result["messages_archived"],
             )
     except Exception as e:
         logger.error("Consolidation error: %s", e)

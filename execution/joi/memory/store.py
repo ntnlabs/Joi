@@ -29,6 +29,7 @@ class Message:
     reply_to_id: Optional[str]
     timestamp: int
     created_at: int
+    archived: bool = False
 
 
 @dataclass
@@ -76,12 +77,14 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     processed INTEGER NOT NULL DEFAULT 0,
     escalated INTEGER NOT NULL DEFAULT 0,
+    archived INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (reply_to_id) REFERENCES messages(message_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_messages_archived ON messages(archived, timestamp DESC);
 
 -- System state table (operational state)
 CREATE TABLE IF NOT EXISTS system_state (
@@ -275,9 +278,9 @@ class MemoryStore:
             cursor = conn.execute(
                 """
                 SELECT id, message_id, direction, channel, content_type,
-                       content_text, conversation_id, reply_to_id, timestamp, created_at
+                       content_text, conversation_id, reply_to_id, timestamp, created_at, archived
                 FROM messages
-                WHERE content_type = ? AND conversation_id = ?
+                WHERE content_type = ? AND conversation_id = ? AND archived = 0
                 ORDER BY timestamp DESC
                 LIMIT ?
                 """,
@@ -287,9 +290,9 @@ class MemoryStore:
             cursor = conn.execute(
                 """
                 SELECT id, message_id, direction, channel, content_type,
-                       content_text, conversation_id, reply_to_id, timestamp, created_at
+                       content_text, conversation_id, reply_to_id, timestamp, created_at, archived
                 FROM messages
-                WHERE content_type = ?
+                WHERE content_type = ? AND archived = 0
                 ORDER BY timestamp DESC
                 LIMIT ?
                 """,
@@ -311,18 +314,22 @@ class MemoryStore:
                 reply_to_id=row["reply_to_id"],
                 timestamp=row["timestamp"],
                 created_at=row["created_at"],
+                archived=bool(row["archived"]),
             )
             for row in rows
         ]
 
         return list(reversed(messages))
 
-    def get_message_count(self, direction: Optional[str] = None, since_ms: Optional[int] = None) -> int:
+    def get_message_count(self, direction: Optional[str] = None, since_ms: Optional[int] = None, include_archived: bool = False) -> int:
         """Count messages, optionally filtered by direction and time."""
         conn = self._connect()
 
         query = "SELECT COUNT(*) FROM messages WHERE 1=1"
         params: List[Any] = []
+
+        if not include_archived:
+            query += " AND archived = 0"
 
         if direction:
             query += " AND direction = ?"
@@ -568,15 +575,15 @@ class MemoryStore:
         older_than_ms: int,
         limit: int = 200,
     ) -> List[Message]:
-        """Get old messages that should be summarized."""
+        """Get old non-archived messages that should be summarized."""
         conn = self._connect()
 
         cursor = conn.execute(
             """
             SELECT id, message_id, direction, channel, content_type,
-                   content_text, conversation_id, reply_to_id, timestamp, created_at
+                   content_text, conversation_id, reply_to_id, timestamp, created_at, archived
             FROM messages
-            WHERE content_type = 'text' AND timestamp < ?
+            WHERE content_type = 'text' AND timestamp < ? AND archived = 0
             ORDER BY timestamp ASC
             LIMIT ?
             """,
@@ -595,12 +602,28 @@ class MemoryStore:
                 reply_to_id=row["reply_to_id"],
                 timestamp=row["timestamp"],
                 created_at=row["created_at"],
+                archived=bool(row["archived"]),
             )
             for row in cursor.fetchall()
         ]
 
+    def archive_messages_before(self, before_ms: int) -> int:
+        """Archive (soft-delete) messages older than timestamp."""
+        conn = self._connect()
+
+        cursor = conn.execute(
+            "UPDATE messages SET archived = 1 WHERE timestamp < ? AND archived = 0",
+            (before_ms,)
+        )
+        conn.commit()
+
+        archived = cursor.rowcount
+        if archived > 0:
+            logger.info("Archived %d messages before %d", archived, before_ms)
+        return archived
+
     def delete_messages_before(self, before_ms: int) -> int:
-        """Delete messages older than timestamp."""
+        """Hard delete messages older than timestamp (use archive_messages_before for soft delete)."""
         conn = self._connect()
 
         cursor = conn.execute(
