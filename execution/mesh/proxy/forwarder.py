@@ -9,7 +9,7 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
         return
 
     url = os.getenv("MESH_JOI_INBOUND_URL", "http://joi:8443/api/v1/message/inbound")
-    timeout_s = float(os.getenv("MESH_FORWARD_TIMEOUT", "5"))
+    timeout_s = float(os.getenv("MESH_FORWARD_TIMEOUT", "120"))
 
     with httpx.Client(timeout=timeout_s) as client:
         resp = client.post(url, json=payload)
