@@ -285,7 +285,7 @@ class MemoryConsolidator:
         self,
         silence_threshold_ms: int = 3600000,  # 1 hour
         max_messages_before_consolidation: int = 200,
-        keep_recent_messages: int = 50,
+        context_messages: int = 40,
         archive_instead_of_delete: bool = False,
     ) -> Dict[str, Any]:
         """
@@ -298,7 +298,7 @@ class MemoryConsolidator:
         Args:
             silence_threshold_ms: Consider conversation ended after this much silence
             max_messages_before_consolidation: Force consolidation at this count
-            keep_recent_messages: Don't consolidate the most recent N messages
+            context_messages: Always preserve the most recent N messages (context window)
             archive_instead_of_delete: If True, archive messages; if False, delete them
 
         Returns:
@@ -319,7 +319,7 @@ class MemoryConsolidator:
         # Check if consolidation needed
         silence_ms = now_ms - last_interaction if last_interaction else 0
         needs_consolidation = (
-            (silence_ms > silence_threshold_ms and message_count > keep_recent_messages) or
+            (silence_ms > silence_threshold_ms and message_count > context_messages) or
             message_count > max_messages_before_consolidation
         )
 
@@ -329,10 +329,9 @@ class MemoryConsolidator:
         results["ran"] = True
         results["reason"] = "silence" if silence_ms > silence_threshold_ms else "message_count"
 
-        # Get messages to consolidate (older than recent window)
-        cutoff_ms = now_ms - silence_threshold_ms
+        # Get messages to consolidate, ALWAYS preserving the context window
         old_messages = self.memory.get_messages_for_summarization(
-            older_than_ms=cutoff_ms,
+            exclude_recent=context_messages,
             limit=200,
         )
 

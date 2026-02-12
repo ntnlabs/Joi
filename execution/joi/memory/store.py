@@ -662,23 +662,52 @@ class MemoryStore:
 
     def get_messages_for_summarization(
         self,
-        older_than_ms: int,
+        older_than_ms: int = None,
         limit: int = 200,
+        exclude_recent: int = 0,
     ) -> List[Message]:
-        """Get old non-archived messages that should be summarized."""
+        """
+        Get old non-archived messages that should be summarized.
+
+        Args:
+            older_than_ms: Only get messages older than this (optional)
+            limit: Maximum messages to return
+            exclude_recent: Always exclude the N most recent messages (for context window)
+        """
         conn = self._connect()
 
-        cursor = conn.execute(
-            """
-            SELECT id, message_id, direction, channel, content_type,
-                   content_text, conversation_id, reply_to_id, timestamp, created_at, archived
-            FROM messages
-            WHERE content_type = 'text' AND timestamp < ? AND archived = 0
-            ORDER BY timestamp ASC
-            LIMIT ?
-            """,
-            (older_than_ms, limit)
-        )
+        if exclude_recent > 0:
+            # Get messages excluding the most recent N (preserve context window)
+            cursor = conn.execute(
+                """
+                SELECT id, message_id, direction, channel, content_type,
+                       content_text, conversation_id, reply_to_id, timestamp, created_at, archived
+                FROM messages
+                WHERE content_type = 'text' AND archived = 0
+                  AND id NOT IN (
+                      SELECT id FROM messages
+                      WHERE content_type = 'text' AND archived = 0
+                      ORDER BY timestamp DESC
+                      LIMIT ?
+                  )
+                ORDER BY timestamp ASC
+                LIMIT ?
+                """,
+                (exclude_recent, limit)
+            )
+        else:
+            # Original behavior: filter by timestamp
+            cursor = conn.execute(
+                """
+                SELECT id, message_id, direction, channel, content_type,
+                       content_text, conversation_id, reply_to_id, timestamp, created_at, archived
+                FROM messages
+                WHERE content_type = 'text' AND timestamp < ? AND archived = 0
+                ORDER BY timestamp ASC
+                LIMIT ?
+                """,
+                (older_than_ms or 0, limit)
+            )
 
         return [
             Message(
