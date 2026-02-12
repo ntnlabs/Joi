@@ -99,10 +99,8 @@ class MessageQueue:
         )
 
         queue_size = self._queue.qsize()
-        if queue_size > 0:
-            logger.info("Message %s queued (position ~%d, priority=%d)", message_id, queue_size, priority)
-        else:
-            logger.debug("Message %s queued (no wait, priority=%d)", message_id, priority)
+        priority_label = "owner" if priority == self.PRIORITY_OWNER else "normal"
+        logger.info("Queue ADD: message_id=%s priority=%s queue_size=%d", message_id, priority_label, queue_size)
 
         self._queue.put(msg)
 
@@ -128,16 +126,17 @@ class MessageQueue:
 
             self._current_message_id = msg.message_id
             start_time = time.time()
+            priority_label = "owner" if msg.priority == self.PRIORITY_OWNER else "normal"
+            logger.info("Queue START: message_id=%s priority=%s", msg.message_id, priority_label)
 
             try:
-                logger.debug("Processing message %s (priority=%d)", msg.message_id, msg.priority)
                 msg.result = msg.handler()
             except Exception as e:
-                logger.error("Message %s processing failed: %s", msg.message_id, e)
+                logger.error("Queue ERROR: message_id=%s error=%s", msg.message_id, e)
                 msg.error = str(e)
             finally:
                 elapsed = time.time() - start_time
-                logger.debug("Message %s processed in %.2fs", msg.message_id, elapsed)
+                logger.info("Queue DONE: message_id=%s elapsed=%.2fs", msg.message_id, elapsed)
                 self._current_message_id = None
                 msg.done_event.set()
 
