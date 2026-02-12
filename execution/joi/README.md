@@ -5,14 +5,40 @@ The core Joi AI assistant API running on the Joi VM.
 ## Quick Start
 
 ```bash
-# Create virtualenv
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+# Install dependencies (system-wide)
+sudo apt install python3-pip
+sudo pip3 install flask requests
 
 # Run
 ./run.sh
 ```
+
+## Ollama Setup
+
+Ollama runs in Docker with GPU support:
+
+```bash
+# Install nvidia-container-toolkit (if not already)
+sudo apt install nvidia-container-toolkit
+sudo systemctl restart docker
+
+# Run Ollama with GPU
+docker run -d --gpus all \
+  -v ollama:/root/.ollama \
+  -p 11434:11434 \
+  --name ollama \
+  --restart unless-stopped \
+  ollama/ollama
+
+# Pull the model
+docker exec ollama ollama pull llama3
+
+# Verify GPU is being used
+docker exec ollama nvidia-smi
+docker exec ollama ollama ps  # Should show GPU in PROCESSOR column
+```
+
+**Note:** Without `--gpus all`, Ollama runs on CPU which is significantly slower and may cause timeouts with larger context windows.
 
 ## Environment Variables
 
@@ -42,7 +68,7 @@ See [ENV-REFERENCE.md](../../ENV-REFERENCE.md) for complete documentation.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_MEMORY_DB` | /var/lib/joi/memory.db | SQLite database path |
-| `JOI_CONTEXT_MESSAGES` | 10 | Recent messages in LLM context |
+| `JOI_CONTEXT_MESSAGES` | 40 | Recent messages in LLM context |
 
 ### Consolidation
 | Variable | Default | Description |
