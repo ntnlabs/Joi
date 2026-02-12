@@ -8,20 +8,37 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ## Status
 
-**Phase: Layer 0/1 Implementation** - Core messaging and memory working.
+**Phase 0 Complete** - Core infrastructure and baseline security hardened.
 
-### Implemented
+### Infrastructure
+- ✅ Joi VM with LUKS full-disk encryption
+- ✅ Nebula mesh VPN (mesh ↔ joi encrypted tunnel)
+- ✅ UFW firewalls (deny-by-default on both VMs)
+- ✅ Joi VM has no WAN egress (isolated network)
+- ✅ GPU passthrough (RTX 3060 via Thunderbolt)
+
+### Messaging
 - ✅ Signal integration (send/receive via signal-cli JSON-RPC)
 - ✅ Rate limiting & message deduplication
 - ✅ Policy-based sender filtering
-- ✅ Memory store (conversation context, 40 messages)
-- ✅ Long-term memory (facts extraction, summaries, consolidation)
-- ✅ RAG knowledge retrieval (FTS5 full-text search)
-- ✅ Group message handling (context-aware, address-triggered responses)
+- ✅ Message queue with owner priority
+- ✅ Async mesh → joi forwarding (fire-and-forget)
+- ✅ Signal @mention detection (native mentions + text fallback)
+- ✅ Group message handling (context-aware responses)
 - ✅ Per-user and per-group system prompts
-- ✅ Reaction handling (stored for context)
+- ✅ Reaction responses (contextual acknowledgments)
+
+### Memory
+- ✅ Conversation context (configurable window, default 40 messages)
+- ✅ Long-term memory (facts extraction, summaries)
+- ✅ Real-time fact saving ("remember that...", "my name is...")
+- ✅ Memory consolidation (after silence or message threshold)
+- ✅ RAG knowledge retrieval (FTS5 full-text search)
 
 ### Pending
+- ⏳ HMAC + nonce for defense in depth
+- ⏳ Response cooldown (5s between sends)
+- ⏳ Circuit breaker (120 LLM calls/hr)
 - ⏳ Voice message transcription (Whisper)
 - ⏳ SQLCipher database encryption
 - ⏳ System Channel integration
