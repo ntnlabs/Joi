@@ -299,12 +299,9 @@ class MemoryStore:
 
             # SQLCipher encryption - must be set before any other operations
             if self._encrypted and self._encryption_key:
-                # PRAGMA doesn't support parameterized queries, use quoted string
-                # Key is hex from generate script, so safe to embed
-                conn.execute(f"PRAGMA key = \"x'{self._encryption_key}'\";")
-                conn.execute("PRAGMA cipher_page_size = 4096")
-                conn.execute("PRAGMA kdf_iter = 256000")
-                conn.execute("PRAGMA cipher_memory_security = ON")
+                # PRAGMA doesn't support parameterized queries
+                # Use key as passphrase (matches migration script's ATTACH ... KEY 'passphrase')
+                conn.execute(f"PRAGMA key = '{self._encryption_key}';")
 
                 # Verify encryption is working by querying the database
                 try:
