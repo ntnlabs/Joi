@@ -71,7 +71,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # SQL for creating tables
 SCHEMA_SQL = """
@@ -120,9 +120,10 @@ INSERT OR IGNORE INTO system_state (key, value) VALUES
     ('last_context_cleanup_at', '0'),
     ('last_memory_consolidation_at', '0');
 
--- User facts table (long-term memory about user)
+-- User facts table (long-term memory about user, per-conversation)
 CREATE TABLE IF NOT EXISTS user_facts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL DEFAULT '',
     category TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
@@ -134,15 +135,17 @@ CREATE TABLE IF NOT EXISTS user_facts (
     last_referenced_at INTEGER,
     last_verified_at INTEGER,
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
-    UNIQUE(category, key, active)
+    UNIQUE(conversation_id, category, key, active)
 );
 
 CREATE INDEX IF NOT EXISTS idx_facts_category ON user_facts(category, active);
 CREATE INDEX IF NOT EXISTS idx_facts_active ON user_facts(active, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_facts_conversation ON user_facts(conversation_id, active);
 
--- Context summaries table (compressed conversation history)
+-- Context summaries table (compressed conversation history, per-conversation)
 CREATE TABLE IF NOT EXISTS context_summaries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL DEFAULT '',
     summary_type TEXT NOT NULL,
     period_start INTEGER NOT NULL,
     period_end INTEGER NOT NULL,
@@ -153,6 +156,7 @@ CREATE TABLE IF NOT EXISTS context_summaries (
 );
 
 CREATE INDEX IF NOT EXISTS idx_summaries_period ON context_summaries(summary_type, period_end DESC);
+CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON context_summaries(conversation_id, period_end DESC);
 
 -- Knowledge chunks table (for RAG)
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
@@ -273,6 +277,30 @@ class MemoryStore:
             logger.info("Migration: Adding 'sender_name' column to messages table")
             conn.execute("ALTER TABLE messages ADD COLUMN sender_name TEXT")
             conn.commit()
+
+        # Check user_facts table for conversation_id
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_facts'")
+        if cursor.fetchone():
+            cursor = conn.execute("PRAGMA table_info(user_facts)")
+            fact_columns = [row[1] for row in cursor.fetchall()]
+            if "conversation_id" not in fact_columns:
+                logger.info("Migration: Adding 'conversation_id' column to user_facts table")
+                conn.execute("ALTER TABLE user_facts ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_conversation ON user_facts(conversation_id, active)")
+                # Drop and recreate unique constraint (SQLite doesn't support ALTER CONSTRAINT)
+                # Existing facts get conversation_id='' which works for backward compatibility
+                conn.commit()
+
+        # Check context_summaries table for conversation_id
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='context_summaries'")
+        if cursor.fetchone():
+            cursor = conn.execute("PRAGMA table_info(context_summaries)")
+            summary_columns = [row[1] for row in cursor.fetchall()]
+            if "conversation_id" not in summary_columns:
+                logger.info("Migration: Adding 'conversation_id' column to context_summaries table")
+                conn.execute("ALTER TABLE context_summaries ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON context_summaries(conversation_id, period_end DESC)")
+                conn.commit()
 
     def close(self) -> None:
         """Close the database connection for this thread."""
@@ -463,6 +491,49 @@ class MemoryStore:
         val = self.get_state("last_interaction_at", "0")
         return int(val) if val else 0
 
+    def get_distinct_conversation_ids(self, min_messages: int = 1) -> List[str]:
+        """Get list of distinct conversation IDs with at least min_messages."""
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT conversation_id, COUNT(*) as msg_count
+            FROM messages
+            WHERE conversation_id IS NOT NULL AND conversation_id != ''
+                  AND archived = 0 AND content_type = 'text'
+            GROUP BY conversation_id
+            HAVING msg_count >= ?
+            ORDER BY MAX(timestamp) DESC
+            """,
+            (min_messages,)
+        )
+        return [row["conversation_id"] for row in cursor.fetchall()]
+
+    def get_message_count_for_conversation(self, conversation_id: str, include_archived: bool = False) -> int:
+        """Get count of messages for a specific conversation."""
+        conn = self._connect()
+        if include_archived:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND content_type = 'text'",
+                (conversation_id,)
+            )
+        else:
+            cursor = conn.execute(
+                "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND content_type = 'text' AND archived = 0",
+                (conversation_id,)
+            )
+        row = cursor.fetchone()
+        return row[0] if row else 0
+
+    def get_last_interaction_for_conversation(self, conversation_id: str) -> int:
+        """Get timestamp of last message in a conversation."""
+        conn = self._connect()
+        cursor = conn.execute(
+            "SELECT MAX(timestamp) FROM messages WHERE conversation_id = ? AND content_type = 'text'",
+            (conversation_id,)
+        )
+        row = cursor.fetchone()
+        return row[0] if row and row[0] else 0
+
     # --- User Facts Operations ---
 
     def store_fact(
@@ -473,24 +544,25 @@ class MemoryStore:
         confidence: float = 0.8,
         source: str = "inferred",
         source_message_id: Optional[str] = None,
+        conversation_id: str = "",
     ) -> int:
         """
-        Store or update a fact about the user.
+        Store or update a fact about the user for a specific conversation.
 
-        If fact with same category+key exists, updates it.
+        If fact with same conversation_id+category+key exists, updates it.
         """
         conn = self._connect()
         now_ms = int(time.time() * 1000)
 
-        # Try to update existing active fact
+        # Try to update existing active fact for this conversation
         cursor = conn.execute(
             """
             UPDATE user_facts
             SET value = ?, confidence = ?, source = ?, source_message_id = ?,
                 last_verified_at = ?, updated_at = ?
-            WHERE category = ? AND key = ? AND active = 1
+            WHERE conversation_id = ? AND category = ? AND key = ? AND active = 1
             """,
-            (value, confidence, source, source_message_id, now_ms, now_ms, category, key)
+            (value, confidence, source, source_message_id, now_ms, now_ms, conversation_id, category, key)
         )
 
         if cursor.rowcount == 0:
@@ -498,50 +570,53 @@ class MemoryStore:
             cursor = conn.execute(
                 """
                 INSERT INTO user_facts (
-                    category, key, value, confidence, source, source_message_id,
+                    conversation_id, category, key, value, confidence, source, source_message_id,
                     learned_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (category, key, value, confidence, source, source_message_id, now_ms, now_ms)
+                (conversation_id, category, key, value, confidence, source, source_message_id, now_ms, now_ms)
             )
 
         conn.commit()
-        logger.debug("Stored fact: %s.%s = %s (confidence: %.2f)", category, key, value, confidence)
+        logger.debug("Stored fact for %s: %s.%s = %s (confidence: %.2f)", conversation_id or "global", category, key, value, confidence)
         return cursor.lastrowid or 0
 
     def get_facts(
         self,
         min_confidence: float = 0.5,
         category: Optional[str] = None,
+        conversation_id: Optional[str] = None,
         limit: int = 50,
     ) -> List[UserFact]:
-        """Get active user facts, optionally filtered by category."""
+        """Get active user facts for a conversation, optionally filtered by category."""
         conn = self._connect()
 
+        # Build query based on filters
+        conditions = ["active = 1", "confidence >= ?"]
+        params: list = [min_confidence]
+
+        if conversation_id is not None:
+            conditions.append("conversation_id = ?")
+            params.append(conversation_id)
+
         if category:
-            cursor = conn.execute(
-                """
-                SELECT id, category, key, value, confidence, source,
-                       learned_at, last_verified_at
-                FROM user_facts
-                WHERE active = 1 AND confidence >= ? AND category = ?
-                ORDER BY confidence DESC
-                LIMIT ?
-                """,
-                (min_confidence, category, limit)
-            )
-        else:
-            cursor = conn.execute(
-                """
-                SELECT id, category, key, value, confidence, source,
-                       learned_at, last_verified_at
-                FROM user_facts
-                WHERE active = 1 AND confidence >= ?
-                ORDER BY category, confidence DESC
-                LIMIT ?
-                """,
-                (min_confidence, limit)
-            )
+            conditions.append("category = ?")
+            params.append(category)
+
+        params.append(limit)
+        where_clause = " AND ".join(conditions)
+
+        cursor = conn.execute(
+            f"""
+            SELECT id, category, key, value, confidence, source,
+                   learned_at, last_verified_at
+            FROM user_facts
+            WHERE {where_clause}
+            ORDER BY category, confidence DESC
+            LIMIT ?
+            """,
+            params
+        )
 
         return [
             UserFact(
@@ -557,9 +632,9 @@ class MemoryStore:
             for row in cursor.fetchall()
         ]
 
-    def get_facts_as_text(self, min_confidence: float = 0.5) -> str:
+    def get_facts_as_text(self, min_confidence: float = 0.5, conversation_id: Optional[str] = None) -> str:
         """Get facts formatted as text for LLM context."""
-        facts = self.get_facts(min_confidence=min_confidence)
+        facts = self.get_facts(min_confidence=min_confidence, conversation_id=conversation_id)
         if not facts:
             return ""
 
@@ -585,25 +660,26 @@ class MemoryStore:
         summary_text: str,
         message_count: int = 0,
         key_points_json: Optional[str] = None,
+        conversation_id: str = "",
     ) -> int:
-        """Store a conversation summary."""
+        """Store a conversation summary for a specific conversation."""
         conn = self._connect()
         now_ms = int(time.time() * 1000)
 
         cursor = conn.execute(
             """
             INSERT INTO context_summaries (
-                summary_type, period_start, period_end, summary_text,
+                conversation_id, summary_type, period_start, period_end, summary_text,
                 key_points_json, message_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (summary_type, period_start, period_end, summary_text,
+            (conversation_id, summary_type, period_start, period_end, summary_text,
              key_points_json, message_count, now_ms)
         )
         conn.commit()
 
-        logger.info("Stored %s summary for period %d-%d (%d messages)",
-                    summary_type, period_start, period_end, message_count)
+        logger.info("Stored %s summary for %s period %d-%d (%d messages)",
+                    summary_type, conversation_id or "global", period_start, period_end, message_count)
         return cursor.lastrowid or 0
 
     def get_recent_summaries(
@@ -611,23 +687,37 @@ class MemoryStore:
         summary_type: str = "conversation",
         days: int = 7,
         limit: int = 10,
+        conversation_id: Optional[str] = None,
     ) -> List[ContextSummary]:
-        """Get recent summaries within the last N days."""
+        """Get recent summaries within the last N days for a conversation."""
         conn = self._connect()
         now_ms = int(time.time() * 1000)
         cutoff_ms = now_ms - (days * 24 * 60 * 60 * 1000)
 
-        cursor = conn.execute(
-            """
-            SELECT id, summary_type, period_start, period_end, summary_text,
-                   message_count, created_at
-            FROM context_summaries
-            WHERE summary_type = ? AND period_end > ?
-            ORDER BY period_end DESC
-            LIMIT ?
-            """,
-            (summary_type, cutoff_ms, limit)
-        )
+        if conversation_id is not None:
+            cursor = conn.execute(
+                """
+                SELECT id, summary_type, period_start, period_end, summary_text,
+                       message_count, created_at
+                FROM context_summaries
+                WHERE conversation_id = ? AND summary_type = ? AND period_end > ?
+                ORDER BY period_end DESC
+                LIMIT ?
+                """,
+                (conversation_id, summary_type, cutoff_ms, limit)
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT id, summary_type, period_start, period_end, summary_text,
+                       message_count, created_at
+                FROM context_summaries
+                WHERE summary_type = ? AND period_end > ?
+                ORDER BY period_end DESC
+                LIMIT ?
+                """,
+                (summary_type, cutoff_ms, limit)
+            )
 
         return [
             ContextSummary(
@@ -642,9 +732,9 @@ class MemoryStore:
             for row in cursor.fetchall()
         ]
 
-    def get_summaries_as_text(self, days: int = 7) -> str:
+    def get_summaries_as_text(self, days: int = 7, conversation_id: Optional[str] = None) -> str:
         """Get summaries formatted as text for LLM context."""
-        summaries = self.get_recent_summaries(days=days)
+        summaries = self.get_recent_summaries(days=days, conversation_id=conversation_id)
         if not summaries:
             return ""
 
@@ -665,6 +755,7 @@ class MemoryStore:
         older_than_ms: int = None,
         limit: int = 200,
         exclude_recent: int = 0,
+        conversation_id: Optional[str] = None,
     ) -> List[Message]:
         """
         Get old non-archived messages that should be summarized.
@@ -673,40 +764,48 @@ class MemoryStore:
             older_than_ms: Only get messages older than this (optional)
             limit: Maximum messages to return
             exclude_recent: Always exclude the N most recent messages (for context window)
+            conversation_id: Filter by conversation ID (None = all conversations)
         """
         conn = self._connect()
+
+        # Build conversation filter
+        convo_filter = ""
+        convo_params = []
+        if conversation_id is not None:
+            convo_filter = " AND conversation_id = ?"
+            convo_params = [conversation_id]
 
         if exclude_recent > 0:
             # Get messages excluding the most recent N (preserve context window)
             cursor = conn.execute(
-                """
+                f"""
                 SELECT id, message_id, direction, channel, content_type,
                        content_text, conversation_id, reply_to_id, timestamp, created_at, archived
                 FROM messages
-                WHERE content_type = 'text' AND archived = 0
+                WHERE content_type = 'text' AND archived = 0{convo_filter}
                   AND id NOT IN (
                       SELECT id FROM messages
-                      WHERE content_type = 'text' AND archived = 0
+                      WHERE content_type = 'text' AND archived = 0{convo_filter}
                       ORDER BY timestamp DESC
                       LIMIT ?
                   )
                 ORDER BY timestamp ASC
                 LIMIT ?
                 """,
-                (exclude_recent, limit)
+                convo_params + convo_params + [exclude_recent, limit]
             )
         else:
             # Original behavior: filter by timestamp
             cursor = conn.execute(
-                """
+                f"""
                 SELECT id, message_id, direction, channel, content_type,
                        content_text, conversation_id, reply_to_id, timestamp, created_at, archived
                 FROM messages
-                WHERE content_type = 'text' AND timestamp < ? AND archived = 0
+                WHERE content_type = 'text' AND timestamp < ? AND archived = 0{convo_filter}
                 ORDER BY timestamp ASC
                 LIMIT ?
                 """,
-                (older_than_ms or 0, limit)
+                [older_than_ms or 0] + convo_params + [limit]
             )
 
         return [
@@ -726,14 +825,20 @@ class MemoryStore:
             for row in cursor.fetchall()
         ]
 
-    def archive_messages_before(self, before_ms: int) -> int:
+    def archive_messages_before(self, before_ms: int, conversation_id: Optional[str] = None) -> int:
         """Archive (soft-delete) messages older than timestamp."""
         conn = self._connect()
 
-        cursor = conn.execute(
-            "UPDATE messages SET archived = 1 WHERE timestamp < ? AND archived = 0",
-            (before_ms,)
-        )
+        if conversation_id is not None:
+            cursor = conn.execute(
+                "UPDATE messages SET archived = 1 WHERE timestamp < ? AND conversation_id = ? AND archived = 0",
+                (before_ms, conversation_id)
+            )
+        else:
+            cursor = conn.execute(
+                "UPDATE messages SET archived = 1 WHERE timestamp < ? AND archived = 0",
+                (before_ms,)
+            )
         conn.commit()
 
         archived = cursor.rowcount
@@ -741,26 +846,40 @@ class MemoryStore:
             logger.info("Archived %d messages before %d", archived, before_ms)
         return archived
 
-    def delete_messages_before(self, before_ms: int) -> int:
+    def delete_messages_before(self, before_ms: int, conversation_id: Optional[str] = None) -> int:
         """Hard delete messages older than timestamp (use archive_messages_before for soft delete)."""
         conn = self._connect()
 
         # First, clear reply_to_id references to messages we're about to delete
         # to avoid FOREIGN KEY constraint failures
-        conn.execute(
-            """
-            UPDATE messages SET reply_to_id = NULL
-            WHERE reply_to_id IN (
-                SELECT message_id FROM messages WHERE timestamp < ?
+        if conversation_id is not None:
+            conn.execute(
+                """
+                UPDATE messages SET reply_to_id = NULL
+                WHERE reply_to_id IN (
+                    SELECT message_id FROM messages WHERE timestamp < ? AND conversation_id = ?
+                )
+                """,
+                (before_ms, conversation_id)
             )
-            """,
-            (before_ms,)
-        )
-
-        cursor = conn.execute(
-            "DELETE FROM messages WHERE timestamp < ?",
-            (before_ms,)
-        )
+            cursor = conn.execute(
+                "DELETE FROM messages WHERE timestamp < ? AND conversation_id = ?",
+                (before_ms, conversation_id)
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE messages SET reply_to_id = NULL
+                WHERE reply_to_id IN (
+                    SELECT message_id FROM messages WHERE timestamp < ?
+                )
+                """,
+                (before_ms,)
+            )
+            cursor = conn.execute(
+                "DELETE FROM messages WHERE timestamp < ?",
+                (before_ms,)
+            )
         conn.commit()
 
         deleted = cursor.rowcount
