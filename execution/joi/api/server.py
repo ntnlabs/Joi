@@ -1,10 +1,13 @@
 import logging
 import os
+import queue
 import re
 import sys
+import threading
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
@@ -18,6 +21,134 @@ from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
 
 logger = logging.getLogger("joi.api")
+
+
+# --- Priority Message Queue ---
+
+@dataclass(order=True)
+class PrioritizedMessage:
+    """Message wrapper for priority queue. Lower priority number = higher priority."""
+    priority: int
+    timestamp: float = field(compare=False)
+    message_id: str = field(compare=False)
+    handler: Callable = field(compare=False)
+    result: Any = field(default=None, compare=False)
+    error: Optional[str] = field(default=None, compare=False)
+    done_event: threading.Event = field(default_factory=threading.Event, compare=False)
+
+
+class MessageQueue:
+    """Global message queue with priority support and single worker."""
+
+    PRIORITY_OWNER = 0  # Owner messages processed first
+    PRIORITY_NORMAL = 1  # Other allowed senders
+
+    def __init__(self):
+        self._queue: queue.PriorityQueue = queue.PriorityQueue()
+        self._worker_thread: Optional[threading.Thread] = None
+        self._running = False
+        self._current_message_id: Optional[str] = None
+
+    def start(self):
+        """Start the worker thread."""
+        if self._worker_thread is not None:
+            return
+        self._running = True
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._worker_thread.start()
+        logger.info("Message queue worker started")
+
+    def stop(self):
+        """Stop the worker thread."""
+        self._running = False
+        # Put a sentinel to unblock the queue
+        self._queue.put(PrioritizedMessage(
+            priority=999,
+            timestamp=time.time(),
+            message_id="__stop__",
+            handler=lambda: None,
+        ))
+        if self._worker_thread:
+            self._worker_thread.join(timeout=5.0)
+            self._worker_thread = None
+        logger.info("Message queue worker stopped")
+
+    def enqueue(self, message_id: str, handler: Callable, is_owner: bool = False, timeout: float = 300.0) -> Any:
+        """
+        Add message to queue and wait for processing.
+
+        Args:
+            message_id: Unique message identifier
+            handler: Function to call for processing (returns result)
+            is_owner: If True, gets priority processing
+            timeout: Max seconds to wait for processing
+
+        Returns:
+            Result from handler
+
+        Raises:
+            TimeoutError: If processing takes too long
+            Exception: If handler raises an error
+        """
+        priority = self.PRIORITY_OWNER if is_owner else self.PRIORITY_NORMAL
+        msg = PrioritizedMessage(
+            priority=priority,
+            timestamp=time.time(),
+            message_id=message_id,
+            handler=handler,
+        )
+
+        queue_size = self._queue.qsize()
+        if queue_size > 0:
+            logger.info("Message %s queued (position ~%d, priority=%d)", message_id, queue_size, priority)
+        else:
+            logger.debug("Message %s queued (no wait, priority=%d)", message_id, priority)
+
+        self._queue.put(msg)
+
+        # Wait for processing to complete
+        if not msg.done_event.wait(timeout=timeout):
+            raise TimeoutError(f"Message {message_id} processing timed out after {timeout}s")
+
+        if msg.error:
+            raise Exception(msg.error)
+
+        return msg.result
+
+    def _worker_loop(self):
+        """Process messages from queue sequentially."""
+        while self._running:
+            try:
+                msg = self._queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+
+            if msg.message_id == "__stop__":
+                break
+
+            self._current_message_id = msg.message_id
+            start_time = time.time()
+
+            try:
+                logger.debug("Processing message %s (priority=%d)", msg.message_id, msg.priority)
+                msg.result = msg.handler()
+            except Exception as e:
+                logger.error("Message %s processing failed: %s", msg.message_id, e)
+                msg.error = str(e)
+            finally:
+                elapsed = time.time() - start_time
+                logger.debug("Message %s processed in %.2fs", msg.message_id, elapsed)
+                self._current_message_id = None
+                msg.done_event.set()
+
+    def get_queue_size(self) -> int:
+        """Get current queue size."""
+        return self._queue.qsize()
+
+
+# Global message queue instance
+message_queue = MessageQueue()
+
 
 settings = load_settings()
 
@@ -203,6 +334,22 @@ class InboundResponse(BaseModel):
     error: Optional[str] = None
 
 
+# --- Lifecycle Events ---
+
+@app.on_event("startup")
+def startup_event():
+    """Start the message queue worker on app startup."""
+    message_queue.start()
+    logger.info("Joi API started with message queue")
+
+
+@app.on_event("shutdown")
+def shutdown_event():
+    """Stop the message queue worker on app shutdown."""
+    message_queue.stop()
+    logger.info("Joi API shutting down")
+
+
 # --- Endpoints ---
 
 @app.get("/health")
@@ -225,6 +372,9 @@ def health():
             "enabled": RAG_ENABLED,
             "sources": len(knowledge_sources),
             "chunks": knowledge_chunks,
+        },
+        "queue": {
+            "size": message_queue.get_queue_size(),
         }
     }
 
@@ -234,10 +384,16 @@ def receive_message(msg: InboundMessage):
     """
     Receive a message from mesh proxy, process with LLM, send response back.
 
+    Messages requiring LLM are queued and processed sequentially.
+    Owner messages get priority in the queue.
+
     For group messages:
     - store_only=True: Store for context but don't respond (non-allowed senders)
     - store_only=False: Check if Joi is addressed before responding
     """
+    # Check if sender is owner (id="owner" is set by mesh for allowed senders)
+    is_owner = msg.sender.id == "owner"
+
     logger.info(
         "Received message_id=%s from=%s type=%s convo=%s store_only=%s",
         msg.message_id,
@@ -343,80 +499,109 @@ def receive_message(msg: InboundMessage):
     if not should_respond:
         return InboundResponse(status="ok", message_id=msg.message_id)
 
-    # Build conversation context from recent messages
-    recent_messages = memory.get_recent_messages(
-        limit=CONTEXT_MESSAGE_COUNT,
-        conversation_id=msg.conversation.id,
-    )
+    # --- Queue the LLM processing ---
+    # This ensures messages are processed sequentially with owner priority
 
-    # Convert to LLM chat format (with sender prefix for groups)
-    is_group = msg.conversation.type == "group"
-    chat_messages = _build_chat_messages(recent_messages, is_group=is_group)
+    def process_with_llm() -> InboundResponse:
+        """Process message with LLM - runs in queue worker thread."""
+        # Build conversation context from recent messages
+        recent_messages = memory.get_recent_messages(
+            limit=CONTEXT_MESSAGE_COUNT,
+            conversation_id=msg.conversation.id,
+        )
 
-    # Get per-conversation system prompt and enrich it
-    base_prompt = get_prompt_for_conversation(
-        conversation_type=msg.conversation.type,
-        conversation_id=msg.conversation.id,
-        sender_id=msg.sender.transport_id,
-    )
-    enriched_prompt = _build_enriched_prompt(base_prompt, user_text)
+        # Convert to LLM chat format (with sender prefix for groups)
+        is_group_chat = msg.conversation.type == "group"
+        chat_messages = _build_chat_messages(recent_messages, is_group=is_group_chat)
 
-    # Add hint if we just saved a fact
-    if saved_fact:
-        enriched_prompt += f"\n\n[You just saved this to memory: \"{saved_fact}\". Briefly acknowledge you'll remember it.]"
+        # Get per-conversation system prompt and enrich it
+        base_prompt = get_prompt_for_conversation(
+            conversation_type=msg.conversation.type,
+            conversation_id=msg.conversation.id,
+            sender_id=msg.sender.transport_id,
+        )
+        enriched_prompt = _build_enriched_prompt(base_prompt, user_text)
 
-    # Generate response from LLM with conversation context
-    logger.info("Generating LLM response with %d messages of context", len(chat_messages))
-    llm_response = llm.chat(messages=chat_messages, system=enriched_prompt)
+        # Add hint if we just saved a fact
+        if saved_fact:
+            enriched_prompt += f"\n\n[You just saved this to memory: \"{saved_fact}\". Briefly acknowledge you'll remember it.]"
 
-    if llm_response.error:
-        logger.error("LLM error: %s", llm_response.error)
+        # Generate response from LLM with conversation context
+        logger.info("Generating LLM response with %d messages of context", len(chat_messages))
+        llm_response = llm.chat(messages=chat_messages, system=enriched_prompt)
+
+        if llm_response.error:
+            logger.error("LLM error: %s", llm_response.error)
+            return InboundResponse(
+                status="error",
+                message_id=msg.message_id,
+                error=f"llm_error: {llm_response.error}",
+            )
+
+        response_text = llm_response.text.strip()
+        if not response_text:
+            logger.warning("LLM returned empty response")
+            response_text = "I'm not sure how to respond to that."
+
+        logger.info("LLM response: %s", response_text[:50])
+
+        # Send response back via mesh
+        outbound_message_id = str(uuid.uuid4())
+        send_result = _send_to_mesh(
+            recipient_id=msg.sender.id,
+            recipient_transport_id=msg.sender.transport_id,
+            conversation=msg.conversation,
+            text=response_text,
+            reply_to=msg.message_id,
+        )
+
+        if not send_result:
+            logger.error("Failed to send response to mesh")
+            return InboundResponse(
+                status="error",
+                message_id=msg.message_id,
+                error="mesh_send_failed",
+            )
+
+        # Store outbound message
+        memory.store_message(
+            message_id=outbound_message_id,
+            direction="outbound",
+            content_type="text",
+            content_text=response_text,
+            timestamp=int(time.time() * 1000),
+            conversation_id=msg.conversation.id,
+            reply_to_id=msg.message_id,
+        )
+
+        # Check if memory consolidation needed
+        _maybe_run_consolidation()
+
+        return InboundResponse(status="ok", message_id=msg.message_id)
+
+    # Enqueue and wait for processing (owner gets priority)
+    try:
+        result = message_queue.enqueue(
+            message_id=msg.message_id,
+            handler=process_with_llm,
+            is_owner=is_owner,
+            timeout=LLM_TIMEOUT + 30,  # LLM timeout + buffer
+        )
+        return result
+    except TimeoutError:
+        logger.error("Message %s timed out in queue", msg.message_id)
         return InboundResponse(
             status="error",
             message_id=msg.message_id,
-            error=f"llm_error: {llm_response.error}",
+            error="queue_timeout",
         )
-
-    response_text = llm_response.text.strip()
-    if not response_text:
-        logger.warning("LLM returned empty response")
-        response_text = "I'm not sure how to respond to that."
-
-    logger.info("LLM response: %s", response_text[:50])
-
-    # Send response back via mesh
-    outbound_message_id = str(uuid.uuid4())
-    send_result = _send_to_mesh(
-        recipient_id=msg.sender.id,
-        recipient_transport_id=msg.sender.transport_id,
-        conversation=msg.conversation,
-        text=response_text,
-        reply_to=msg.message_id,
-    )
-
-    if not send_result:
-        logger.error("Failed to send response to mesh")
+    except Exception as e:
+        logger.error("Message %s queue error: %s", msg.message_id, e)
         return InboundResponse(
             status="error",
             message_id=msg.message_id,
-            error="mesh_send_failed",
+            error=str(e),
         )
-
-    # Store outbound message
-    memory.store_message(
-        message_id=outbound_message_id,
-        direction="outbound",
-        content_type="text",
-        content_text=response_text,
-        timestamp=int(time.time() * 1000),
-        conversation_id=msg.conversation.id,
-        reply_to_id=msg.message_id,
-    )
-
-    # Check if memory consolidation needed (runs async-ish, only if conditions met)
-    _maybe_run_consolidation()
-
-    return InboundResponse(status="ok", message_id=msg.message_id)
 
 
 def _generate_reaction_response(emoji: str, conversation_id: str) -> Optional[str]:
