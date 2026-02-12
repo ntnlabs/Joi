@@ -59,7 +59,7 @@ MESH_WORKER_HTTP_PORT=8444
 **Notes**:
 - Group IDs are base64-encoded. Get them with: `signal-cli -a +<ACCOUNT> listGroups`
 - `participants`: Who can trigger Joi responses (others are stored for context only)
-- `names`: Names Joi responds to in this group (e.g., "Joi, what time is it?"). If empty or omitted, falls back to `JOI_NAMES` env var on Joi VM.
+- `names`: Names Joi responds to @mentions in this group (e.g., "@Joi what time is it?"). If empty or omitted, defaults to "Joi".
 
 ### /var/lib/signal-cli/
 
@@ -87,11 +87,8 @@ JOI_OLLAMA_URL=http://localhost:11434
 JOI_OLLAMA_MODEL=llama3
 JOI_LLM_TIMEOUT=180
 
-# Mesh proxy (vmbr1 IP)
-JOI_MESH_URL=http://172.22.22.1:8444
-
-# Names to respond to in groups (comma-separated)
-JOI_NAMES=Joi
+# Mesh proxy (Nebula IP)
+JOI_MESH_URL=http://10.42.0.1:8444
 
 # Memory database
 JOI_MEMORY_DB=/var/lib/joi/memory.db

@@ -56,7 +56,8 @@ consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
 ensure_prompts_dir()
 
 # Default names that Joi responds to in group messages (comma-separated)
-JOI_NAMES_DEFAULT = [name.strip() for name in os.getenv("JOI_NAMES", "Joi").split(",") if name.strip()]
+# Default name for @mention detection in groups (can be overridden per-group via mesh)
+JOI_NAME_DEFAULT = ["Joi"]
 
 
 def _build_address_regex(names: list) -> re.Pattern:
@@ -149,9 +150,9 @@ JSON:"""
 
 
 def _is_addressing_joi(text: str, names: Optional[List[str]] = None) -> bool:
-    """Check if the message is addressing Joi directly."""
+    """Check if the message is addressing Joi directly via @mention."""
     if names is None:
-        names = JOI_NAMES_DEFAULT
+        names = JOI_NAME_DEFAULT
 
     # Use cached regex if available
     names_key = tuple(sorted(names))

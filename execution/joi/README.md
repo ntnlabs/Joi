@@ -57,7 +57,6 @@ See [ENV-REFERENCE.md](../../ENV-REFERENCE.md) for complete documentation.
 | `JOI_OLLAMA_URL` | http://localhost:11434 | Ollama API URL |
 | `JOI_OLLAMA_MODEL` | llama3 | Model to use |
 | `JOI_LLM_TIMEOUT` | 180 | LLM request timeout (seconds) |
-| `JOI_NAMES` | Joi | Names to respond to in groups (comma-separated) |
 
 ### Mesh
 | Variable | Default | Description |
