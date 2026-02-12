@@ -291,9 +291,12 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Opt
     elif message_text is None:
         return None
 
-    source = envelope.get("source")
+    # Prefer phone number over UUID for sender identification
+    # signal-cli may use "source" (phone), "sourceNumber" (phone), or "sourceUuid" (UUID)
+    source = envelope.get("sourceNumber") or envelope.get("source")
     if not isinstance(source, str) or not source:
-        source = "unknown"
+        # Fallback to UUID if no phone number
+        source = envelope.get("sourceUuid") or "unknown"
 
     timestamp = envelope.get("timestamp")
     if not isinstance(timestamp, int):
