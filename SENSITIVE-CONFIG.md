@@ -27,6 +27,7 @@ MESH_WORKER_HTTP_PORT=8444
 ```json
 {
   "identity": {
+    "bot_name": "Jessica Joi",
     "allowed_senders": [
       "+<OWNER_PHONE_NUMBER>"
     ],
@@ -57,9 +58,10 @@ MESH_WORKER_HTTP_PORT=8444
 ```
 
 **Notes**:
+- `bot_name`: The bot's Signal profile name for @mention detection (e.g., "@Jessica Joi"). Used as default for all groups.
 - Group IDs are base64-encoded. Get them with: `signal-cli -a +<ACCOUNT> listGroups`
 - `participants`: Who can trigger Joi responses (others are stored for context only)
-- `names`: Names Joi responds to @mentions in this group (e.g., "@Joi what time is it?"). If empty or omitted, defaults to "Joi".
+- `names`: Per-group override for @mention names. If empty or omitted, uses `bot_name`.
 
 ### /var/lib/signal-cli/
 
