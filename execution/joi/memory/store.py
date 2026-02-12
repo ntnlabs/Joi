@@ -38,22 +38,28 @@ def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
     """
     key_path = Path(key_file or os.getenv("JOI_MEMORY_KEY_FILE", DEFAULT_KEY_FILE))
 
-    if not key_path.exists():
-        return None
-
-    # Check permissions (should be 600 or stricter)
-    mode = key_path.stat().st_mode & 0o777
-    if mode > 0o600:
-        logger.warning(
-            "Key file %s has insecure permissions %o (should be 600 or stricter)",
-            key_path, mode
-        )
-
     try:
+        if not key_path.exists():
+            return None
+
+        # Check permissions (should be 600 or stricter)
+        mode = key_path.stat().st_mode & 0o777
+        if mode > 0o600:
+            logger.warning(
+                "Key file %s has insecure permissions %o (should be 600 or stricter)",
+                key_path, mode
+            )
+
         key = key_path.read_text().strip()
         if len(key) < 32:
             logger.warning("Encryption key is shorter than recommended (32+ chars)")
         return key if key else None
+    except PermissionError:
+        logger.warning(
+            "Cannot access key file %s (permission denied) - running unencrypted",
+            key_path
+        )
+        return None
     except Exception as e:
         logger.error("Failed to read encryption key from %s: %s", key_path, e)
         return None
