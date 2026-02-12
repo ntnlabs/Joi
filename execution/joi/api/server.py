@@ -559,13 +559,19 @@ def receive_message(msg: InboundMessage):
         sender_name=msg.sender.display_name,
     )
 
+    # Build fact key - for groups, include sender_id to keep facts per-user
+    if msg.conversation.type == "group":
+        fact_key = f"{msg.conversation.id}:{msg.sender.transport_id}"
+    else:
+        fact_key = msg.conversation.id
+
     # Check for "remember this" requests (only from allowed senders)
     saved_fact = None
     if not msg.store_only:
         remember_what = _detect_remember_request(user_text)
         if remember_what:
             logger.info("Detected remember request: %s", remember_what[:50])
-            saved_fact = _extract_and_save_fact(user_text, remember_what, conversation_id=msg.conversation.id)
+            saved_fact = _extract_and_save_fact(user_text, remember_what, conversation_id=fact_key)
 
     # Determine if we should respond
     should_respond = True
@@ -614,7 +620,7 @@ def receive_message(msg: InboundMessage):
             conversation_id=msg.conversation.id,
             sender_id=msg.sender.transport_id,
         )
-        enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=msg.conversation.id)
+        enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key)
 
         # Add hint if we just saved a fact
         if saved_fact:
