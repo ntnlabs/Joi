@@ -70,6 +70,7 @@ class MessageDedupeCache:
 _rpc: Optional[JsonRpcStdioClient] = None
 _rpc_lock = threading.Lock()
 _account: str = ""
+_bot_name: str = "Joi"  # Default, will be fetched from Signal profile on startup
 _dedupe_cache = MessageDedupeCache()
 
 
@@ -271,6 +272,36 @@ def _normalize_signal_message(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+def _fetch_bot_name() -> str:
+    """Fetch the bot's display name from Signal profile."""
+    global _rpc
+    if _rpc is None:
+        return "Joi"
+
+    try:
+        result = _rpc.call("getSelfProfile", {}, timeout=10.0)
+        profile = result.get("result", {})
+        given_name = profile.get("givenName", "")
+        family_name = profile.get("familyName", "")
+
+        # Combine names, fallback to "Joi"
+        full_name = f"{given_name} {family_name}".strip()
+        if full_name:
+            logger.info("Bot profile name: %s", full_name)
+            return full_name
+
+        # Try just given name
+        if given_name:
+            logger.info("Bot profile name: %s", given_name)
+            return given_name
+
+        logger.warning("Could not get bot name from profile, using default")
+        return "Joi"
+    except Exception as exc:
+        logger.warning("Failed to fetch bot profile: %s, using default", exc)
+        return "Joi"
+
+
 def run_http_server(port: int):
     """Run Flask server in a thread."""
     # Use werkzeug directly to avoid Flask dev server warnings
@@ -281,7 +312,7 @@ def run_http_server(port: int):
 
 
 def main() -> None:
-    global _rpc, _account
+    global _rpc, _account, _bot_name
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings()
@@ -314,7 +345,11 @@ def main() -> None:
         ]
     )
 
+    # Fetch bot's display name from Signal profile
+    _bot_name = _fetch_bot_name()
+
     logger.info("Signal worker started (on-connection notifications)")
+    logger.info("Bot name for @mentions: %s", _bot_name)
     logger.info("Policy loaded from %s", policy_file)
 
     # Start HTTP server in background thread
@@ -360,13 +395,16 @@ def main() -> None:
                     else:
                         logger.info("Forwarding message_id=%s to Joi", payload.get("message_id"))
 
-                    # Add group_names if this is a group message with configured names
+                    # Add group_names for @mention detection
                     convo = payload.get("conversation", {})
                     if convo.get("type") == "group":
                         group_id = convo.get("id")
                         group_names = policy.get_group_names(group_id)
                         if group_names:
                             payload["group_names"] = group_names
+                        else:
+                            # Use bot's Signal profile name as default
+                            payload["group_names"] = [_bot_name]
 
                     forward_to_joi(payload)
             except Exception as exc:  # noqa: BLE001
