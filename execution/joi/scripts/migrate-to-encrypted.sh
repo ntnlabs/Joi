@@ -1,7 +1,7 @@
 #!/bin/bash
 # Migrate existing unencrypted Joi database to SQLCipher encrypted format
 #
-# Usage: sudo ./migrate-to-encrypted.sh
+# Usage: sudo ./migrate-to-encrypted.sh [SERVICE_USER]
 #
 # Prerequisites:
 #   1. sqlcipher CLI tool installed: apt install sqlcipher
@@ -13,6 +13,7 @@
 #   2. Creates a new encrypted database
 #   3. Copies all data from old to new
 #   4. Replaces the original with the encrypted version
+#   5. Sets correct ownership for service user
 
 set -euo pipefail
 
@@ -20,10 +21,18 @@ DB_PATH="${JOI_MEMORY_DB:-/var/lib/joi/memory.db}"
 KEY_FILE="${JOI_MEMORY_KEY_FILE:-/etc/joi/memory.key}"
 BACKUP_PATH="${DB_PATH}.unencrypted.backup"
 TEMP_PATH="${DB_PATH}.encrypted.tmp"
+SERVICE_USER="${1:-joi}"
 
 # Check if running as root
 if [[ $EUID -ne 0 ]]; then
     echo "Error: This script must be run as root (sudo)"
+    exit 1
+fi
+
+# Verify service user exists
+if ! id "$SERVICE_USER" &>/dev/null; then
+    echo "Error: User '$SERVICE_USER' does not exist"
+    echo "Usage: sudo ./migrate-to-encrypted.sh [SERVICE_USER]"
     exit 1
 fi
 
@@ -97,11 +106,17 @@ echo "4. Replacing original database..."
 rm -f "$DB_PATH" "${DB_PATH}-wal" "${DB_PATH}-shm"
 mv "$TEMP_PATH" "$DB_PATH"
 
+# Fix ownership for service user
+echo "5. Setting ownership to $SERVICE_USER..."
+chown "$SERVICE_USER:$SERVICE_USER" "$DB_PATH"
+chmod 600 "$DB_PATH"
+
 echo ""
 echo "=== Migration Complete ==="
 echo ""
 echo "Original database backed up to: $BACKUP_PATH"
 echo "Database is now encrypted with SQLCipher."
+echo "Owner: $SERVICE_USER"
 echo ""
 echo "Next steps:"
 echo "  1. Restart joi-api: sudo systemctl start joi-api"
