@@ -209,6 +209,31 @@ class MemoryConsolidator:
             logger.error("parse_facts_json failed: %s", e)
             return []
 
+        # Retry once if parsing failed but we got a response
+        if not facts and response.text and len(response.text.strip()) > 10:
+            logger.info("Fact extraction retry: first response was not JSON, asking again")
+            retry_prompt = f"""Your previous response was not valid JSON.
+
+Return ONLY a JSON array, nothing else. No explanation, no markdown, no bullet points.
+
+If you found facts, format them like this:
+[{{"category": "personal", "key": "name", "value": "John", "confidence": 0.9}}]
+
+If no facts, return exactly: []
+
+Previous response that failed:
+{response.text[:500]}
+
+Corrected JSON:"""
+            try:
+                retry_response = self.llm.generate(prompt=retry_prompt)
+                if retry_response.text and not retry_response.error:
+                    facts = parse_facts_json(retry_response.text)
+                    if facts:
+                        logger.info("Fact extraction retry succeeded: %d facts", len(facts))
+            except Exception as e:
+                logger.warning("Fact extraction retry failed: %s", e)
+
         valid_facts = []
         for f in facts:
             try:
