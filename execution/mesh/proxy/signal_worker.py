@@ -191,7 +191,21 @@ def _extract_message_text(data_message: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _normalize_signal_message(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def _check_bot_mentioned(data_message: Dict[str, Any], bot_account: str) -> bool:
+    """Check if the bot is mentioned in the message."""
+    mentions = data_message.get("mentions")
+    if not isinstance(mentions, list):
+        return False
+    for mention in mentions:
+        if isinstance(mention, dict):
+            # Signal uses 'number' field for phone-based mentions
+            number = mention.get("number")
+            if isinstance(number, str) and number == bot_account:
+                return True
+    return False
+
+
+def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Optional[Dict[str, Any]]:
     envelope = _as_dict(raw.get("envelope"))
     if not envelope:
         return None
@@ -199,6 +213,7 @@ def _normalize_signal_message(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     data_message = _as_dict(envelope.get("dataMessage"))
     reaction = _as_dict(data_message.get("reaction"))
     message_text = _extract_message_text(data_message)
+    bot_mentioned = _check_bot_mentioned(data_message, bot_account) if bot_account else False
 
     content_type = "text"
     content_reaction: Optional[str] = None
@@ -268,6 +283,7 @@ def _normalize_signal_message(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         },
         "timestamp": timestamp,
         "quote": quote,
+        "bot_mentioned": bot_mentioned,
     }
 
 
@@ -333,7 +349,7 @@ def main() -> None:
                 if messages:
                     logger.info("Received %d message(s) from Signal", len(messages))
                 for msg in messages:
-                    payload = _normalize_signal_message(msg)
+                    payload = _normalize_signal_message(msg, bot_account=_account)
                     if payload is None:
                         logger.info("Skipping unsupported Signal event")
                         continue

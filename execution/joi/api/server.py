@@ -194,6 +194,7 @@ class InboundMessage(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     store_only: bool = False  # If True, store for context but don't respond
     group_names: Optional[List[str]] = None  # Names Joi responds to in this group
+    bot_mentioned: bool = False  # True if bot was @mentioned via Signal mention
 
 
 class InboundResponse(BaseModel):
@@ -325,14 +326,19 @@ def receive_message(msg: InboundMessage):
         should_respond = False
     elif msg.conversation.type == "group":
         # Group message from allowed sender - only respond if Joi is addressed
-        # Use group-specific names if provided, otherwise fall back to default
-        names_to_check = msg.group_names if msg.group_names else None
-        if _is_addressing_joi(user_text, names=names_to_check):
-            logger.info("Joi addressed in group message, will respond")
+        # Check Signal @mention (bot_mentioned) or text-based @name
+        if msg.bot_mentioned:
+            logger.info("Joi @mentioned in group message (Signal mention), will respond")
             should_respond = True
         else:
-            logger.info("Joi not addressed in group message, storing only")
-            should_respond = False
+            # Fallback: check text for @name pattern
+            names_to_check = msg.group_names if msg.group_names else None
+            if _is_addressing_joi(user_text, names=names_to_check):
+                logger.info("Joi addressed in group message (text pattern), will respond")
+                should_respond = True
+            else:
+                logger.info("Joi not addressed in group message, storing only")
+                should_respond = False
 
     if not should_respond:
         return InboundResponse(status="ok", message_id=msg.message_id)
