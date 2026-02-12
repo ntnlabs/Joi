@@ -256,7 +256,7 @@ def _detect_remember_request(text: str) -> Optional[str]:
     return None
 
 
-def _extract_and_save_fact(text: str, remember_what: str) -> Optional[str]:
+def _extract_and_save_fact(text: str, remember_what: str, conversation_id: str = "") -> Optional[str]:
     """Use LLM to extract a structured fact and save it. Returns confirmation message."""
     prompt = f"""The user said: "{text}"
 They want me to remember: "{remember_what}"
@@ -292,8 +292,9 @@ JSON:"""
                     value=str(fact["value"]),
                     confidence=0.95,  # High confidence - user explicitly stated
                     source="stated",
+                    conversation_id=conversation_id,
                 )
-                logger.info("Saved stated fact: %s.%s = %s", fact["category"], fact["key"], fact["value"])
+                logger.info("Saved stated fact for %s: %s.%s = %s", conversation_id or "global", fact["category"], fact["key"], fact["value"])
                 return fact["value"]
     except Exception as e:
         logger.warning("Failed to extract/save fact: %s", e)
@@ -564,7 +565,7 @@ def receive_message(msg: InboundMessage):
         remember_what = _detect_remember_request(user_text)
         if remember_what:
             logger.info("Detected remember request: %s", remember_what[:50])
-            saved_fact = _extract_and_save_fact(user_text, remember_what)
+            saved_fact = _extract_and_save_fact(user_text, remember_what, conversation_id=msg.conversation.id)
 
     # Determine if we should respond
     should_respond = True
@@ -613,7 +614,7 @@ def receive_message(msg: InboundMessage):
             conversation_id=msg.conversation.id,
             sender_id=msg.sender.transport_id,
         )
-        enriched_prompt = _build_enriched_prompt(base_prompt, user_text)
+        enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=msg.conversation.id)
 
         # Add hint if we just saved a fact
         if saved_fact:
@@ -753,17 +754,17 @@ def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[st
     return chat_messages
 
 
-def _build_enriched_prompt(base_prompt: str, user_message: Optional[str] = None) -> str:
-    """Build system prompt enriched with user facts, summaries, and RAG context."""
+def _build_enriched_prompt(base_prompt: str, user_message: Optional[str] = None, conversation_id: Optional[str] = None) -> str:
+    """Build system prompt enriched with user facts, summaries, and RAG context for this conversation."""
     parts = [base_prompt]
 
-    # Add user facts
-    facts_text = memory.get_facts_as_text(min_confidence=0.6)
+    # Add user facts for this conversation
+    facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
     if facts_text:
         parts.append("\n\n" + facts_text)
 
-    # Add recent conversation summaries
-    summaries_text = memory.get_summaries_as_text(days=7)
+    # Add recent conversation summaries for this conversation
+    summaries_text = memory.get_summaries_as_text(days=7, conversation_id=conversation_id)
     if summaries_text:
         parts.append("\n\n" + summaries_text)
 
