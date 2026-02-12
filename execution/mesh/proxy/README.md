@@ -1,4 +1,29 @@
-# Mesh Proxy (Skeleton)
+# Mesh Proxy
+
+## First Run Setup
+
+Before starting the mesh worker for the first time:
+
+1. **Set up policy.json** with your Signal bot's profile name:
+
+```bash
+sudo nano /etc/mesh-proxy/policy.json
+```
+
+```json
+{
+  "identity": {
+    "bot_name": "Your Bot Name",
+    "allowed_senders": ["+<YOUR_PHONE>"]
+  }
+}
+```
+
+The `bot_name` must match your Signal bot's profile name exactly (as it appears in Signal contacts). This is used for @mention detection in group chats - users type `@Your Bot Name` to address the bot.
+
+2. **Configure environment** in `/etc/default/mesh-signal-worker`
+
+3. **Start the service** (see systemd section below)
 
 ## Run API
 
