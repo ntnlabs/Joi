@@ -7,7 +7,8 @@
     "groups": {
       "GROUP_ID_BASE64": {
         "participants": [
-          "+<PHONE_NUMBER>"
+          "+<PHONE_NUMBER>",
+          "<UUID_FOR_NON_CONTACTS>"
         ],
         "names": []
       }
