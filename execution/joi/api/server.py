@@ -183,10 +183,10 @@ memory = MemoryStore(
     encryption_key=os.getenv("JOI_MEMORY_KEY"),
 )
 
-# Initialize nonce store for replay protection (separate connection to same DB)
+# Initialize nonce store for replay protection (separate unencrypted DB - nonces are ephemeral)
 nonce_store: Optional[NonceStore] = None
 if HMAC_ENABLED:
-    nonce_db_path = os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db")
+    nonce_db_path = os.getenv("JOI_NONCE_DB", "/var/lib/joi/nonces.db")
     nonce_store = NonceStore(nonce_db_path)
 
 # Number of recent messages to include in context
