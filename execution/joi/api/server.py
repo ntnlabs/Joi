@@ -9,6 +9,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+# Add api/ and parent dirs to path for imports
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # api/
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # joi/
+
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -22,9 +26,6 @@ from hmac_auth import (
     verify_timestamp,
     DEFAULT_TIMESTAMP_TOLERANCE_MS,
 )
-
-# Add parent dir to path for imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import load_settings, get_prompt_for_conversation, ensure_prompts_dir
 from llm import OllamaClient
