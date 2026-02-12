@@ -276,6 +276,10 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Opt
     if not envelope:
         return None
 
+    # Debug: log envelope source fields (useful for UUID vs phone troubleshooting)
+    logger.debug("Envelope source fields: source=%s sourceNumber=%s sourceUuid=%s",
+                 envelope.get("source"), envelope.get("sourceNumber"), envelope.get("sourceUuid"))
+
     data_message = _as_dict(envelope.get("dataMessage"))
     reaction = _as_dict(data_message.get("reaction"))
     message_text = _extract_message_text(data_message)
