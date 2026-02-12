@@ -6,14 +6,57 @@ See memory-store-schema.md for full schema documentation.
 
 import logging
 import os
-import sqlite3
 import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# SQLCipher support: use sqlcipher3 if available, otherwise sqlite3
+try:
+    import sqlcipher3 as sqlite3
+    SQLCIPHER_AVAILABLE = True
+except ImportError:
+    import sqlite3
+    SQLCIPHER_AVAILABLE = False
+
 logger = logging.getLogger("joi.memory")
+
+# Default path for encryption key file
+DEFAULT_KEY_FILE = "/etc/joi/memory.key"
+
+
+def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
+    """
+    Load encryption key from file.
+
+    Args:
+        key_file: Path to key file (default: /etc/joi/memory.key)
+
+    Returns:
+        Encryption key string or None if not available
+    """
+    key_path = Path(key_file or os.getenv("JOI_MEMORY_KEY_FILE", DEFAULT_KEY_FILE))
+
+    if not key_path.exists():
+        return None
+
+    # Check permissions (should be 600 or stricter)
+    mode = key_path.stat().st_mode & 0o777
+    if mode > 0o600:
+        logger.warning(
+            "Key file %s has insecure permissions %o (should be 600 or stricter)",
+            key_path, mode
+        )
+
+    try:
+        key = key_path.read_text().strip()
+        if len(key) < 32:
+            logger.warning("Encryption key is shorter than recommended (32+ chars)")
+        return key if key else None
+    except Exception as e:
+        logger.error("Failed to read encryption key from %s: %s", key_path, e)
+        return None
 
 
 @dataclass
@@ -201,7 +244,7 @@ class MemoryStore:
     SQLite-based memory store for Joi.
 
     Thread-safe via connection-per-thread pattern.
-    Can be upgraded to SQLCipher by changing _connect().
+    Supports SQLCipher encryption when key is provided.
     """
 
     def __init__(self, db_path: str, encryption_key: Optional[str] = None):
@@ -210,18 +253,37 @@ class MemoryStore:
 
         Args:
             db_path: Path to SQLite database file
-            encryption_key: Optional SQLCipher encryption key (for future use)
+            encryption_key: SQLCipher encryption key (if None, tries to load from file)
         """
         self._db_path = db_path
-        self._encryption_key = encryption_key
         self._local = threading.local()
+
+        # Load encryption key from file if not provided directly
+        if encryption_key is None:
+            encryption_key = load_encryption_key()
+
+        self._encryption_key = encryption_key
+        self._encrypted = False
+
+        # Check if we can actually use encryption
+        if self._encryption_key:
+            if SQLCIPHER_AVAILABLE:
+                self._encrypted = True
+                logger.info("SQLCipher encryption enabled")
+            else:
+                logger.warning(
+                    "Encryption key provided but sqlcipher3 not installed - "
+                    "running UNENCRYPTED. Install: pip install sqlcipher3-binary"
+                )
 
         # Ensure directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
         # Initialize schema
         self._init_schema()
-        logger.info("Memory store initialized: %s", db_path)
+
+        encryption_status = "encrypted" if self._encrypted else "unencrypted"
+        logger.info("Memory store initialized: %s (%s)", db_path, encryption_status)
 
     def _connect(self) -> sqlite3.Connection:
         """Get or create a connection for the current thread."""
@@ -229,16 +291,26 @@ class MemoryStore:
             conn = sqlite3.connect(self._db_path, check_same_thread=False)
             conn.row_factory = sqlite3.Row
 
+            # SQLCipher encryption - must be set before any other operations
+            if self._encrypted and self._encryption_key:
+                # Use parameterized key setting to avoid SQL injection
+                conn.execute("PRAGMA key = ?", (self._encryption_key,))
+                conn.execute("PRAGMA cipher_page_size = 4096")
+                conn.execute("PRAGMA kdf_iter = 256000")
+                conn.execute("PRAGMA cipher_memory_security = ON")
+
+                # Verify encryption is working by querying the database
+                try:
+                    conn.execute("SELECT count(*) FROM sqlite_master")
+                except Exception as e:
+                    raise RuntimeError(
+                        f"Failed to open encrypted database - wrong key? Error: {e}"
+                    ) from e
+
             # Performance settings
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA synchronous = NORMAL")
             conn.execute("PRAGMA foreign_keys = ON")
-
-            # SQLCipher would be configured here:
-            # if self._encryption_key:
-            #     conn.execute(f"PRAGMA key = '{self._encryption_key}'")
-            #     conn.execute("PRAGMA cipher_page_size = 4096")
-            #     conn.execute("PRAGMA kdf_iter = 256000")
 
             self._local.conn = conn
         return self._local.conn
@@ -1097,9 +1169,12 @@ def create_memory_store() -> MemoryStore:
 
     Environment variables:
         JOI_MEMORY_DB: Path to database file (default: /var/lib/joi/memory.db)
-        JOI_MEMORY_KEY: SQLCipher encryption key (optional, for future use)
+        JOI_MEMORY_KEY_FILE: Path to encryption key file (default: /etc/joi/memory.key)
+
+    The encryption key is loaded from the key file, not from environment variables,
+    to avoid key leakage in logs or process listings.
     """
     db_path = os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db")
-    encryption_key = os.getenv("JOI_MEMORY_KEY")
 
-    return MemoryStore(db_path, encryption_key)
+    # Key is loaded from file inside MemoryStore.__init__
+    return MemoryStore(db_path)
