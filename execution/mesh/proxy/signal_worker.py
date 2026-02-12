@@ -360,6 +360,53 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Opt
     }
 
 
+_rate_limit_notice_sent: Dict[str, float] = {}  # sender -> timestamp
+_rate_limit_notice_cooldown = 60.0  # Only send notice once per minute per sender
+
+
+def _send_rate_limit_notice(payload: Dict[str, Any]) -> None:
+    """Send a rate limit notice back to the user (max once per minute)."""
+    global _rpc, _account
+
+    sender = payload.get("sender", {}).get("transport_id")
+    conversation = payload.get("conversation", {})
+    convo_type = conversation.get("type")
+    convo_id = conversation.get("id")
+
+    if not sender:
+        return
+
+    # Check cooldown - don't spam rate limit notices
+    now = time.time()
+    last_sent = _rate_limit_notice_sent.get(sender, 0)
+    if now - last_sent < _rate_limit_notice_cooldown:
+        logger.debug("Skipping rate limit notice to %s (cooldown)", sender)
+        return
+    _rate_limit_notice_sent[sender] = now
+
+    notice_text = "You're sending messages too quickly. Please slow down a bit."
+
+    send_payload: Dict[str, Any] = {
+        "account": _account,
+        "message": notice_text,
+    }
+
+    if convo_type == "group" and convo_id:
+        send_payload["groupId"] = convo_id
+    else:
+        send_payload["recipients"] = [sender]
+
+    with _rpc_lock:
+        if _rpc is None:
+            logger.warning("Cannot send rate limit notice: RPC not ready")
+            return
+        try:
+            _rpc.call("send", send_payload, timeout=10.0)
+            logger.info("Sent rate limit notice to %s", sender)
+        except Exception as exc:
+            logger.error("Failed to send rate limit notice: %s", exc)
+
+
 def run_http_server(port: int):
     """Run Flask server in a thread."""
     # Use werkzeug directly to avoid Flask dev server warnings
@@ -443,6 +490,9 @@ def main() -> None:
                         sender = payload.get("sender", {}).get("transport_id", "unknown")
                         if decision.reason == "unknown_sender":
                             logger.info("Dropping unknown sender=%s", sender)
+                        elif decision.reason.startswith("rate_limited"):
+                            logger.warning("Rate limited sender=%s reason=%s", sender, decision.reason)
+                            _send_rate_limit_notice(payload)
                         else:
                             logger.warning("Dropping sender=%s reason=%s", sender, decision.reason)
                         continue

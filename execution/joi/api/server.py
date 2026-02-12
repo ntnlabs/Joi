@@ -201,6 +201,12 @@ CONSOLIDATION_ARCHIVE = os.getenv("JOI_CONSOLIDATION_ARCHIVE", "0") == "1"  # De
 RAG_ENABLED = os.getenv("JOI_RAG_ENABLED", "1") == "1"  # Default: enabled
 RAG_MAX_TOKENS = int(os.getenv("JOI_RAG_MAX_TOKENS", "500"))  # Max tokens for RAG context
 
+# Response cooldown - minimum seconds between sends to same conversation
+RESPONSE_COOLDOWN_DM_SECONDS = float(os.getenv("JOI_RESPONSE_COOLDOWN_SECONDS", "5.0"))
+RESPONSE_COOLDOWN_GROUP_SECONDS = float(os.getenv("JOI_RESPONSE_COOLDOWN_GROUP_SECONDS", "2.0"))
+_last_send_times: Dict[str, float] = {}  # conversation_id -> timestamp
+_send_lock = threading.Lock()
+
 # Initialize memory consolidator
 consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
 
@@ -816,6 +822,19 @@ def _send_to_mesh(
     """Send a message back to mesh for delivery via Signal."""
     import json
 
+    # Enforce cooldown between sends to same conversation
+    convo_id = conversation.id
+    cooldown = RESPONSE_COOLDOWN_GROUP_SECONDS if conversation.type == "group" else RESPONSE_COOLDOWN_DM_SECONDS
+    now = time.time()
+    with _send_lock:
+        last_send = _last_send_times.get(convo_id, 0)
+        elapsed = now - last_send
+        if elapsed < cooldown:
+            wait_time = cooldown - elapsed
+            logger.debug("Cooldown: waiting %.1fs before sending to %s", wait_time, convo_id)
+            time.sleep(wait_time)
+        _last_send_times[convo_id] = time.time()
+
     url = f"{settings.mesh_url}/api/v1/message/outbound"
 
     payload = {
@@ -884,6 +903,7 @@ def main():
                 os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
                 CONTEXT_MESSAGE_COUNT)
     logger.info("Prompts directory: %s", PROMPTS_DIR)
+    logger.info("Response cooldown: DM=%.1fs, group=%.1fs", RESPONSE_COOLDOWN_DM_SECONDS, RESPONSE_COOLDOWN_GROUP_SECONDS)
 
     uvicorn.run(
         app,
