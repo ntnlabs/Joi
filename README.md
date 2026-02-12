@@ -6,6 +6,16 @@
 
 Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceleration. It communicates via Signal messaging, integrates with external systems through a generic System Channel, and can leverage isolated LLM services for extended capabilities.
 
+## Aim
+
+**What Joi is not**
+ - realtime API
+ - website chatbot
+ - request-response HTTP service
+
+**What Joi is**
+ - event-driven, asynchronous, stateful digital entity
+
 ## Status
 
 **Phase 0 Complete** - Core infrastructure and baseline security hardened.
@@ -143,8 +153,8 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 - **LLM**: Llama 3.1 8B (uncensored variant)
 - **Runtime**: Ollama with OpenAI-compatible API
-- **Hardware**: ASUS NUC 13 Pro + RTX 3060 eGPU
-- **Virtualization**: Proxmox VE
+- **Hardware**: Notebook with dedicated GFX card (like nVidia 1650)
+- **Virtualization**: Proxmox VE (optional)
 - **Messaging**: Signal via signal-cli
 - **Mesh VPN**: Nebula
 - **Database**: SQLite + SQLCipher
