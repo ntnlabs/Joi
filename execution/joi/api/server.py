@@ -498,7 +498,7 @@ def _maybe_run_consolidation() -> None:
         result = consolidator.run_consolidation(
             silence_threshold_ms=int(CONSOLIDATION_SILENCE_HOURS * 3600 * 1000),
             max_messages_before_consolidation=CONSOLIDATION_MAX_MESSAGES,
-            keep_recent_messages=CONTEXT_MESSAGE_COUNT,
+            context_messages=CONTEXT_MESSAGE_COUNT,
             archive_instead_of_delete=CONSOLIDATION_ARCHIVE,
         )
         if result["ran"]:
