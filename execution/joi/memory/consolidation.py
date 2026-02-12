@@ -243,24 +243,37 @@ Corrected JSON:"""
                 logger.warning("validate_fact error for %s: %s", f, e)
 
         if store and valid_facts:
-            # Get conversation_id from first message (all should be same conversation)
+            # Get conversation_id and sender from first message
             convo_id = messages[0].conversation_id if messages else ""
-            stored_count = 0
-            for fact in valid_facts:
-                try:
-                    self.memory.store_fact(
-                        category=fact["category"],
-                        key=fact["key"],
-                        value=str(fact["value"]),  # Ensure value is string
-                        confidence=float(fact.get("confidence", 0.8)),
-                        source="inferred",
-                        conversation_id=convo_id or "",
-                    )
-                    stored_count += 1
-                except (KeyError, TypeError, ValueError) as e:
-                    logger.warning("Skipping malformed fact %s: %s", fact, e)
-            if stored_count:
-                logger.info("Extracted and stored %d facts for %s", stored_count, convo_id or "global")
+            # For groups (messages from multiple senders), we can't reliably attribute facts
+            # Only store if single sender or DM (all messages from same person)
+            sender_ids = set(m.sender_id for m in messages if m.sender_id and m.direction == "inbound")
+
+            if len(sender_ids) == 1:
+                # Single sender - safe to store facts
+                sender_id = sender_ids.pop()
+                # Use composite key for groups: conversation_id:sender_id
+                fact_key = f"{convo_id}:{sender_id}" if sender_id and convo_id else convo_id or ""
+
+                stored_count = 0
+                for fact in valid_facts:
+                    try:
+                        self.memory.store_fact(
+                            category=fact["category"],
+                            key=fact["key"],
+                            value=str(fact["value"]),
+                            confidence=float(fact.get("confidence", 0.8)),
+                            source="inferred",
+                            conversation_id=fact_key,
+                        )
+                        stored_count += 1
+                    except (KeyError, TypeError, ValueError) as e:
+                        logger.warning("Skipping malformed fact %s: %s", fact, e)
+                if stored_count:
+                    logger.info("Extracted and stored %d facts for %s", stored_count, fact_key)
+            else:
+                # Multiple senders - skip storing to avoid mixing facts
+                logger.info("Skipping fact storage for mixed-sender batch (%d senders)", len(sender_ids))
 
         return valid_facts
 
