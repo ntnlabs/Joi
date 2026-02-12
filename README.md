@@ -18,11 +18,12 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ## Status
 
-**Phase 0 Complete** - Core infrastructure and baseline security hardened.
+**Phase 1 Complete** - Core infrastructure with defense-in-depth security.
 
 ### Infrastructure
 - ✅ Joi VM with LUKS full-disk encryption
 - ✅ Nebula mesh VPN (mesh ↔ joi encrypted tunnel)
+- ✅ HMAC + nonce authentication (defense-in-depth)
 - ✅ UFW firewalls (deny-by-default on both VMs)
 - ✅ Joi VM has no WAN egress (isolated network)
 - ✅ GPU passthrough (RTX 3060 via Thunderbolt)
@@ -46,7 +47,6 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ RAG knowledge retrieval (FTS5 full-text search)
 
 ### Pending
-- ⏳ HMAC + nonce for defense in depth
 - ⏳ Response cooldown (5s between sends)
 - ⏳ Circuit breaker (120 LLM calls/hr)
 - ⏳ Voice message transcription (Whisper)

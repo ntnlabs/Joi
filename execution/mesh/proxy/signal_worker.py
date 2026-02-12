@@ -10,11 +10,24 @@ from flask import Flask, jsonify, request
 
 from config import load_settings
 from forwarder import forward_to_joi
+from hmac_auth import (
+    InMemoryNonceStore,
+    get_shared_secret,
+    verify_hmac,
+    verify_timestamp,
+    DEFAULT_TIMESTAMP_TOLERANCE_MS,
+)
 from jsonrpc_stdio import JsonRpcStdioClient
 from policy import MeshPolicy
 
 
 logger = logging.getLogger("mesh.signal_worker")
+
+# HMAC authentication
+_hmac_secret = get_shared_secret()
+_hmac_enabled = _hmac_secret is not None
+_nonce_store = InMemoryNonceStore() if _hmac_enabled else None
+_hmac_timestamp_tolerance = int(os.getenv("MESH_HMAC_TIMESTAMP_TOLERANCE_MS", str(DEFAULT_TIMESTAMP_TOLERANCE_MS)))
 
 
 # --- Dedupe Cache ---
@@ -78,9 +91,62 @@ flask_app = Flask("mesh-outbound")
 flask_app.logger.setLevel(logging.WARNING)  # Quiet Flask logs
 
 
+@flask_app.before_request
+def verify_hmac_auth():
+    """Verify HMAC authentication for incoming requests from Joi."""
+    # Skip health endpoint
+    if request.path == "/health":
+        return None
+
+    # Skip if HMAC not configured
+    if not _hmac_enabled:
+        return None
+
+    # Extract headers
+    nonce = request.headers.get("X-Nonce")
+    timestamp_str = request.headers.get("X-Timestamp")
+    signature = request.headers.get("X-HMAC-SHA256")
+
+    # Check all required headers present
+    if not all([nonce, timestamp_str, signature]):
+        logger.warning("HMAC auth failed: missing headers")
+        return jsonify({"status": "error", "error": {"code": "hmac_missing_headers", "message": "Missing authentication headers"}}), 401
+
+    # Parse timestamp
+    try:
+        timestamp = int(timestamp_str)
+    except ValueError:
+        logger.warning("HMAC auth failed: invalid timestamp format")
+        return jsonify({"status": "error", "error": {"code": "hmac_invalid_timestamp", "message": "Invalid timestamp format"}}), 401
+
+    # Verify timestamp freshness
+    ts_valid, ts_error = verify_timestamp(timestamp, _hmac_timestamp_tolerance)
+    if not ts_valid:
+        logger.warning("HMAC auth failed: %s", ts_error)
+        return jsonify({"status": "error", "error": {"code": ts_error, "message": "Request timestamp out of tolerance"}}), 401
+
+    # Verify nonce not replayed
+    nonce_valid, nonce_error = _nonce_store.check_and_store(nonce, source="joi")
+    if not nonce_valid:
+        logger.warning("HMAC auth failed: %s nonce=%s", nonce_error, nonce[:8])
+        return jsonify({"status": "error", "error": {"code": nonce_error, "message": "Nonce already used"}}), 401
+
+    # Get raw body for HMAC verification
+    body = request.get_data()
+
+    # Verify HMAC signature
+    if not verify_hmac(nonce, timestamp, body, signature, _hmac_secret):
+        logger.warning("HMAC auth failed: invalid signature")
+        return jsonify({"status": "error", "error": {"code": "hmac_invalid_signature", "message": "Invalid HMAC signature"}}), 401
+
+    logger.debug("HMAC auth passed for %s", request.path)
+    return None
+
+
 @flask_app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "mode": "worker"})
+    hmac_status = "enabled" if _hmac_enabled else "disabled"
+    return jsonify({"status": "ok", "mode": "worker", "hmac": hmac_status})
 
 
 @flask_app.route("/api/v1/message/outbound", methods=["POST"])
@@ -332,6 +398,10 @@ def main() -> None:
 
     logger.info("Signal worker started (on-connection notifications)")
     logger.info("Policy loaded from %s", policy_file)
+    if _hmac_enabled:
+        logger.info("HMAC authentication enabled")
+    else:
+        logger.warning("HMAC authentication DISABLED - set MESH_HMAC_SECRET")
 
     # Start HTTP server in background thread
     http_thread = threading.Thread(target=run_http_server, args=(http_port,), daemon=True)
