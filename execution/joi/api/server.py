@@ -10,8 +10,18 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+
+from hmac_auth import (
+    NonceStore,
+    create_request_headers,
+    get_shared_secret,
+    verify_hmac,
+    verify_timestamp,
+    DEFAULT_TIMESTAMP_TOLERANCE_MS,
+)
 
 # Add parent dir to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -153,6 +163,11 @@ settings = load_settings()
 
 app = FastAPI(title="joi-api", version="0.1.0")
 
+# HMAC authentication settings
+HMAC_SECRET = get_shared_secret()
+HMAC_ENABLED = HMAC_SECRET is not None
+HMAC_TIMESTAMP_TOLERANCE_MS = int(os.getenv("JOI_HMAC_TIMESTAMP_TOLERANCE_MS", str(DEFAULT_TIMESTAMP_TOLERANCE_MS)))
+
 # Initialize Ollama client
 LLM_TIMEOUT = float(os.getenv("JOI_LLM_TIMEOUT", "180"))
 llm = OllamaClient(
@@ -166,6 +181,11 @@ memory = MemoryStore(
     db_path=os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
     encryption_key=os.getenv("JOI_MEMORY_KEY"),
 )
+
+# Initialize nonce store for replay protection (uses memory's DB connection)
+nonce_store: Optional[NonceStore] = None
+if HMAC_ENABLED:
+    nonce_store = NonceStore(memory._conn)
 
 # Number of recent messages to include in context
 CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "10"))
@@ -333,13 +353,85 @@ class InboundResponse(BaseModel):
     error: Optional[str] = None
 
 
+# --- HMAC Middleware ---
+
+@app.middleware("http")
+async def hmac_verification_middleware(request: Request, call_next):
+    """Verify HMAC authentication for mesh → joi requests."""
+    # Skip HMAC for health endpoint (monitoring)
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    # Skip if HMAC not configured
+    if not HMAC_ENABLED:
+        return await call_next(request)
+
+    # Extract headers
+    nonce = request.headers.get("X-Nonce")
+    timestamp_str = request.headers.get("X-Timestamp")
+    signature = request.headers.get("X-HMAC-SHA256")
+
+    # Check all required headers present
+    if not all([nonce, timestamp_str, signature]):
+        logger.warning("HMAC auth failed: missing headers")
+        return JSONResponse(
+            status_code=401,
+            content={"status": "error", "error": {"code": "hmac_missing_headers", "message": "Missing authentication headers"}}
+        )
+
+    # Parse timestamp
+    try:
+        timestamp = int(timestamp_str)
+    except ValueError:
+        logger.warning("HMAC auth failed: invalid timestamp format")
+        return JSONResponse(
+            status_code=401,
+            content={"status": "error", "error": {"code": "hmac_invalid_timestamp", "message": "Invalid timestamp format"}}
+        )
+
+    # Verify timestamp freshness
+    ts_valid, ts_error = verify_timestamp(timestamp, HMAC_TIMESTAMP_TOLERANCE_MS)
+    if not ts_valid:
+        logger.warning("HMAC auth failed: %s", ts_error)
+        return JSONResponse(
+            status_code=401,
+            content={"status": "error", "error": {"code": ts_error, "message": "Request timestamp out of tolerance"}}
+        )
+
+    # Verify nonce not replayed
+    nonce_valid, nonce_error = nonce_store.check_and_store(nonce, source="mesh")
+    if not nonce_valid:
+        logger.warning("HMAC auth failed: %s nonce=%s", nonce_error, nonce[:8])
+        return JSONResponse(
+            status_code=401,
+            content={"status": "error", "error": {"code": nonce_error, "message": "Nonce already used"}}
+        )
+
+    # Read body for HMAC verification
+    body = await request.body()
+
+    # Verify HMAC signature
+    if not verify_hmac(nonce, timestamp, body, signature, HMAC_SECRET):
+        logger.warning("HMAC auth failed: invalid signature")
+        return JSONResponse(
+            status_code=401,
+            content={"status": "error", "error": {"code": "hmac_invalid_signature", "message": "Invalid HMAC signature"}}
+        )
+
+    logger.debug("HMAC auth passed for %s", request.url.path)
+    return await call_next(request)
+
+
 # --- Lifecycle Events ---
 
 @app.on_event("startup")
 def startup_event():
     """Start the message queue worker on app startup."""
     message_queue.start()
-    logger.info("Joi API started with message queue")
+    if HMAC_ENABLED:
+        logger.info("Joi API started with message queue (HMAC enabled)")
+    else:
+        logger.warning("Joi API started with message queue (HMAC DISABLED - set JOI_HMAC_SECRET)")
 
 
 @app.on_event("shutdown")
@@ -713,6 +805,8 @@ def _send_to_mesh(
     reply_to: Optional[str] = None,
 ) -> bool:
     """Send a message back to mesh for delivery via Signal."""
+    import json
+
     url = f"{settings.mesh_url}/api/v1/message/outbound"
 
     payload = {
@@ -736,8 +830,17 @@ def _send_to_mesh(
     }
 
     try:
+        # Serialize to bytes for HMAC
+        body = json.dumps(payload).encode("utf-8")
+
+        # Build headers with HMAC if configured
+        headers = {"Content-Type": "application/json"}
+        if HMAC_ENABLED:
+            hmac_headers = create_request_headers(body, HMAC_SECRET)
+            headers.update(hmac_headers)
+
         with httpx.Client(timeout=10.0) as client:
-            resp = client.post(url, json=payload)
+            resp = client.post(url, content=body, headers=headers)
             resp.raise_for_status()
             data = resp.json()
 

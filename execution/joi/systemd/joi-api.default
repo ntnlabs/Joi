@@ -38,6 +38,13 @@ JOI_RAG_MAX_TOKENS=500
 # Directory for per-user and per-group system prompts
 JOI_PROMPTS_DIR=/var/lib/joi/prompts
 
+# --- HMAC Authentication (defense-in-depth over Nebula) ---
+# Shared secret for HMAC verification (MUST match MESH_HMAC_SECRET on Mesh VM)
+# Generate with: openssl rand -hex 32
+JOI_HMAC_SECRET=<your-256-bit-hex-secret>
+# Timestamp tolerance in milliseconds (default: 300000 = 5 minutes)
+# JOI_HMAC_TIMESTAMP_TOLERANCE_MS=300000
+
 # --- Encryption (future) ---
 # SQLCipher encryption key - uncomment when ready
 # JOI_MEMORY_KEY=<generate-with-openssl-rand-base64-32>
