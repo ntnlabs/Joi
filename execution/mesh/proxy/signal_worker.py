@@ -373,7 +373,8 @@ def run_http_server(port: int):
 def main() -> None:
     global _rpc, _account
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    log_level = os.getenv("MESH_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(level=getattr(logging, log_level, logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings()
     _account = os.getenv("SIGNAL_ACCOUNT", "")
     if not _account:
