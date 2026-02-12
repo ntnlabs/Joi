@@ -2270,58 +2270,154 @@ mount -o remount,nosuid,nodev,noexec /var/lib/joi
 
 ## Secrets Management
 
-### SQLCipher Key (joi VM)
+### SQLCipher Database Encryption (joi VM)
 
-The SQLCipher database key is managed as follows:
+The memory database (`/var/lib/joi/memory.db`) is encrypted at rest using SQLCipher (AES-256).
 
-**PoC Approach (CURRENT):**
-
-> **⚠️ WARNING: PoC-only - NOT production-ready**
->
-> The PoC approach stores the key as plaintext on disk. This is acceptable for initial development but has known weaknesses:
-> - Key is in memory as plaintext environment variable
-> - Any process running as `joi` user can read it
-> - Key may persist in shell history if ever typed manually
-> - Cold boot attacks on LUKS could expose it
-> - SQLCipher encryption becomes "security theater" if key protection is weak
->
-> **Do not use this approach for production or with real personal data.**
-
-1. Key stored in `/etc/joi/secrets/db.key` (file permissions: 0600, owner: joi)
-2. joi VM disk is LUKS-encrypted (defense in depth, but same boot unlocks both)
-3. Key loaded at service startup via environment variable
+#### Prerequisites
 
 ```bash
-# Example: joi service reads key at startup
-# /etc/systemd/system/joi.service
-[Service]
-EnvironmentFile=/etc/joi/secrets/env
-ExecStart=/opt/joi/bin/joi-agent
-User=joi
-RuntimeDirectory=joi              # Creates /run/joi, owned by joi:joi
-RuntimeDirectoryMode=0750         # Lock files go here (tmpfs, cleared on reboot)
+# Install SQLCipher library and CLI
+sudo apt install sqlcipher libsqlcipher-dev
+
+# Install Python bindings
+pip install sqlcipher3-binary
 ```
+
+#### Key Management
+
+**Key file location:** `/etc/joi/memory.key`
+
+The encryption key is:
+- 64 hex characters (256 bits of entropy)
+- Stored in a dedicated file (NOT in environment variables)
+- Owned by the service user with mode 600
 
 ```bash
-# /etc/joi/secrets/env (0600, owner: joi)
-SQLCIPHER_KEY=<random-32-byte-hex>
+# File structure
+/etc/joi/
+├── memory.key      # 600, joi:joi - encryption key
 ```
 
-**Production Hardening (REQUIRED before real use):**
+#### Initial Setup (Fresh Install)
+
+```bash
+# 1. Generate encryption key (run as root)
+cd /opt/joi/execution/joi/scripts
+sudo ./generate-memory-key.sh joi    # 'joi' is the service user
+
+# 2. Verify permissions
+ls -la /etc/joi/
+# drwx------ joi joi /etc/joi/
+# -rw------- joi joi /etc/joi/memory.key
+
+# 3. Ensure database directory is writable
+sudo chown joi:joi /var/lib/joi
+
+# 4. Start service - database will be created encrypted
+sudo systemctl start joi-api
+```
+
+#### Migration (Existing Unencrypted Database)
+
+If you have an existing unencrypted database:
+
+```bash
+# 1. Stop the service
+sudo systemctl stop joi-api
+
+# 2. Generate key if not already done
+cd /opt/joi/execution/joi/scripts
+sudo ./generate-memory-key.sh joi
+
+# 3. Run migration script
+sudo ./migrate-to-encrypted.sh
+
+# 4. Fix ownership (migration runs as root)
+sudo chown joi:joi /var/lib/joi/memory.db
+
+# 5. Restart service
+sudo systemctl start joi-api
+```
+
+The migration script:
+- Creates a backup at `/var/lib/joi/memory.db.unencrypted.backup`
+- Exports all data to a new encrypted database
+- Verifies the new database before replacing
+
+#### File Permissions Summary
+
+| Path | Owner | Mode | Purpose |
+|------|-------|------|---------|
+| `/etc/joi/` | joi:joi | 700 | Key directory |
+| `/etc/joi/memory.key` | joi:joi | 600 | Encryption key |
+| `/var/lib/joi/` | joi:joi | 750 | Database directory |
+| `/var/lib/joi/memory.db` | joi:joi | 600 | Encrypted database |
+| `/var/lib/joi/nonces.db` | joi:joi | 600 | Nonce store (unencrypted, ephemeral) |
+
+#### Verification
+
+Check logs for encryption status:
+```bash
+journalctl -u joi-api | grep -i "memory store\|sqlcipher"
+```
+
+Expected output:
+```
+SQLCipher encryption enabled
+Memory store initialized: /var/lib/joi/memory.db (encrypted)
+```
+
+#### Troubleshooting
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Permission denied: /etc/joi/memory.key` | Wrong ownership | `sudo chown joi:joi /etc/joi /etc/joi/memory.key` |
+| `attempt to write a readonly database` | Wrong DB ownership | `sudo chown joi:joi /var/lib/joi/memory.db` |
+| `file is not a database` | Unencrypted DB with key present | Run migration script |
+| `file is not a database` (after migration) | Key format mismatch | Re-run migration with fresh key |
+
+#### Backup Warning
+
+**⚠️ CRITICAL: Back up the encryption key securely!**
+
+Without `/etc/joi/memory.key`, the database cannot be decrypted. Store a copy:
+- In a password manager
+- On encrypted removable media
+- NOT in the same location as the database
+
+#### Key Rotation
+
+SQLCipher supports re-keying:
+```bash
+# Stop service first
+sudo systemctl stop joi-api
+
+# Use sqlcipher CLI
+sqlcipher /var/lib/joi/memory.db
+> PRAGMA key = 'old_key';
+> PRAGMA rekey = 'new_key';
+> .quit
+
+# Update key file
+echo "new_key" | sudo tee /etc/joi/memory.key
+sudo chown joi:joi /etc/joi/memory.key
+sudo chmod 600 /etc/joi/memory.key
+
+# Restart
+sudo systemctl start joi-api
+```
+
+#### Production Hardening (Future)
 
 | Option | Pros | Cons |
 |--------|------|------|
-| **systemd-creds** | Built-in, encrypted at rest with TPM | Requires TPM passthrough to VM |
-| **Manual unlock on boot** | Key never on disk | Downtime on reboot, manual intervention |
-| **HashiCorp Vault** | Industry standard, audit logging | Additional infrastructure complexity |
-| **LUKS keyfile on separate USB** | Physical security, removable | Requires USB passthrough, physical access |
+| **Current (key file)** | Simple, works | Key on disk |
+| **Manual unlock on boot** | Key never on disk | Manual intervention on reboot |
+| **systemd-creds + TPM** | Encrypted at rest | Requires TPM passthrough |
+| **HashiCorp Vault** | Audit logging, rotation | Infrastructure complexity |
 
-Recommended for production: **Manual unlock on boot** or **systemd-creds with TPM**
-
-**Key Rotation:**
-- SQLCipher supports re-keying: `PRAGMA rekey = 'newkey';`
-- Rotate annually or on suspected compromise
-- Backup database before re-keying
+For PoC, the key file approach is acceptable since the joi VM disk is LUKS-encrypted (defense in depth).
 
 ### Signal Credentials (mesh VM)
 
