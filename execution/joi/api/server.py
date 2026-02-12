@@ -66,10 +66,10 @@ def _build_address_regex(names: list) -> re.Pattern:
         # Escape special regex characters in name
         escaped = re.escape(name)
         patterns.extend([
-            rf"^@?{escaped}[,:\s]",    # "Name," "name:" "@name " at start
-            rf"^@?{escaped}$",          # Just "Name" or "@Name" alone
-            rf"\s@{escaped}[\s,:]",     # "@name" in the middle
-            rf"\s@{escaped}$",          # "@name" at the end
+            rf"^@?{escaped}[,:\s!?]",   # "Name," "name:" "@name " at start
+            rf"^@?{escaped}$",           # Just "Name" or "@Name" alone
+            rf"\s@?{escaped}[,:\s!?]",   # "name," or "@name," in the middle
+            rf"\s@?{escaped}$",          # "name" or "@name" at the end
         ])
     return re.compile("|".join(patterns), re.IGNORECASE)
 
