@@ -60,16 +60,16 @@ JOI_NAMES_DEFAULT = [name.strip() for name in os.getenv("JOI_NAMES", "Joi").spli
 
 
 def _build_address_regex(names: list) -> re.Pattern:
-    """Build regex pattern for addressing detection from list of names."""
+    """Build regex pattern for addressing detection from list of names.
+
+    Only matches explicit @Name mentions (Signal group mention style).
+    """
     patterns = []
     for name in names:
-        # Escape special regex characters in name
         escaped = re.escape(name)
         patterns.extend([
-            rf"^@?{escaped}[,:\s!?]",   # "Name," "name:" "@name " at start
-            rf"^@?{escaped}$",           # Just "Name" or "@Name" alone
-            rf"\s@?{escaped}[,:\s!?]",   # "name," or "@name," in the middle
-            rf"\s@?{escaped}$",          # "name" or "@name" at the end
+            rf"^@{escaped}(?:\s|$|[,:.!?])",   # "@Name" at start
+            rf"\s@{escaped}(?:\s|$|[,:.!?])",  # "@Name" in middle/end
         ])
     return re.compile("|".join(patterns), re.IGNORECASE)
 
