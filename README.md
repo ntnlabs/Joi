@@ -50,9 +50,9 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 ### Pending
 - ⏳ SQLCipher database encryption
 - ⏳ System Channel integration
-- ⏳ LLM Services (imagegen, websearch, etc.)
 
 ### Nice to Have
+- ⏳ LLM Services (imagegen, websearch, etc.)
 - ⏳ Circuit breaker (120 LLM calls/hr) - inbound rate limiting may suffice
 - ⏳ Voice message transcription (Whisper)
 
