@@ -364,14 +364,16 @@ def main() -> None:
                     convo = payload.get("conversation", {})
                     if convo.get("type") == "group":
                         group_id = convo.get("id")
+                        # Start with bot_name, add per-group names on top
+                        names = []
+                        bot_name = policy.get_bot_name()
+                        if bot_name:
+                            names.append(bot_name)
                         group_names = policy.get_group_names(group_id)
                         if group_names:
-                            payload["group_names"] = group_names
-                        else:
-                            # Use bot_name from policy.json as default
-                            bot_name = policy.get_bot_name()
-                            if bot_name:
-                                payload["group_names"] = [bot_name]
+                            names.extend(n for n in group_names if n not in names)
+                        if names:
+                            payload["group_names"] = names
 
                     forward_to_joi(payload)
             except Exception as exc:  # noqa: BLE001
