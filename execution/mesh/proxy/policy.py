@@ -21,6 +21,7 @@ class MeshPolicy:
 
         identity = self._config.get("identity", {})
         self.allowed_senders: Set[str] = set(identity.get("allowed_senders", []))
+        self.bot_name: Optional[str] = identity.get("bot_name")
 
         groups = identity.get("groups", {})
         self.group_participants: Dict[str, Set[str]] = {}
@@ -107,6 +108,10 @@ class MeshPolicy:
     def get_group_names(self, group_id: str) -> Optional[List[str]]:
         """Get the names Joi responds to in a specific group."""
         return self.group_names.get(group_id)
+
+    def get_bot_name(self) -> Optional[str]:
+        """Get the bot's display name for @mention detection."""
+        return self.bot_name
 
     @staticmethod
     def _sender_transport_id(payload: Dict[str, Any]) -> Optional[str]:
