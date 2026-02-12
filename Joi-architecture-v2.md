@@ -2479,6 +2479,81 @@ proxmox-console: start joi openhab
 - joi VM firewall: allow Nebula UDP + openhab mTLS only (no vmbr0 interface).
 - mesh VM firewall: vmbr0 allows Signal outbound only; vmbr1 allows Nebula only.
 
+### Host Firewall Rules (UFW)
+
+Both VMs use UFW with deny-by-default policy. Only explicitly allowed traffic passes.
+
+**Joi VM:**
+```bash
+sudo ufw reset
+sudo ufw default deny incoming
+sudo ufw default deny outgoing
+
+# Docker bridge (for Ollama container)
+sudo ufw allow in on docker0
+sudo ufw allow out on docker0
+
+# SSH from gateway (adjust IP as needed)
+sudo ufw allow from 172.22.22.4 to any port 22
+
+# NTP from internal NTP server
+sudo ufw allow from 172.22.22.3 to any port 123/udp
+sudo ufw allow out to 172.22.22.3 port 123/udp
+
+# Nebula UDP (vmbr1)
+sudo ufw allow 4242/udp
+sudo ufw allow out 4242/udp
+
+# Nebula overlay - mesh proxy communication
+sudo ufw allow from 10.42.0.1 to any port 8443
+sudo ufw allow out to 10.42.0.1 port 8444
+
+# Package management (apt/pip) - can be removed after setup
+sudo ufw allow out to any port 53
+sudo ufw allow out to any port 80
+sudo ufw allow out to any port 443
+
+sudo ufw enable
+```
+
+**Mesh VM:**
+```bash
+sudo ufw reset
+sudo ufw default deny incoming
+sudo ufw default deny outgoing
+
+# Loopback (internal services)
+sudo ufw allow in on lo
+sudo ufw allow out on lo
+
+# SSH from gateway (adjust IP as needed)
+sudo ufw allow from 172.22.22.4 to any port 22
+
+# NTP from internal NTP server
+sudo ufw allow from 172.22.22.3 to any port 123/udp
+sudo ufw allow out to 172.22.22.3 port 123/udp
+
+# Nebula UDP
+sudo ufw allow 4242/udp
+sudo ufw allow out 4242/udp
+
+# Nebula overlay - joi API communication
+sudo ufw allow from 10.42.0.10 to any port 8444
+sudo ufw allow out to 10.42.0.10 port 8443
+
+# WAN - Signal (HTTPS + DNS)
+sudo ufw allow out to any port 443
+sudo ufw allow out to any port 53
+
+sudo ufw enable
+```
+
+**Notes:**
+- Docker uses `docker0` bridge (172.17.0.0/16), not loopback. Allowing `lo` does NOT enable Docker networking.
+- Gateway IP (172.22.22.4) and NTP IP (172.22.22.3) are examples - adjust for your setup.
+- Nebula overlay IPs: mesh=10.42.0.1, joi=10.42.0.10
+- Port 80/443 on Joi is for apt/pip - can be removed after initial setup for full air-gap.
+
 ### Time Synchronization (NTP)
 
 All VMs on vmbr1 must maintain synchronized clocks for API timestamp validation (5-minute tolerance).
