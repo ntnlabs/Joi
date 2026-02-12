@@ -8,13 +8,13 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ## Aim
 
-**What Joi is not**
- - realtime API
- - website chatbot
- - request-response HTTP service
+| Joi is not | Joi is |
+|------------|--------|
+| A realtime API | Event-driven |
+| A website chatbot | Asynchronous |
+| A request-response service | Stateful |
 
-**What Joi is**
- - event-driven, asynchronous, stateful digital entity
+**Joi is a digital entity, not a tool.**
 
 ## Status
 
