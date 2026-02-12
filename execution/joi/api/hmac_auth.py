@@ -104,13 +104,14 @@ class NonceStore:
     Cleanup runs periodically to remove expired entries.
     """
 
-    def __init__(self, db_connection):
-        """Initialize nonce store with database connection.
+    def __init__(self, db_path: str):
+        """Initialize nonce store with database path.
 
         Args:
-            db_connection: SQLite connection (from MemoryStore)
+            db_path: Path to SQLite database file
         """
-        self._conn = db_connection
+        import sqlite3
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._ensure_table()
 
     def _ensure_table(self):
