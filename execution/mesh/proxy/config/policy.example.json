@@ -1,13 +1,15 @@
 {
   "identity": {
+    "bot_name": "Joi",
     "allowed_senders": [
-      "+<REDACTED>"
+      "+<PHONE_NUMBER>"
     ],
     "groups": {
-      "GROUP_ID_HERE": {
+      "GROUP_ID_BASE64": {
         "participants": [
-          "+<REDACTED>"
-        ]
+          "+<PHONE_NUMBER>"
+        ],
+        "names": []
       }
     }
   },
