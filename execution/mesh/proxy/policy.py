@@ -65,9 +65,6 @@ class MeshPolicy:
         if not sender:
             return PolicyDecision(False, "invalid_sender")
 
-        if sender not in self.allowed_senders:
-            return PolicyDecision(False, "unknown_sender")
-
         conversation = payload.get("conversation", {})
         if not isinstance(conversation, dict):
             return PolicyDecision(False, "invalid_conversation")
@@ -78,15 +75,20 @@ class MeshPolicy:
             return PolicyDecision(False, "invalid_conversation")
 
         if convo_type == "group":
+            # For groups: check group participants, not global allowed_senders
             allowed_participants = self.group_participants.get(convo_id)
             if allowed_participants is None:
                 return PolicyDecision(False, "group_not_allowed")
-            # For groups: allow all messages from the group (for context)
-            # but mark non-allowed senders as store_only (Joi won't respond)
+            # Allow all messages from configured groups (for context)
+            # but mark non-participants as store_only (Joi won't respond)
             sender_allowed = sender in allowed_participants
             if not sender_allowed:
                 # Forward for context but don't respond
                 return PolicyDecision(True, "store_only", store_only=True)
+        else:
+            # For DMs: sender must be in allowed_senders
+            if sender not in self.allowed_senders:
+                return PolicyDecision(False, "unknown_sender")
 
         validation_result = self._validate_content(payload)
         if not validation_result.allowed:
