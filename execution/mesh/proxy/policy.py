@@ -1,10 +1,13 @@
 from dataclasses import dataclass
 import json
+import logging
 from pathlib import Path
 import time
 from typing import Any, Dict, List, Optional, Set
 
 from rate_limiter import InboundRateLimiter
+
+logger = logging.getLogger("mesh.policy")
 
 
 @dataclass(frozen=True)
@@ -98,7 +101,10 @@ class MeshPolicy:
         if not isinstance(timestamp, int):
             return PolicyDecision(False, "invalid_timestamp")
         now_ms = int(time.time() * 1000)
-        if abs(now_ms - timestamp) > self.max_timestamp_skew_ms:
+        skew_ms = abs(now_ms - timestamp)
+        if skew_ms > self.max_timestamp_skew_ms:
+            logger.warning("Timestamp skew: %dms (max: %dms) msg_ts=%d now=%d",
+                          skew_ms, self.max_timestamp_skew_ms, timestamp, now_ms)
             return PolicyDecision(False, "timestamp_out_of_window")
 
         limit_result = self.rate_limiter.check_and_add(f"inbound:{sender}", now_ms=now_ms)
