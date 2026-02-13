@@ -557,7 +557,8 @@ def startup_event():
         scheduler.start()
     hmac_status = "HMAC enabled" if HMAC_ENABLED else "HMAC DISABLED - set JOI_HMAC_SECRET"
     scheduler_status = f"scheduler enabled (interval: {SCHEDULER_INTERVAL}s)" if scheduler else "scheduler disabled"
-    logger.info("Joi API started: %s, %s", hmac_status, scheduler_status)
+    time_status = "time awareness enabled" if TIME_AWARENESS_ENABLED else "time awareness disabled"
+    logger.info("Joi API started: %s, %s, %s", hmac_status, scheduler_status, time_status)
 
 
 @app.on_event("shutdown")
