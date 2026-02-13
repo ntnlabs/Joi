@@ -228,3 +228,63 @@ mesh (Signal) ──► POST /api/v1/message/inbound ──► Joi API
                                                       ▼
 mesh (Signal) ◄── POST /api/v1/message/outbound ◄── Joi API
 ```
+
+## Admin Tools
+
+### joi-admin
+
+Memory and key management utility. **Safe by default** - no flags = no action.
+
+```bash
+sudo joi-admin purge [FLAGS]
+```
+
+#### Data Flags
+
+| Flag | Deletes |
+|------|---------|
+| `--contexts` | Messages and context summaries |
+| `--facts` | Learned user facts |
+| `--knowledge` | RAG knowledge chunks |
+| `--all-data` | All of the above |
+
+#### Scope Flags
+
+| Flag | Effect |
+|------|--------|
+| `--conversation ID` | Limit to specific conversation (phone/group ID) |
+| *(none)* | Affects ALL conversations |
+
+#### Key Flags
+
+| Flag | Effect |
+|------|--------|
+| `--hmac-key` | Regenerate HMAC signing key |
+| `--nebula-keys` | Remove Nebula host keys (requires re-enrollment) |
+| `--all-keys` | Both HMAC and Nebula keys |
+
+#### Nuclear Options
+
+| Flag | Effect |
+|------|--------|
+| `--everything` | `--all-data` + `--all-keys` |
+| `--nebula-ca` | Also remove Nebula CA cert (true factory reset) |
+
+#### Common Use Cases
+
+```bash
+# Clear conversation history (//reload equivalent)
+sudo joi-admin purge --contexts --conversation +1234567890
+
+# Clear history + facts (//restart equivalent)
+sudo joi-admin purge --contexts --facts --conversation +1234567890
+
+# Full conversation reset (//reset equivalent)
+sudo joi-admin purge --all-data --conversation +1234567890
+
+# Customer handoff (wipe everything)
+sudo joi-admin purge --all-data --all-keys
+
+# True factory reset
+sudo joi-admin purge --everything --nebula-ca
+```
