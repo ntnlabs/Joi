@@ -33,6 +33,7 @@ from config import (
     get_prompt_for_conversation,
     get_prompt_for_conversation_optional,
     get_model_for_conversation,
+    get_context_for_conversation,
     ensure_prompts_dir,
 )
 from llm import OllamaClient
@@ -738,9 +739,17 @@ def receive_message(msg: InboundMessage):
 
     def process_with_llm() -> InboundResponse:
         """Process message with LLM - runs in queue worker thread."""
+        # Get per-conversation context size (or use global default)
+        custom_context = get_context_for_conversation(
+            conversation_type=msg.conversation.type,
+            conversation_id=msg.conversation.id,
+            sender_id=msg.sender.transport_id,
+        )
+        context_size = custom_context if custom_context is not None else CONTEXT_MESSAGE_COUNT
+
         # Build conversation context from recent messages
         recent_messages = memory.get_recent_messages(
-            limit=CONTEXT_MESSAGE_COUNT,
+            limit=context_size,
             conversation_id=msg.conversation.id,
         )
 
@@ -786,7 +795,8 @@ def receive_message(msg: InboundMessage):
 
         # Generate response from LLM with conversation context
         model_info = f"model={custom_model}" if custom_model else "model=default"
-        logger.info("Generating LLM response with %d messages of context (%s)", len(chat_messages), model_info)
+        context_info = f"context={context_size}" if custom_context else f"context={context_size}(default)"
+        logger.info("Generating LLM response with %d messages (%s, %s)", len(chat_messages), model_info, context_info)
         llm_response = llm.chat(messages=chat_messages, system=enriched_prompt, model=custom_model)
 
         if llm_response.error:

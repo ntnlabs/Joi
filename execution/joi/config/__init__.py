@@ -10,6 +10,7 @@ from .prompts import (
     get_group_model,
     get_model_for_conversation,
     has_custom_model,
+    get_context_for_conversation,
 )
 from .settings import Settings, load_settings
 
@@ -22,6 +23,7 @@ __all__ = [
     "get_prompt_for_conversation",
     "get_prompt_for_conversation_optional",
     "get_model_for_conversation",
+    "get_context_for_conversation",
     "has_custom_model",
     "ensure_prompts_dir",
 ]

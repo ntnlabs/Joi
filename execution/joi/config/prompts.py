@@ -1,24 +1,31 @@
 """
-System prompt and model configuration for Joi.
+System prompt, model, and context configuration for Joi.
 
-Supports per-user and per-group prompts and models with fallback to defaults.
+Supports per-user and per-group prompts, models, and context sizes with fallback to defaults.
 
 Directory structure:
     /var/lib/joi/prompts/
     ├── default.txt           # Default prompt (fallback)
     ├── default.model         # Default model name (optional)
+    ├── default.context       # Default context message count (optional)
     ├── users/
     │   ├── <user_id>.txt     # Per-user prompt (optional if .model exists)
-    │   └── <user_id>.model   # Per-user model (optional)
+    │   ├── <user_id>.model   # Per-user model (optional)
+    │   └── <user_id>.context # Per-user context size (optional)
     └── groups/
         ├── <group_id>.txt    # Per-group prompt (optional if .model exists)
-        └── <group_id>.model  # Per-group model (optional)
+        ├── <group_id>.model  # Per-group model (optional)
+        └── <group_id>.context # Per-group context size (optional)
 
 Model/Prompt combinations:
     - No .model, no .txt  → default model + default prompt
     - No .model, has .txt → default model + user's prompt
     - Has .model, no .txt → user's model + NO prompt (Modelfile handles it)
     - Has .model, has .txt → user's model + user's prompt (additions)
+
+Context size:
+    - .context file contains a number (e.g., "20")
+    - Falls back to JOI_CONTEXT_MESSAGES env var if not set
 """
 
 import logging
@@ -187,3 +194,58 @@ def get_prompt_for_conversation_optional(conversation_type: str, conversation_id
     else:
         user_file = PROMPTS_DIR / "users" / f"{sender_id}.txt"
         return _read_prompt_file(user_file)
+
+
+# --- Context Size Configuration ---
+
+def _read_context_file(path: Path) -> Optional[int]:
+    """Read context size from file if it exists."""
+    try:
+        if path.exists():
+            content = path.read_text(encoding="utf-8").strip()
+            if content:
+                return int(content)
+    except ValueError:
+        logger.warning("Invalid context size in %s (not a number)", path)
+    except Exception as e:
+        logger.warning("Failed to read context from %s: %s", path, e)
+    return None
+
+
+def get_default_context() -> Optional[int]:
+    """Get the default context size from default.context file."""
+    context_file = PROMPTS_DIR / "default.context"
+    return _read_context_file(context_file)
+
+
+def get_user_context(user_id: str) -> Optional[int]:
+    """Get context size for a specific user."""
+    user_file = PROMPTS_DIR / "users" / f"{user_id}.context"
+    context = _read_context_file(user_file)
+    if context is not None:
+        logger.debug("Using user-specific context for %s: %d", user_id, context)
+        return context
+    return get_default_context()
+
+
+def get_group_context(group_id: str) -> Optional[int]:
+    """Get context size for a specific group."""
+    safe_group_id = group_id.replace("/", "_").replace("+", "-")
+    group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.context"
+    context = _read_context_file(group_file)
+    if context is not None:
+        logger.debug("Using group-specific context for %s: %d", group_id, context)
+        return context
+    return get_default_context()
+
+
+def get_context_for_conversation(conversation_type: str, conversation_id: str, sender_id: str) -> Optional[int]:
+    """
+    Get the context message count for a conversation.
+
+    Returns None if no custom context is configured (use env default).
+    """
+    if conversation_type == "group":
+        return get_group_context(conversation_id)
+    else:
+        return get_user_context(sender_id)

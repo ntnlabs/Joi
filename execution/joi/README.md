@@ -143,9 +143,9 @@ ollama create joi-creative -f Modelfile.creative  # More creative
 ollama create joi-formal -f Modelfile.formal      # Business-like
 ```
 
-## Per-User/Group Model Selection
+## Per-User/Group Configuration
 
-Different users or groups can use different models via `.model` files.
+Different users or groups can use different models and context sizes via config files.
 
 ### Directory Structure
 
@@ -153,13 +153,24 @@ Different users or groups can use different models via `.model` files.
 /var/lib/joi/prompts/
 ├── default.txt              # Default prompt (fallback)
 ├── default.model            # Default model (optional)
+├── default.context          # Default context message count (optional)
 ├── users/
 │   ├── +1234567890.txt      # User's extra prompt (optional)
-│   └── +1234567890.model    # User's model: joi-creative
+│   ├── +1234567890.model    # User's model: joi-creative
+│   └── +1234567890.context  # User's context size: 20
 └── groups/
     ├── ABC123.txt           # Group's extra prompt (optional)
-    └── ABC123.model         # Group's model: joi-formal
+    ├── ABC123.model         # Group's model: joi-formal
+    └── ABC123.context       # Group's context size: 60
 ```
+
+### File Types
+
+| File | Contains | Fallback |
+|------|----------|----------|
+| `.txt` | System prompt text | default.txt → hardcoded |
+| `.model` | Model name (e.g., `joi-creative`) | default.model → `JOI_OLLAMA_MODEL` |
+| `.context` | Number of messages (e.g., `20`) | default.context → `JOI_CONTEXT_MESSAGES` |
 
 ### Model/Prompt Combinations
 
@@ -173,11 +184,13 @@ Different users or groups can use different models via `.model` files.
 ### Example Setup
 
 ```bash
-# User gets creative model (Modelfile handles personality)
+# User gets creative model with smaller context (for smaller model)
 echo "joi-creative" > /var/lib/joi/prompts/users/+1234567890.model
+echo "20" > /var/lib/joi/prompts/users/+1234567890.context
 
-# Group gets formal model with extra context
+# Group gets formal model with larger context (for bigger model)
 echo "joi-formal" > /var/lib/joi/prompts/groups/ABC123.model
+echo "60" > /var/lib/joi/prompts/groups/ABC123.context
 echo "This is a work group. Keep responses professional." > /var/lib/joi/prompts/groups/ABC123.txt
 ```
 
