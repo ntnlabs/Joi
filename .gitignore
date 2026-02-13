@@ -7,6 +7,7 @@ checklists.md
 dev-notes.md
 duality-system.md
 ntp-fw.sh
+ntp-update.sh
 
 # Data (databases, logs, runtime files)
 data/
