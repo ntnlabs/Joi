@@ -191,7 +191,7 @@ if HMAC_ENABLED:
     nonce_store = NonceStore(nonce_db_path)
 
 # Number of recent messages to include in context
-CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "10"))
+CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "40"))
 
 # Memory consolidation settings
 CONSOLIDATION_SILENCE_HOURS = float(os.getenv("JOI_CONSOLIDATION_SILENCE_HOURS", "1"))
