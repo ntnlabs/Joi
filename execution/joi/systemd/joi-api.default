@@ -34,6 +34,19 @@ JOI_RAG_ENABLED=1
 # Max tokens for RAG context in prompts
 JOI_RAG_MAX_TOKENS=500
 
+# --- Time Awareness ---
+# Set to 1 to inject current datetime into system prompt
+# Enables appropriate greetings and understanding of relative time
+JOI_TIME_AWARENESS=0
+
+# --- Scheduler (Wind/Tasks) ---
+# Background scheduler for proactive messaging and reminders
+JOI_SCHEDULER_ENABLED=1
+# Tick interval in seconds
+JOI_SCHEDULER_INTERVAL=60
+# Seconds to wait after startup before first tick
+JOI_SCHEDULER_STARTUP_DELAY=10
+
 # --- Prompts ---
 # Directory for per-user and per-group system prompts
 JOI_PROMPTS_DIR=/var/lib/joi/prompts

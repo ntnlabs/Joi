@@ -82,6 +82,18 @@ See [ENV-REFERENCE.md](../../ENV-REFERENCE.md) for complete documentation.
 | `JOI_RAG_ENABLED` | 1 | Enable knowledge retrieval |
 | `JOI_RAG_MAX_TOKENS` | 500 | Max tokens for RAG context |
 
+### Time Awareness
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_TIME_AWARENESS` | 0 | Inject current datetime into system prompt |
+
+### Scheduler
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_SCHEDULER_ENABLED` | 1 | Enable background scheduler |
+| `JOI_SCHEDULER_INTERVAL` | 60 | Tick interval in seconds |
+| `JOI_SCHEDULER_STARTUP_DELAY` | 10 | Startup delay in seconds |
+
 ### Prompts
 | Variable | Default | Description |
 |----------|---------|-------------|
