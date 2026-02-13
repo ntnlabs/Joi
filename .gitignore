@@ -8,6 +8,7 @@ dev-notes.md
 duality-system.md
 ntp-fw.sh
 ntp-update.sh
+execution/joi/ollama/Modelfile
 
 # Data (databases, logs, runtime files)
 data/
