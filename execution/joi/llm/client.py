@@ -18,10 +18,11 @@ class LLMResponse:
 class OllamaClient:
     """Simple Ollama API client."""
 
-    def __init__(self, base_url: str, model: str, timeout: float = 60.0):
+    def __init__(self, base_url: str, model: str, timeout: float = 60.0, num_ctx: int = 0):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
+        self.num_ctx = num_ctx  # 0 = use model default
 
     def generate(self, prompt: str, system: Optional[str] = None) -> LLMResponse:
         """
@@ -44,6 +45,9 @@ class OllamaClient:
 
         if system:
             payload["system"] = system
+
+        if self.num_ctx > 0:
+            payload["options"] = {"num_ctx": self.num_ctx}
 
         try:
             with httpx.Client(timeout=self.timeout) as client:
@@ -104,6 +108,9 @@ class OllamaClient:
         if system:
             # Prepend system message
             payload["messages"] = [{"role": "system", "content": system}] + messages
+
+        if self.num_ctx > 0:
+            payload["options"] = {"num_ctx": self.num_ctx}
 
         try:
             with httpx.Client(timeout=self.timeout) as client:

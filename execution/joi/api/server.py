@@ -175,6 +175,7 @@ llm = OllamaClient(
     base_url=settings.ollama_url,
     model=settings.ollama_model,
     timeout=LLM_TIMEOUT,
+    num_ctx=settings.ollama_num_ctx,
 )
 
 # Initialize memory store
@@ -462,6 +463,7 @@ def health():
     return {
         "status": "ok",
         "model": settings.ollama_model,
+        "num_ctx": settings.ollama_num_ctx if settings.ollama_num_ctx > 0 else "default",
         "memory": {
             "messages": msg_count,
             "facts": len(facts),
@@ -897,7 +899,8 @@ def main():
     )
 
     logger.info("Starting Joi API on %s:%d", settings.bind_host, settings.bind_port)
-    logger.info("Ollama: %s (model: %s)", settings.ollama_url, settings.ollama_model)
+    ctx_info = f", num_ctx: {settings.ollama_num_ctx}" if settings.ollama_num_ctx > 0 else ""
+    logger.info("Ollama: %s (model: %s%s)", settings.ollama_url, settings.ollama_model, ctx_info)
     logger.info("Mesh: %s", settings.mesh_url)
     logger.info("Memory: %s (context: %d messages)",
                 os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
