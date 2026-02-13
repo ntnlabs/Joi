@@ -1,6 +1,6 @@
 # Joi - Project Summary
 
-> Quick reference for understanding this project. Last updated: 2026-02-08
+> Quick reference for understanding this project. Last updated: 2026-02-14
 
 ## What is Joi?
 
@@ -8,7 +8,21 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 
 ## Project Status
 
-**Phase: Architecture/Planning** - No implementation code yet, only documentation.
+**Phase: Implementation** - Core system operational.
+
+### Milestones
+
+| Date | Milestone |
+|------|-----------|
+| 2026-02-14 | **Per-group model & prompt configuration** - Groups can have custom Ollama models with baked-in personalities plus additional prompt overlays |
+| 2026-02-14 | **joi-admin purge tool** - Safe-by-default CLI for memory management (contexts, facts, keys) |
+| 2026-02-14 | **Per-user/group context sizes** - Different conversations can have different message history limits |
+| 2026-02-13 | **Ollama Modelfile system** - Custom models with baked-in SYSTEM prompts, temperature, context window |
+| 2026-02-13 | **Time awareness** - Optional datetime injection into system prompt |
+| 2026-02-13 | **Background scheduler** - Internal daemon for periodic tasks (replaces fragile cron) |
+| 2026-02-12 | **Memory consolidation** - Automatic fact extraction and context compression |
+| 2026-02-11 | **RAG knowledge retrieval** - Full-text search over ingested documents |
+| 2026-02-10 | **Core API operational** - Signal ↔ Mesh ↔ Joi ↔ Ollama pipeline working |
 
 ## Key Concepts
 
@@ -24,8 +38,8 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 
 | Component | Technology | Notes |
 |-----------|------------|-------|
-| LLM | Llama 3.1 8B (uncensored) | Primary - must be unlocked variant |
-| LLM Backup | Gemma 2 9B, Phi-3, Mistral | Fallback options |
+| LLM | Llama 3.1 8B abliterated | Primary - mannix/llama3.1-8b-abliterated |
+| LLM Config | Ollama Modelfile | Baked-in personality, per-user/group models |
 | LLM Requirements | Uncensored + Slovak | No restrictive filters, good Slovak support |
 | Hardware | ASUS NUC 13 Pro + RTX 3060 eGPU | Proxmox host with GPU passthrough |
 | Virtualization | Proxmox VE | Joi runs as isolated VM |
