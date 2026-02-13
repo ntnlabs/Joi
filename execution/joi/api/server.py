@@ -28,7 +28,13 @@ from hmac_auth import (
     DEFAULT_TIMESTAMP_TOLERANCE_MS,
 )
 
-from config import load_settings, get_prompt_for_conversation, ensure_prompts_dir
+from config import (
+    load_settings,
+    get_prompt_for_conversation,
+    get_prompt_for_conversation_optional,
+    get_model_for_conversation,
+    ensure_prompts_dir,
+)
 from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
 
@@ -742,21 +748,46 @@ def receive_message(msg: InboundMessage):
         is_group_chat = msg.conversation.type == "group"
         chat_messages = _build_chat_messages(recent_messages, is_group=is_group_chat)
 
-        # Get per-conversation system prompt and enrich it
-        base_prompt = get_prompt_for_conversation(
+        # Get per-conversation model (if any)
+        custom_model = get_model_for_conversation(
             conversation_type=msg.conversation.type,
             conversation_id=msg.conversation.id,
             sender_id=msg.sender.transport_id,
         )
-        enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key)
+
+        # Get system prompt based on whether custom model is used
+        if custom_model:
+            # Custom model: prompt is optional (Modelfile has baked-in SYSTEM)
+            base_prompt = get_prompt_for_conversation_optional(
+                conversation_type=msg.conversation.type,
+                conversation_id=msg.conversation.id,
+                sender_id=msg.sender.transport_id,
+            )
+            if base_prompt:
+                enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key)
+            else:
+                # No prompt file - only add facts/summaries/RAG if available
+                enriched_prompt = _build_enriched_prompt("", user_text, conversation_id=fact_key)
+                enriched_prompt = enriched_prompt.strip() or None  # None if empty
+        else:
+            # No custom model: use prompt with fallback to default
+            base_prompt = get_prompt_for_conversation(
+                conversation_type=msg.conversation.type,
+                conversation_id=msg.conversation.id,
+                sender_id=msg.sender.transport_id,
+            )
+            enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key)
 
         # Add hint if we just saved a fact
-        if saved_fact:
+        if saved_fact and enriched_prompt:
             enriched_prompt += f"\n\n[You just saved this to memory: \"{saved_fact}\". Briefly acknowledge you'll remember it.]"
+        elif saved_fact:
+            enriched_prompt = f"[You just saved this to memory: \"{saved_fact}\". Briefly acknowledge you'll remember it.]"
 
         # Generate response from LLM with conversation context
-        logger.info("Generating LLM response with %d messages of context", len(chat_messages))
-        llm_response = llm.chat(messages=chat_messages, system=enriched_prompt)
+        model_info = f"model={custom_model}" if custom_model else "model=default"
+        logger.info("Generating LLM response with %d messages of context (%s)", len(chat_messages), model_info)
+        llm_response = llm.chat(messages=chat_messages, system=enriched_prompt, model=custom_model)
 
         if llm_response.error:
             logger.error("LLM error: %s", llm_response.error)
