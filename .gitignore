@@ -6,6 +6,7 @@ hardware-budget-analysis.md
 checklists.md
 dev-notes.md
 duality-system.md
+ntp-fw.sh
 
 # Data (databases, logs, runtime files)
 data/
