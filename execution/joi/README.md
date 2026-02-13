@@ -99,6 +99,88 @@ See [ENV-REFERENCE.md](../../ENV-REFERENCE.md) for complete documentation.
 |----------|---------|-------------|
 | `JOI_PROMPTS_DIR` | /var/lib/joi/prompts | Directory for per-user/group prompts |
 
+## Custom Models (Modelfile)
+
+Ollama Modelfiles let you create custom model variants with baked-in personality and parameters.
+
+### Creating a Custom Model
+
+```bash
+# 1. Copy and customize the template
+cp ollama/Modelfile.example ollama/Modelfile
+vim ollama/Modelfile
+
+# 2. Build the model
+docker exec joi-brain ollama create joi -f /opt/joi/execution/joi/ollama/Modelfile
+
+# 3. Test it
+docker exec -it joi-brain ollama run joi "Hey"
+
+# 4. Use it (global default)
+# In /etc/default/joi-api:
+JOI_OLLAMA_MODEL=joi
+```
+
+### What Gets Baked In
+
+| Setting | Effect |
+|---------|--------|
+| `FROM` | Base model to customize |
+| `PARAMETER temperature` | Creativity (0.0-1.0) |
+| `PARAMETER top_p` | Vocabulary diversity |
+| `PARAMETER num_ctx` | Context window size |
+| `SYSTEM` | Base personality prompt |
+
+Changes require re-running `ollama create` to take effect.
+
+### Multiple Model Variants
+
+Create different models for different use cases:
+
+```bash
+ollama create joi -f Modelfile.joi           # Default personality
+ollama create joi-creative -f Modelfile.creative  # More creative
+ollama create joi-formal -f Modelfile.formal      # Business-like
+```
+
+## Per-User/Group Model Selection
+
+Different users or groups can use different models via `.model` files.
+
+### Directory Structure
+
+```
+/var/lib/joi/prompts/
+├── default.txt              # Default prompt (fallback)
+├── default.model            # Default model (optional)
+├── users/
+│   ├── +1234567890.txt      # User's extra prompt (optional)
+│   └── +1234567890.model    # User's model: joi-creative
+└── groups/
+    ├── ABC123.txt           # Group's extra prompt (optional)
+    └── ABC123.model         # Group's model: joi-formal
+```
+
+### Model/Prompt Combinations
+
+| Has .model? | Has .txt? | Result |
+|-------------|-----------|--------|
+| No | No | Default model + default prompt |
+| No | Yes | Default model + user's prompt |
+| Yes | No | User's model + NO prompt (Modelfile handles it) |
+| Yes | Yes | User's model + user's prompt (additions) |
+
+### Example Setup
+
+```bash
+# User gets creative model (Modelfile handles personality)
+echo "joi-creative" > /var/lib/joi/prompts/users/+1234567890.model
+
+# Group gets formal model with extra context
+echo "joi-formal" > /var/lib/joi/prompts/groups/ABC123.model
+echo "This is a work group. Keep responses professional." > /var/lib/joi/prompts/groups/ABC123.txt
+```
+
 ## Endpoints
 
 ### Health Check

@@ -1,25 +1,63 @@
 # Joi Custom Model - Example Template
-# Copy to Modelfile and customize, then:
-# Build: docker exec joi-brain ollama create joi -f /opt/joi/execution/joi/ollama/Modelfile
-# Use: JOI_OLLAMA_MODEL=joi
+#
+# USAGE:
+#   1. Copy to Modelfile (without .example)
+#   2. Customize parameters and SYSTEM prompt
+#   3. Build: docker exec joi-brain ollama create joi -f /opt/joi/execution/joi/ollama/Modelfile
+#   4. Test:  docker exec -it joi-brain ollama run joi "Hey"
+#   5. Use:   Set JOI_OLLAMA_MODEL=joi or create .model files for per-user selection
+#
+# UPDATING:
+#   If you change this file, re-run step 3 to "rebake" the model.
+#   Changes don't apply until you recreate the model.
+#
+# MULTIPLE VARIANTS:
+#   You can create multiple models from different Modelfiles:
+#     ollama create joi-creative -f Modelfile.creative
+#     ollama create joi-formal -f Modelfile.formal
+#   Then assign per-user via .model files (see README.md)
 
 FROM mannix/llama3.1-8b-abliterated
 
-# --- Parameters ---
+# --- Parameters (baked into model) ---
+
+# Temperature: creativity level
+#   0.0 = deterministic, always same output
+#   0.7 = balanced (good default)
+#   1.0 = very creative/random
 PARAMETER temperature 0.8
+
+# Top-p (nucleus sampling): vocabulary diversity
+#   Lower = more focused word choices
+#   Higher = more diverse vocabulary
 PARAMETER top_p 0.9
+
+# Context window: how many tokens the model can "see"
+#   Higher = more conversation history, but slower and more VRAM
+#   4096 is good for GTX 1650 (4GB VRAM)
 PARAMETER num_ctx 4096
+
+# Stop sequences: model stops generating when it sees these
 PARAMETER stop "<|eot_id|>"
 PARAMETER stop "<|end_of_text|>"
 
-# --- System Prompt ---
-# Customize this for your Joi's personality
+# --- System Prompt (baked into model) ---
+#
+# This is the base personality. It gets baked in and doesn't need
+# to be sent with each request (faster, cleaner).
+#
+# Per-user .txt files can ADD to this, but if you use a Modelfile
+# you typically don't need separate prompt files.
 
 SYSTEM """
 Your system prompt goes here.
 
-This can be multiple paragraphs.
-Define personality, behavior, what to do and not do.
+This can be multiple paragraphs - as long as you need.
+Define:
+- Who the AI is (personality, name, traits)
+- How it communicates (tone, style, length)
+- What it does and doesn't do
+- Any special behaviors or rules
 
-This gets baked into the model - not sent each request.
+This gets baked into the model - loaded once, not sent each request.
 """
