@@ -160,6 +160,117 @@ class MessageQueue:
 message_queue = MessageQueue()
 
 
+# --- Background Scheduler ---
+
+class Scheduler:
+    """
+    Background scheduler for periodic tasks (wind/impulse, reminders, etc.)
+
+    Runs as a daemon thread inside the API process.
+    Only runs when the service is up - no external cron needed.
+    """
+
+    def __init__(self, interval_seconds: float = 60.0, startup_delay: float = 10.0):
+        self._interval = interval_seconds
+        self._startup_delay = startup_delay
+        self._thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._running = False
+        self._last_tick: Optional[float] = None
+        self._tick_count = 0
+        self._error_count = 0
+
+    def start(self):
+        """Start the scheduler thread."""
+        if self._thread is not None:
+            return
+        self._stop_event.clear()
+        self._running = True
+        self._thread = threading.Thread(target=self._scheduler_loop, daemon=True)
+        self._thread.start()
+        logger.info("Scheduler started (interval: %.1fs, startup delay: %.1fs)",
+                    self._interval, self._startup_delay)
+
+    def stop(self):
+        """Stop the scheduler thread gracefully."""
+        if not self._running:
+            return
+        self._running = False
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=5.0)
+            self._thread = None
+        logger.info("Scheduler stopped (ticks: %d, errors: %d)",
+                    self._tick_count, self._error_count)
+
+    def _scheduler_loop(self):
+        """Main scheduler loop."""
+        # Wait for startup delay to let service stabilize
+        if self._startup_delay > 0:
+            logger.debug("Scheduler waiting %.1fs for startup...", self._startup_delay)
+            if self._stop_event.wait(self._startup_delay):
+                return  # Stop requested during startup delay
+
+        logger.info("Scheduler active, first tick in %.1fs", self._interval)
+
+        while self._running:
+            # Wait for interval (or stop signal)
+            if self._stop_event.wait(self._interval):
+                break  # Stop requested
+
+            if not self._running:
+                break
+
+            # Execute tick with error isolation
+            try:
+                self._tick()
+                self._tick_count += 1
+                self._last_tick = time.time()
+            except Exception as e:
+                self._error_count += 1
+                logger.error("Scheduler tick error (%d total): %s", self._error_count, e)
+                # Continue running - don't let errors kill the scheduler
+
+    def _tick(self):
+        """
+        Single scheduler tick - check for pending work.
+
+        TODO: Implement actual logic:
+        - Check for due reminders/tasks
+        - Calculate impulse scores for wind
+        - Send proactive messages if thresholds met
+        """
+        logger.debug("Scheduler tick #%d", self._tick_count + 1)
+
+        # Placeholder for future implementation:
+        # - self._check_reminders()
+        # - self._check_wind_impulse()
+
+    def get_status(self) -> dict:
+        """Get scheduler status for health endpoint."""
+        return {
+            "running": self._running,
+            "interval_seconds": self._interval,
+            "tick_count": self._tick_count,
+            "error_count": self._error_count,
+            "last_tick": self._last_tick,
+        }
+
+
+# Scheduler settings
+SCHEDULER_ENABLED = os.getenv("JOI_SCHEDULER_ENABLED", "1") == "1"
+SCHEDULER_INTERVAL = float(os.getenv("JOI_SCHEDULER_INTERVAL", "60"))
+SCHEDULER_STARTUP_DELAY = float(os.getenv("JOI_SCHEDULER_STARTUP_DELAY", "10"))
+
+# Global scheduler instance (created only if enabled)
+scheduler: Optional[Scheduler] = None
+if SCHEDULER_ENABLED:
+    scheduler = Scheduler(
+        interval_seconds=SCHEDULER_INTERVAL,
+        startup_delay=SCHEDULER_STARTUP_DELAY,
+    )
+
+
 settings = load_settings()
 
 app = FastAPI(title="joi-api", version="0.1.0")
@@ -436,17 +547,20 @@ async def hmac_verification_middleware(request: Request, call_next):
 
 @app.on_event("startup")
 def startup_event():
-    """Start the message queue worker on app startup."""
+    """Start the message queue worker and scheduler on app startup."""
     message_queue.start()
-    if HMAC_ENABLED:
-        logger.info("Joi API started with message queue (HMAC enabled)")
-    else:
-        logger.warning("Joi API started with message queue (HMAC DISABLED - set JOI_HMAC_SECRET)")
+    if scheduler:
+        scheduler.start()
+    hmac_status = "HMAC enabled" if HMAC_ENABLED else "HMAC DISABLED - set JOI_HMAC_SECRET"
+    scheduler_status = f"scheduler enabled (interval: {SCHEDULER_INTERVAL}s)" if scheduler else "scheduler disabled"
+    logger.info("Joi API started: %s, %s", hmac_status, scheduler_status)
 
 
 @app.on_event("shutdown")
 def shutdown_event():
-    """Stop the message queue worker on app shutdown."""
+    """Stop the message queue worker and scheduler on app shutdown."""
+    if scheduler:
+        scheduler.stop()
     message_queue.stop()
     logger.info("Joi API shutting down")
 
@@ -477,7 +591,8 @@ def health():
         },
         "queue": {
             "size": message_queue.get_queue_size(),
-        }
+        },
+        "scheduler": scheduler.get_status() if scheduler else {"running": False}
     }
 
 

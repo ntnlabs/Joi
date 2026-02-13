@@ -65,6 +65,14 @@ Prompts directory structure:
 | `JOI_RAG_ENABLED` | `1` | Enable RAG knowledge retrieval |
 | `JOI_RAG_MAX_TOKENS` | `500` | Max tokens for RAG context |
 
+### Scheduler (Wind/Tasks)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_SCHEDULER_ENABLED` | `1` | Enable background scheduler |
+| `JOI_SCHEDULER_INTERVAL` | `60` | Tick interval in seconds |
+| `JOI_SCHEDULER_STARTUP_DELAY` | `10` | Seconds to wait before first tick |
+
 ---
 
 ## Mesh Signal Worker (`/etc/default/mesh-signal-worker`)
