@@ -83,7 +83,15 @@ This PoC aims to demonstrate Joi's proactive, 'living' behavior in a controlled 
 2.  **Joi API Basics:** Implement the Python API to receive requests from the Mesh VM.
 3.  **Minimal Policy Engine:** Create a basic `policy/engine.py` that is called by the Joi API on every incoming request to enforce:
     *   A global rate limit on incoming messages (e.g., 120/hour).
-    *   Input size validation to prevent overly long messages (e.g., 4096 characters at the Joi API, acknowledging Signal's upstream 1500 character cap).
+    *   Input size validation at each layer (see table below).
+
+**Input Validation Limits:**
+
+| Layer | Component | Max Length | Notes |
+|-------|-----------|------------|-------|
+| Signal | Client | 1500 chars | Signal's hard limit |
+| Mesh | policy.py | 1500 chars | Matches Signal cap, configurable via `max_text_length` in policy.json |
+| Joi | API | 4096 chars | Defense-in-depth, allows for future non-Signal channels |
 4.  **LLM Integration:** Connect the API to the Ollama backend, including robust error handling for timeouts or failures.
 5.  **Health Check Endpoint:** Add a simple `/health` endpoint to both the Mesh and Joi API servers.
 6.  **Signal Integration:** Connect the Mesh proxy to the hardened `signal-cli` daemon socket.
@@ -233,10 +241,13 @@ The decision regarding the ultimate secure mobile communication platform will be
 
 - **Joi VM (172.22.22.2):**
   - Ollama in Docker with GPU passthrough (GTX 1650)
-  - Model: llama3
+  - Model: mannix/llama3.1-8b-abliterated (configurable via `JOI_OLLAMA_MODEL`)
+  - Context window configurable via `JOI_OLLAMA_NUM_CTX`
   - FastAPI server on port 8443
-  - System prompt defines Joi identity
-  - No conversation context yet (stateless)
+  - SQLCipher encrypted memory store
+  - Per-user/per-group system prompts
+  - Conversation context (configurable message count)
+  - HMAC authentication with replay protection
 
 **Key Files:**
 - `execution/mesh/proxy/signal_worker.py` - unified inbound/outbound worker
@@ -248,7 +259,7 @@ The decision regarding the ultimate secure mobile communication platform will be
 - signal-cli 0.x (JSON-RPC stdio mode)
 - Ollama (Docker)
 
-**Known Limitations:**
-- No conversation memory (each message independent)
-- Single hardcoded system prompt (no per-user/per-group customization)
-- Typing indicators logged as "Skipping unsupported Signal event" (expected)
+**Known Limitations (resolved):**
+- ~~No conversation memory~~ → SQLCipher memory store with context
+- ~~Single hardcoded system prompt~~ → Per-user/per-group prompts via JOI_PROMPTS_DIR
+- Typing indicators logged as "Skipping unsupported Signal event" (expected, by design)
