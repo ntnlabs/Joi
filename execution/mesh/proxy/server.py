@@ -1,3 +1,12 @@
+"""
+LEGACY - DO NOT USE
+
+This file is deprecated. Use signal_worker.py instead.
+signal_worker.py handles both inbound and outbound on port 8444.
+
+This file is kept for reference only and will be removed in a future cleanup.
+"""
+
 import logging
 import os
 import time
