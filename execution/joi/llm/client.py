@@ -86,21 +86,23 @@ class OllamaClient:
                 error=str(exc),
             )
 
-    def chat(self, messages: list, system: Optional[str] = None) -> LLMResponse:
+    def chat(self, messages: list, system: Optional[str] = None, model: Optional[str] = None) -> LLMResponse:
         """
         Chat completion with message history.
 
         Args:
             messages: List of {"role": "user"|"assistant", "content": "..."}
-            system: Optional system prompt
+            system: Optional system prompt (None = don't send, use model's baked-in prompt)
+            model: Optional model override (None = use client's default model)
 
         Returns:
             LLMResponse with the generated text
         """
         url = f"{self.base_url}/api/chat"
+        use_model = model or self.model
 
         payload = {
-            "model": self.model,
+            "model": use_model,
             "messages": messages,
             "stream": False,
         }
@@ -121,7 +123,7 @@ class OllamaClient:
             message = data.get("message", {})
             return LLMResponse(
                 text=message.get("content", ""),
-                model=data.get("model", self.model),
+                model=data.get("model", use_model),
                 done=data.get("done", True),
             )
 
@@ -129,7 +131,7 @@ class OllamaClient:
             logger.error("Ollama chat timed out")
             return LLMResponse(
                 text="",
-                model=self.model,
+                model=use_model,
                 done=False,
                 error="timeout",
             )
@@ -137,7 +139,7 @@ class OllamaClient:
             logger.error("Ollama chat HTTP error: %s", exc)
             return LLMResponse(
                 text="",
-                model=self.model,
+                model=use_model,
                 done=False,
                 error=f"http_error: {exc.response.status_code}",
             )
@@ -145,7 +147,7 @@ class OllamaClient:
             logger.error("Ollama chat error: %s", exc)
             return LLMResponse(
                 text="",
-                model=self.model,
+                model=use_model,
                 done=False,
                 error=str(exc),
             )
