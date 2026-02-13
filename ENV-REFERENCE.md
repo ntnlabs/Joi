@@ -65,6 +65,12 @@ Prompts directory structure:
 | `JOI_RAG_ENABLED` | `1` | Enable RAG knowledge retrieval |
 | `JOI_RAG_MAX_TOKENS` | `500` | Max tokens for RAG context |
 
+### Time Awareness
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_TIME_AWARENESS` | `0` | Inject current datetime into system prompt |
+
 ### Scheduler (Wind/Tasks)
 
 | Variable | Default | Description |
