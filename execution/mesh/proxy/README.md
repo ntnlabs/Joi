@@ -96,7 +96,7 @@ Set to enable forwarding from the signal worker:
 
 - `MESH_ENABLE_FORWARD=1`
 - `MESH_JOI_INBOUND_URL` (default: http://joi:8443/api/v1/message/inbound)
-- `MESH_FORWARD_TIMEOUT` (default: 5 seconds)
+- `MESH_FORWARD_TIMEOUT` (default: 120 seconds)
 
 ## Run Worker as systemd (`signal` user)
 
