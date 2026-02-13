@@ -1,0 +1,25 @@
+# Joi Custom Model - Example Template
+# Copy to Modelfile and customize, then:
+# Build: docker exec joi-brain ollama create joi -f /opt/joi/execution/joi/ollama/Modelfile
+# Use: JOI_OLLAMA_MODEL=joi
+
+FROM mannix/llama3.1-8b-abliterated
+
+# --- Parameters ---
+PARAMETER temperature 0.8
+PARAMETER top_p 0.9
+PARAMETER num_ctx 4096
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "<|end_of_text|>"
+
+# --- System Prompt ---
+# Customize this for your Joi's personality
+
+SYSTEM """
+Your system prompt goes here.
+
+This can be multiple paragraphs.
+Define personality, behavior, what to do and not do.
+
+This gets baked into the model - not sent each request.
+"""
