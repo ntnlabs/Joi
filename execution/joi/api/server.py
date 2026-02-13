@@ -7,6 +7,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
 
 # Add api/ and parent dirs to path for imports
@@ -312,6 +313,9 @@ CONSOLIDATION_ARCHIVE = os.getenv("JOI_CONSOLIDATION_ARCHIVE", "0") == "1"  # De
 # RAG settings
 RAG_ENABLED = os.getenv("JOI_RAG_ENABLED", "1") == "1"  # Default: enabled
 RAG_MAX_TOKENS = int(os.getenv("JOI_RAG_MAX_TOKENS", "500"))  # Max tokens for RAG context
+
+# Time awareness - inject current datetime into system prompt
+TIME_AWARENESS_ENABLED = os.getenv("JOI_TIME_AWARENESS", "0") == "1"  # Default: disabled
 
 # Response cooldown - minimum seconds between sends to same conversation
 RESPONSE_COOLDOWN_DM_SECONDS = float(os.getenv("JOI_RESPONSE_COOLDOWN_SECONDS", "5.0"))
@@ -903,6 +907,12 @@ def _build_enriched_prompt(base_prompt: str, user_message: Optional[str] = None,
         if rag_context:
             parts.append("\n\n" + rag_context)
             logger.debug("Added RAG context for query: %s", user_message[:50])
+
+    # Add current datetime if time awareness is enabled
+    if TIME_AWARENESS_ENABLED:
+        now = datetime.now()
+        time_str = now.strftime("Current date and time: %A, %B %d, %Y, %I:%M %p")
+        parts.append(f"\n\n{time_str}")
 
     return "".join(parts)
 
