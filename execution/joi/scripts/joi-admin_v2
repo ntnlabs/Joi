@@ -108,7 +108,8 @@ ensure_db_mode() {
     fi
 
     if command -v sqlite3 >/dev/null 2>&1; then
-        if sqlite3 "$MEMORY_DB" "SELECT 1;" >/dev/null 2>&1; then
+        # Probe schema access (not just SELECT 1), so encrypted DBs are rejected.
+        if sqlite3 "$MEMORY_DB" "SELECT count(*) FROM sqlite_master WHERE type='table';" >/dev/null 2>&1; then
             DB_MODE="sqlite3"
             return
         fi
@@ -120,7 +121,7 @@ ensure_db_mode() {
             if [[ -n "$DB_KEY" ]]; then
                 if "$SQLCIPHER_BIN" "$MEMORY_DB" <<EOF >/dev/null 2>&1
 PRAGMA key = '$DB_KEY';
-SELECT 1;
+SELECT count(*) FROM sqlite_master WHERE type='table';
 EOF
                 then
                     DB_MODE="sqlcipher_key"
@@ -130,7 +131,7 @@ EOF
         fi
 
         # Fallback: sqlcipher can also open plaintext DBs.
-        if "$SQLCIPHER_BIN" "$MEMORY_DB" "SELECT 1;" >/dev/null 2>&1; then
+        if "$SQLCIPHER_BIN" "$MEMORY_DB" "SELECT count(*) FROM sqlite_master WHERE type='table';" >/dev/null 2>&1; then
             DB_MODE="sqlcipher_plain"
             return
         fi
