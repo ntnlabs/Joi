@@ -38,6 +38,12 @@ COMMANDS:
         --category CAT       Filter by category
         --limit N            Max rows (default: 100)
 
+  list-conversation-ids
+      Show known conversation IDs with row counts.
+      Options:
+        --table T            One of: all, messages, user_facts, context_summaries (default: all)
+        --limit N            Max rows (default: 200)
+
   delete
       Delete facts by ID (preferred) or selector.
       Options:
@@ -182,6 +188,17 @@ validate_confidence() {
     awk "BEGIN{exit !($value >= 0 && $value <= 1)}" || error "Confidence must be between 0 and 1"
 }
 
+validate_table() {
+    local table="$1"
+    case "$table" in
+        all|messages|user_facts|context_summaries)
+            ;;
+        *)
+            error "Invalid --table value: $table"
+            ;;
+    esac
+}
+
 list_facts() {
     local conversation="$1"
     local category="$2"
@@ -224,6 +241,97 @@ LIMIT $limit;
     fi
 
     echo -e "id\tconversation_id\tcategory\tkey\tvalue\tconfidence\tsource\tlearned_at\tupdated_at"
+    echo "$rows"
+}
+
+list_conversation_ids() {
+    local table="$1"
+    local limit="$2"
+
+    local sql=""
+    case "$table" in
+        all)
+            sql="
+SELECT
+  conversation_id,
+  SUM(messages_count) AS messages,
+  SUM(facts_count) AS facts,
+  SUM(summaries_count) AS summaries,
+  (SUM(messages_count) + SUM(facts_count) + SUM(summaries_count)) AS total
+FROM (
+  SELECT conversation_id, COUNT(*) AS messages_count, 0 AS facts_count, 0 AS summaries_count
+  FROM messages
+  WHERE conversation_id IS NOT NULL AND conversation_id != ''
+  GROUP BY conversation_id
+  UNION ALL
+  SELECT conversation_id, 0, COUNT(*), 0
+  FROM user_facts
+  WHERE conversation_id IS NOT NULL AND conversation_id != ''
+  GROUP BY conversation_id
+  UNION ALL
+  SELECT conversation_id, 0, 0, COUNT(*)
+  FROM context_summaries
+  WHERE conversation_id IS NOT NULL AND conversation_id != ''
+  GROUP BY conversation_id
+) t
+GROUP BY conversation_id
+ORDER BY total DESC, conversation_id
+LIMIT $limit;
+"
+            ;;
+        messages)
+            sql="
+SELECT conversation_id, COUNT(*) AS messages
+FROM messages
+WHERE conversation_id IS NOT NULL AND conversation_id != ''
+GROUP BY conversation_id
+ORDER BY messages DESC, conversation_id
+LIMIT $limit;
+"
+            ;;
+        user_facts)
+            sql="
+SELECT conversation_id, COUNT(*) AS facts
+FROM user_facts
+WHERE conversation_id IS NOT NULL AND conversation_id != ''
+GROUP BY conversation_id
+ORDER BY facts DESC, conversation_id
+LIMIT $limit;
+"
+            ;;
+        context_summaries)
+            sql="
+SELECT conversation_id, COUNT(*) AS summaries
+FROM context_summaries
+WHERE conversation_id IS NOT NULL AND conversation_id != ''
+GROUP BY conversation_id
+ORDER BY summaries DESC, conversation_id
+LIMIT $limit;
+"
+            ;;
+    esac
+
+    local rows
+    rows=$(db_exec "$sql")
+    if [[ -z "$rows" ]]; then
+        echo "No conversation IDs found."
+        return
+    fi
+
+    case "$table" in
+        all)
+            echo -e "conversation_id\tmessages\tfacts\tsummaries\ttotal"
+            ;;
+        messages)
+            echo -e "conversation_id\tmessages"
+            ;;
+        user_facts)
+            echo -e "conversation_id\tfacts"
+            ;;
+        context_summaries)
+            echo -e "conversation_id\tsummaries"
+            ;;
+    esac
     echo "$rows"
 }
 
@@ -388,6 +496,37 @@ cmd_list() {
     list_facts "$conversation" "$category" "$limit"
 }
 
+cmd_list_conversation_ids() {
+    local table="all"
+    local limit="200"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --table)
+                [[ -n "${2:-}" ]] || error "--table requires a value"
+                table="$2"
+                shift 2
+                ;;
+            --limit)
+                [[ -n "${2:-}" ]] || error "--limit requires a value"
+                limit="$2"
+                shift 2
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                error "Unknown option for list-conversation-ids: $1"
+                ;;
+        esac
+    done
+
+    validate_table "$table"
+    validate_limit "$limit"
+    list_conversation_ids "$table" "$limit"
+}
+
 cmd_delete() {
     local fact_id=""
     local conversation=""
@@ -514,9 +653,11 @@ main() {
         help|--help|-h)
             usage
             ;;
-        list|delete|update)
+        list|list-conversation-ids|delete|update)
             check_root
-            "cmd_$cmd" "$@"
+            local fn_cmd="$cmd"
+            fn_cmd=${fn_cmd//-/_}
+            "cmd_$fn_cmd" "$@"
             ;;
         *)
             error "Unknown command: $cmd"
