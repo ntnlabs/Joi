@@ -46,6 +46,11 @@ DATA FLAGS (what to delete):
     --knowledge         Delete RAG knowledge chunks
     --all-data          All of the above (contexts + facts + knowledge)
 
+RESET FLAGS:
+    --reset-counters    Reset AUTOINCREMENT counters (sqlite_sequence) for
+                        messages, user_facts, context_summaries, knowledge_chunks
+                        Requires global full-memory purge (no --conversation)
+
 SCOPE FLAGS (limit deletion):
     --conversation ID   Only affect specific conversation (phone/group ID)
                         Without this, affects ALL conversations
@@ -65,6 +70,7 @@ EXAMPLES:
     joi-admin purge --contexts --conversation +1234    # Clear one conversation (//reload)
     joi-admin purge --contexts --facts --conversation +1234  # //restart equivalent
     joi-admin purge --all-data --conversation +1234    # //reset equivalent
+    joi-admin purge --all-data --reset-counters        # Full data purge + ID counters reset
     joi-admin purge --all-data --all-keys              # Customer handoff
     joi-admin purge --everything --nebula-ca           # True factory reset
 
@@ -332,11 +338,44 @@ SQL
     info "  System state reset"
 }
 
+reset_autoincrement_counters() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        return
+    fi
+
+    echo "Resetting AUTOINCREMENT counters"
+
+    local non_empty_tables
+    non_empty_tables=$(db_exec "$(cat << 'SQL'
+SELECT table_name || ' (' || row_count || ' rows)'
+FROM (
+    SELECT 'messages' AS table_name, COUNT(*) AS row_count FROM messages
+    UNION ALL
+    SELECT 'user_facts', COUNT(*) FROM user_facts
+    UNION ALL
+    SELECT 'context_summaries', COUNT(*) FROM context_summaries
+    UNION ALL
+    SELECT 'knowledge_chunks', COUNT(*) FROM knowledge_chunks
+) t
+WHERE row_count > 0
+ORDER BY table_name;
+SQL
+)")
+
+    if [[ -n "${non_empty_tables//[$'\t\r\n ']/}" ]]; then
+        error "--reset-counters requires empty memory tables, found data in: $non_empty_tables"
+    fi
+
+    db_exec "DELETE FROM sqlite_sequence WHERE name IN ('messages','user_facts','context_summaries','knowledge_chunks');"
+    info "  AUTOINCREMENT counters reset"
+}
+
 # Main purge command
 cmd_purge() {
     local do_contexts=false
     local do_facts=false
     local do_knowledge=false
+    local do_reset_counters=false
     local do_hmac=false
     local do_nebula_keys=false
     local do_nebula_ca=false
@@ -361,6 +400,10 @@ cmd_purge() {
                 do_contexts=true
                 do_facts=true
                 do_knowledge=true
+                shift
+                ;;
+            --reset-counters)
+                do_reset_counters=true
                 shift
                 ;;
             --conversation)
@@ -403,7 +446,7 @@ cmd_purge() {
     done
 
     # Check if anything to do
-    if ! $do_contexts && ! $do_facts && ! $do_knowledge && ! $do_hmac && ! $do_nebula_keys && ! $do_nebula_ca; then
+    if ! $do_contexts && ! $do_facts && ! $do_knowledge && ! $do_hmac && ! $do_nebula_keys && ! $do_nebula_ca && ! $do_reset_counters; then
         echo "No purge flags specified. Nothing to do."
         echo ""
         echo "Run 'joi-admin purge --help' for usage."
@@ -415,12 +458,23 @@ cmd_purge() {
         error "--nebula-ca requires --nebula-keys or --everything"
     fi
 
+    # Counter reset safety checks
+    if $do_reset_counters; then
+        if [[ -n "$conversation" ]]; then
+            error "--reset-counters cannot be used with --conversation"
+        fi
+        if ! $do_contexts || ! $do_facts || ! $do_knowledge; then
+            error "--reset-counters requires full memory purge: --all-data (or --contexts --facts --knowledge)"
+        fi
+    fi
+
     # Confirm destructive action
     echo ""
     echo "=== PURGE SUMMARY ==="
     $do_contexts && echo "  - Contexts (messages, summaries)"
     $do_facts && echo "  - User facts"
     $do_knowledge && echo "  - Knowledge chunks"
+    $do_reset_counters && echo "  - Reset AUTOINCREMENT counters"
     $do_hmac && echo "  - HMAC key (regenerate)"
     $do_nebula_keys && echo "  - Nebula host keys"
     $do_nebula_ca && echo "  - Nebula CA certificate"
@@ -441,6 +495,7 @@ cmd_purge() {
     $do_contexts && purge_contexts "$conversation"
     $do_facts && purge_facts "$conversation"
     $do_knowledge && purge_knowledge
+    $do_reset_counters && reset_autoincrement_counters
 
     # Reset system state if purging all data
     if $do_contexts && $do_facts && [[ -z "$conversation" ]]; then
