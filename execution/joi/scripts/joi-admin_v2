@@ -193,11 +193,16 @@ purge_contexts() {
         conversation_escaped=$(sql_escape_literal "$conversation")
         echo "Purging contexts for conversation: $conversation"
         count=$(db_scalar "SELECT COUNT(*) FROM messages WHERE conversation_id = '$conversation_escaped';")
+        # Break self-referential reply chains before deleting parent rows.
+        # Without this, SQLite can fail with FOREIGN KEY constraint errors.
+        db_exec "UPDATE messages SET reply_to_id = NULL WHERE reply_to_id IN (SELECT message_id FROM messages WHERE conversation_id = '$conversation_escaped');"
         db_exec "DELETE FROM messages WHERE conversation_id = '$conversation_escaped';"
         db_exec "DELETE FROM context_summaries WHERE conversation_id = '$conversation_escaped';"
     else
         echo "Purging ALL contexts"
         count=$(db_scalar "SELECT COUNT(*) FROM messages;")
+        # Clear reply links first to avoid FK failures on bulk delete.
+        db_exec "UPDATE messages SET reply_to_id = NULL WHERE reply_to_id IS NOT NULL;"
         db_exec "DELETE FROM messages;"
         db_exec "DELETE FROM context_summaries;"
     fi
