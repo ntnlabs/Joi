@@ -244,6 +244,60 @@ LIMIT $limit;
     echo "$rows"
 }
 
+format_centered_table() {
+    local header="$1"
+    local rows="$2"
+
+    printf "%s\n%s\n" "$header" "$rows" | awk -F $'\t' '
+function center(s, width, pad, left, right) {
+    pad = width - length(s)
+    if (pad <= 0) {
+        return s
+    }
+    left = int(pad / 2)
+    right = pad - left
+    return sprintf("%*s%s%*s", left, "", s, right, "")
+}
+NR == 1 {
+    cols = NF
+    for (i = 1; i <= cols; i++) {
+        headers[i] = $i
+        widths[i] = length($i)
+    }
+    next
+}
+{
+    row_count++
+    for (i = 1; i <= cols; i++) {
+        value = (i <= NF ? $i : "")
+        data[row_count, i] = value
+        if (length(value) > widths[i]) {
+            widths[i] = length(value)
+        }
+    }
+}
+END {
+    sep = "  "
+    line = ""
+    for (i = 1; i <= cols; i++) {
+        value = (i == cols ? headers[i] : center(headers[i], widths[i]))
+        line = line value (i < cols ? sep : "")
+    }
+    print line
+
+    for (r = 1; r <= row_count; r++) {
+        line = ""
+        for (i = 1; i <= cols; i++) {
+            value = data[r, i]
+            value = (i == cols ? value : center(value, widths[i]))
+            line = line value (i < cols ? sep : "")
+        }
+        print line
+    }
+}
+'
+}
+
 list_conversation_ids() {
     local table="$1"
     local limit="$2"
@@ -334,21 +388,23 @@ LIMIT $limit;
         return
     fi
 
+    local header=""
     case "$table" in
         all)
-            echo -e "messages\tfacts\tsummaries\ttotal\tconversation_id"
+            header=$'messages\tfacts\tsummaries\ttotal\tconversation_id'
             ;;
         messages)
-            echo -e "messages\tconversation_id"
+            header=$'messages\tconversation_id'
             ;;
         user_facts)
-            echo -e "facts\tconversation_id"
+            header=$'facts\tconversation_id'
             ;;
         context_summaries)
-            echo -e "summaries\tconversation_id"
+            header=$'summaries\tconversation_id'
             ;;
     esac
-    echo "$rows"
+
+    format_centered_table "$header" "$rows"
 }
 
 delete_by_id() {
