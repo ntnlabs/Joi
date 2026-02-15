@@ -26,7 +26,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ HMAC + nonce authentication (defense-in-depth)
 - ✅ UFW firewalls (deny-by-default on both VMs)
 - ✅ Joi VM has no WAN egress (isolated network)
-- ✅ GPU passthrough (RTX 3060 via Thunderbolt)
+- ✅ GPU passthrough (AI accelerator card via Thunderbolt)
 
 ### Messaging
 - ✅ Signal integration (send/receive via signal-cli JSON-RPC)
@@ -64,7 +64,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - **LLM Services**: Isolated VMs for image generation, web search, and more
 - **Two-layer security**: Protection Layer (automation) + LLM Agent Layer (decisions)
 - **Behavior modes**: Companion (proactive) or Assistant (request-response only)
-- **GPU accelerated**: RTX 3060 via Thunderbolt eGPU
+- **GPU accelerated**: AI accelerator card via Thunderbolt eGPU
 
 ## Architecture
 
