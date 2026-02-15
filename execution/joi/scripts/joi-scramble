@@ -253,11 +253,11 @@ list_conversation_ids() {
         all)
             sql="
 SELECT
-  conversation_id,
   SUM(messages_count) AS messages,
   SUM(facts_count) AS facts,
   SUM(summaries_count) AS summaries,
-  (SUM(messages_count) + SUM(facts_count) + SUM(summaries_count)) AS total
+  (SUM(messages_count) + SUM(facts_count) + SUM(summaries_count)) AS total,
+  conversation_id
 FROM (
   SELECT conversation_id, COUNT(*) AS messages_count, 0 AS facts_count, 0 AS summaries_count
   FROM messages
@@ -281,7 +281,7 @@ LIMIT $limit;
             ;;
         messages)
             sql="
-SELECT conversation_id, COUNT(*) AS messages
+SELECT COUNT(*) AS messages, conversation_id
 FROM messages
 WHERE conversation_id IS NOT NULL AND conversation_id != ''
 GROUP BY conversation_id
@@ -291,7 +291,7 @@ LIMIT $limit;
             ;;
         user_facts)
             sql="
-SELECT conversation_id, COUNT(*) AS facts
+SELECT COUNT(*) AS facts, conversation_id
 FROM user_facts
 WHERE conversation_id IS NOT NULL AND conversation_id != ''
 GROUP BY conversation_id
@@ -301,7 +301,7 @@ LIMIT $limit;
             ;;
         context_summaries)
             sql="
-SELECT conversation_id, COUNT(*) AS summaries
+SELECT COUNT(*) AS summaries, conversation_id
 FROM context_summaries
 WHERE conversation_id IS NOT NULL AND conversation_id != ''
 GROUP BY conversation_id
@@ -313,6 +313,22 @@ LIMIT $limit;
 
     local rows
     rows=$(db_exec "$sql")
+
+    # sqlcipher may emit a standalone "ok" status line before real query output
+    # (from PRAGMA key). Drop only that exact first-line artifact.
+    if [[ -n "$rows" ]]; then
+        local first_line
+        first_line=$(printf "%s\n" "$rows" | head -n 1)
+        if [[ "$first_line" == "ok" ]]; then
+            local rest
+            rest=$(printf "%s\n" "$rows" | tail -n +2)
+            # Only strip when remaining output looks like tabular query rows.
+            if printf "%s\n" "$rest" | grep -q $'\t'; then
+                rows="$rest"
+            fi
+        fi
+    fi
+
     if [[ -z "$rows" ]]; then
         echo "No conversation IDs found."
         return
@@ -320,16 +336,16 @@ LIMIT $limit;
 
     case "$table" in
         all)
-            echo -e "conversation_id\tmessages\tfacts\tsummaries\ttotal"
+            echo -e "messages\tfacts\tsummaries\ttotal\tconversation_id"
             ;;
         messages)
-            echo -e "conversation_id\tmessages"
+            echo -e "messages\tconversation_id"
             ;;
         user_facts)
-            echo -e "conversation_id\tfacts"
+            echo -e "facts\tconversation_id"
             ;;
         context_summaries)
-            echo -e "conversation_id\tsummaries"
+            echo -e "summaries\tconversation_id"
             ;;
     esac
     echo "$rows"
