@@ -261,6 +261,7 @@ purge_facts() {
 # Purge knowledge chunks
 purge_knowledge() {
     local count=0
+    local delete_err=""
 
     if [[ ! -f "$MEMORY_DB" ]]; then
         warn "Memory database not found: $MEMORY_DB"
@@ -269,9 +270,26 @@ purge_knowledge() {
 
     echo "Purging knowledge chunks"
     count=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks;")
-    db_exec "DELETE FROM knowledge_chunks;"
-    # Also clear FTS index if it exists
-    db_exec "DELETE FROM knowledge_fts;" 2>/dev/null || true
+
+    # Primary path: delete chunks directly.
+    # Fallback path: some sqlcipher builds lack FTS5 module and fail via triggers.
+    if ! delete_err=$(db_exec "DELETE FROM knowledge_chunks;" 2>&1); then
+        if printf "%s" "$delete_err" | grep -qi "no such module: fts5"; then
+            warn "FTS5 module unavailable in current sqlcipher; dropping knowledge FTS triggers and retrying."
+            db_exec "DROP TRIGGER IF EXISTS knowledge_ai;"
+            db_exec "DROP TRIGGER IF EXISTS knowledge_ad;"
+            db_exec "DROP TRIGGER IF EXISTS knowledge_au;"
+            db_exec "DELETE FROM knowledge_chunks;"
+        else
+            printf "%s\n" "$delete_err" >&2
+            error "Failed to purge knowledge chunks"
+        fi
+    fi
+
+    # Also clear FTS index if available in this engine build.
+    if ! db_exec "DELETE FROM knowledge_fts;" >/dev/null 2>&1; then
+        warn "Skipping knowledge_fts clear (FTS5 module not available in this sqlcipher build)."
+    fi
 
     info "  Deleted $count knowledge chunks"
 }
