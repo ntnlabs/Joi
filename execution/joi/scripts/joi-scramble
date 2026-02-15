@@ -1,0 +1,527 @@
+#!/bin/bash
+# Joi Scramble Tool - Inspect and surgically manage user facts
+#
+# Usage:
+#   sudo joi-scramble list [--conversation ID] [--category CAT] [--limit N]
+#   sudo joi-scramble delete --id FACT_ID [--yes]
+#   sudo joi-scramble delete --conversation ID --key KEY [--category CAT] [--yes]
+#   sudo joi-scramble update --id FACT_ID [--value TEXT] [--key KEY] [--category CAT] [--confidence 0..1] [--source SRC] [--yes]
+
+set -euo pipefail
+
+SCRIPT_NAME=$(basename "$0")
+MEMORY_DB="${JOI_MEMORY_DB:-/var/lib/joi/memory.db}"
+MEMORY_KEY_FILE="${JOI_MEMORY_KEY_FILE:-/etc/joi/memory.key}"
+SQLCIPHER_BIN="${JOI_SQLCIPHER_BIN:-sqlcipher}"
+
+DB_MODE=""
+DB_KEY=""
+DB_MODE_INITIALIZED=false
+
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+usage() {
+    cat <<EOF
+Joi Scramble Tool
+
+USAGE:
+  $SCRIPT_NAME <command> [options]
+
+COMMANDS:
+  list
+      Show facts (with IDs) for inspection.
+      Options:
+        --conversation ID    Filter by conversation_id
+        --category CAT       Filter by category
+        --limit N            Max rows (default: 100)
+
+  delete
+      Delete facts by ID (preferred) or selector.
+      Options:
+        --id FACT_ID
+        --conversation ID --key KEY [--category CAT]
+        --yes               Skip confirmation prompt
+
+  update
+      Update a fact by ID.
+      Options:
+        --id FACT_ID
+        --value TEXT
+        --key KEY
+        --category CAT
+        --confidence N      Float in range 0..1
+        --source SRC
+        --yes               Skip confirmation prompt
+
+NOTES:
+  - Root required.
+  - Uses JOI_MEMORY_DB (default: /var/lib/joi/memory.db).
+  - Auto-detects sqlite3 vs sqlcipher access.
+EOF
+}
+
+error() {
+    echo -e "${RED}Error: $1${NC}" >&2
+    exit 1
+}
+
+warn() {
+    echo -e "${YELLOW}Warning: $1${NC}" >&2
+}
+
+info() {
+    echo -e "${GREEN}$1${NC}"
+}
+
+check_root() {
+    if [[ $EUID -ne 0 ]]; then
+        error "This script must be run as root (sudo)"
+    fi
+}
+
+sql_escape_literal() {
+    printf "%s" "$1" | sed "s/'/''/g"
+}
+
+ensure_db_mode() {
+    if $DB_MODE_INITIALIZED; then
+        return
+    fi
+    DB_MODE_INITIALIZED=true
+
+    [[ -f "$MEMORY_DB" ]] || error "Memory database not found: $MEMORY_DB"
+
+    if command -v sqlite3 >/dev/null 2>&1; then
+        if sqlite3 "$MEMORY_DB" "SELECT count(*) FROM sqlite_master WHERE type='table';" >/dev/null 2>&1; then
+            DB_MODE="sqlite3"
+            return
+        fi
+    fi
+
+    if command -v "$SQLCIPHER_BIN" >/dev/null 2>&1; then
+        if [[ -f "$MEMORY_KEY_FILE" ]]; then
+            DB_KEY=$(tr -d '\r\n' < "$MEMORY_KEY_FILE")
+            if [[ -n "$DB_KEY" ]]; then
+                if "$SQLCIPHER_BIN" "$MEMORY_DB" <<EOF >/dev/null 2>&1
+PRAGMA key = '$DB_KEY';
+SELECT count(*) FROM sqlite_master WHERE type='table';
+EOF
+                then
+                    DB_MODE="sqlcipher_key"
+                    return
+                fi
+            fi
+        fi
+
+        if "$SQLCIPHER_BIN" "$MEMORY_DB" "SELECT count(*) FROM sqlite_master WHERE type='table';" >/dev/null 2>&1; then
+            DB_MODE="sqlcipher_plain"
+            return
+        fi
+    fi
+
+    error "Cannot open DB ($MEMORY_DB). Check sqlite3/sqlcipher and JOI_MEMORY_KEY_FILE."
+}
+
+db_exec() {
+    local sql="$1"
+    ensure_db_mode
+
+    case "$DB_MODE" in
+        sqlite3)
+            sqlite3 -separator $'\t' "$MEMORY_DB" "$sql"
+            ;;
+        sqlcipher_key)
+            "$SQLCIPHER_BIN" -separator $'\t' "$MEMORY_DB" <<EOF
+PRAGMA key = '$DB_KEY';
+$sql
+EOF
+            ;;
+        sqlcipher_plain)
+            "$SQLCIPHER_BIN" -separator $'\t' "$MEMORY_DB" "$sql"
+            ;;
+        *)
+            error "Database engine not initialized"
+            ;;
+    esac
+}
+
+db_scalar() {
+    local sql="$1"
+    db_exec "$sql" | head -n 1
+}
+
+confirm_or_abort() {
+    local prompt="$1"
+    local skip_confirm="$2"
+
+    if [[ "$skip_confirm" == "true" ]]; then
+        return
+    fi
+
+    read -r -p "$prompt [y/N] " reply
+    if [[ ! "$reply" =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+    fi
+}
+
+validate_id() {
+    [[ "$1" =~ ^[0-9]+$ ]] || error "Invalid ID: $1"
+}
+
+validate_limit() {
+    [[ "$1" =~ ^[0-9]+$ ]] || error "Limit must be a positive integer"
+    [[ "$1" -gt 0 ]] || error "Limit must be greater than 0"
+}
+
+validate_confidence() {
+    local value="$1"
+    awk "BEGIN{exit !($value >= 0 && $value <= 1)}" || error "Confidence must be between 0 and 1"
+}
+
+list_facts() {
+    local conversation="$1"
+    local category="$2"
+    local limit="$3"
+
+    local conditions="active = 1"
+    if [[ -n "$conversation" ]]; then
+        local c_esc
+        c_esc=$(sql_escape_literal "$conversation")
+        conditions="$conditions AND conversation_id = '$c_esc'"
+    fi
+    if [[ -n "$category" ]]; then
+        local cat_esc
+        cat_esc=$(sql_escape_literal "$category")
+        conditions="$conditions AND category = '$cat_esc'"
+    fi
+
+    local sql="
+SELECT
+  id,
+  conversation_id,
+  category,
+  key,
+  value,
+  confidence,
+  source,
+  datetime(learned_at/1000, 'unixepoch') AS learned_at,
+  datetime(updated_at/1000, 'unixepoch') AS updated_at
+FROM user_facts
+WHERE $conditions
+ORDER BY updated_at DESC
+LIMIT $limit;
+"
+
+    local rows
+    rows=$(db_exec "$sql")
+    if [[ -z "$rows" ]]; then
+        echo "No facts found."
+        return
+    fi
+
+    echo -e "id\tconversation_id\tcategory\tkey\tvalue\tconfidence\tsource\tlearned_at\tupdated_at"
+    echo "$rows"
+}
+
+delete_by_id() {
+    local fact_id="$1"
+    local skip_confirm="$2"
+
+    validate_id "$fact_id"
+
+    local exists
+    exists=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE id = $fact_id;")
+    [[ "${exists:-0}" -gt 0 ]] || error "No fact found with id=$fact_id"
+
+    local preview
+    preview=$(db_exec "SELECT id, conversation_id, category, key, value FROM user_facts WHERE id = $fact_id;")
+    echo -e "Fact to delete:\nid\tconversation_id\tcategory\tkey\tvalue"
+    echo "$preview"
+
+    confirm_or_abort "Delete fact id=$fact_id?" "$skip_confirm"
+
+    db_exec "DELETE FROM user_facts WHERE id = $fact_id;"
+    info "Deleted fact id=$fact_id"
+}
+
+delete_by_selector() {
+    local conversation="$1"
+    local key="$2"
+    local category="$3"
+    local skip_confirm="$4"
+
+    [[ -n "$conversation" ]] || error "--conversation is required for selector delete"
+    [[ -n "$key" ]] || error "--key is required for selector delete"
+
+    local c_esc
+    local k_esc
+    c_esc=$(sql_escape_literal "$conversation")
+    k_esc=$(sql_escape_literal "$key")
+
+    local where_clause="conversation_id = '$c_esc' AND key = '$k_esc'"
+    if [[ -n "$category" ]]; then
+        local cat_esc
+        cat_esc=$(sql_escape_literal "$category")
+        where_clause="$where_clause AND category = '$cat_esc'"
+    fi
+
+    local count
+    count=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE $where_clause;")
+    [[ "${count:-0}" -gt 0 ]] || error "No matching facts found"
+
+    local preview
+    preview=$(db_exec "SELECT id, conversation_id, category, key, value FROM user_facts WHERE $where_clause ORDER BY id;")
+    echo -e "Facts to delete ($count):\nid\tconversation_id\tcategory\tkey\tvalue"
+    echo "$preview"
+
+    confirm_or_abort "Delete $count matching fact(s)?" "$skip_confirm"
+
+    db_exec "DELETE FROM user_facts WHERE $where_clause;"
+    info "Deleted $count fact(s)"
+}
+
+update_fact() {
+    local fact_id="$1"
+    local new_value="$2"
+    local new_key="$3"
+    local new_category="$4"
+    local new_confidence="$5"
+    local new_source="$6"
+    local skip_confirm="$7"
+
+    validate_id "$fact_id"
+
+    local exists
+    exists=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE id = $fact_id;")
+    [[ "${exists:-0}" -gt 0 ]] || error "No fact found with id=$fact_id"
+
+    local set_parts=()
+
+    if [[ -n "$new_value" ]]; then
+        local value_esc
+        value_esc=$(sql_escape_literal "$new_value")
+        set_parts+=("value = '$value_esc'")
+    fi
+    if [[ -n "$new_key" ]]; then
+        local key_esc
+        key_esc=$(sql_escape_literal "$new_key")
+        set_parts+=("key = '$key_esc'")
+    fi
+    if [[ -n "$new_category" ]]; then
+        local category_esc
+        category_esc=$(sql_escape_literal "$new_category")
+        set_parts+=("category = '$category_esc'")
+    fi
+    if [[ -n "$new_confidence" ]]; then
+        validate_confidence "$new_confidence"
+        set_parts+=("confidence = $new_confidence")
+    fi
+    if [[ -n "$new_source" ]]; then
+        local source_esc
+        source_esc=$(sql_escape_literal "$new_source")
+        set_parts+=("source = '$source_esc'")
+    fi
+
+    [[ ${#set_parts[@]} -gt 0 ]] || error "No update fields provided"
+
+    local now_ms
+    now_ms=$(($(date +%s) * 1000))
+    set_parts+=("updated_at = $now_ms")
+
+    local set_clause
+    set_clause=$(IFS=", "; echo "${set_parts[*]}")
+
+    local before
+    before=$(db_exec "SELECT id, conversation_id, category, key, value, confidence, source FROM user_facts WHERE id = $fact_id;")
+    echo -e "Before:\nid\tconversation_id\tcategory\tkey\tvalue\tconfidence\tsource"
+    echo "$before"
+
+    confirm_or_abort "Apply update to fact id=$fact_id?" "$skip_confirm"
+
+    db_exec "UPDATE user_facts SET $set_clause WHERE id = $fact_id;"
+
+    local after
+    after=$(db_exec "SELECT id, conversation_id, category, key, value, confidence, source FROM user_facts WHERE id = $fact_id;")
+    echo -e "After:\nid\tconversation_id\tcategory\tkey\tvalue\tconfidence\tsource"
+    echo "$after"
+
+    info "Updated fact id=$fact_id"
+}
+
+cmd_list() {
+    local conversation=""
+    local category=""
+    local limit="100"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --conversation)
+                [[ -n "${2:-}" ]] || error "--conversation requires a value"
+                conversation="$2"
+                shift 2
+                ;;
+            --category)
+                [[ -n "${2:-}" ]] || error "--category requires a value"
+                category="$2"
+                shift 2
+                ;;
+            --limit)
+                [[ -n "${2:-}" ]] || error "--limit requires a value"
+                limit="$2"
+                shift 2
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                error "Unknown option for list: $1"
+                ;;
+        esac
+    done
+
+    validate_limit "$limit"
+    list_facts "$conversation" "$category" "$limit"
+}
+
+cmd_delete() {
+    local fact_id=""
+    local conversation=""
+    local key=""
+    local category=""
+    local yes="false"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --id)
+                [[ -n "${2:-}" ]] || error "--id requires a value"
+                fact_id="$2"
+                shift 2
+                ;;
+            --conversation)
+                [[ -n "${2:-}" ]] || error "--conversation requires a value"
+                conversation="$2"
+                shift 2
+                ;;
+            --key)
+                [[ -n "${2:-}" ]] || error "--key requires a value"
+                key="$2"
+                shift 2
+                ;;
+            --category)
+                [[ -n "${2:-}" ]] || error "--category requires a value"
+                category="$2"
+                shift 2
+                ;;
+            --yes)
+                yes="true"
+                shift
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                error "Unknown option for delete: $1"
+                ;;
+        esac
+    done
+
+    if [[ -n "$fact_id" ]]; then
+        if [[ -n "$conversation" || -n "$key" || -n "$category" ]]; then
+            error "Use either --id OR selector flags (--conversation/--key[/--category]), not both"
+        fi
+        delete_by_id "$fact_id" "$yes"
+        return
+    fi
+
+    delete_by_selector "$conversation" "$key" "$category" "$yes"
+}
+
+cmd_update() {
+    local fact_id=""
+    local value=""
+    local key=""
+    local category=""
+    local confidence=""
+    local source=""
+    local yes="false"
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --id)
+                [[ -n "${2:-}" ]] || error "--id requires a value"
+                fact_id="$2"
+                shift 2
+                ;;
+            --value)
+                [[ -n "${2:-}" ]] || error "--value requires a value"
+                value="$2"
+                shift 2
+                ;;
+            --key)
+                [[ -n "${2:-}" ]] || error "--key requires a value"
+                key="$2"
+                shift 2
+                ;;
+            --category)
+                [[ -n "${2:-}" ]] || error "--category requires a value"
+                category="$2"
+                shift 2
+                ;;
+            --confidence)
+                [[ -n "${2:-}" ]] || error "--confidence requires a value"
+                confidence="$2"
+                shift 2
+                ;;
+            --source)
+                [[ -n "${2:-}" ]] || error "--source requires a value"
+                source="$2"
+                shift 2
+                ;;
+            --yes)
+                yes="true"
+                shift
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                error "Unknown option for update: $1"
+                ;;
+        esac
+    done
+
+    [[ -n "$fact_id" ]] || error "--id is required for update"
+    update_fact "$fact_id" "$value" "$key" "$category" "$confidence" "$source" "$yes"
+}
+
+main() {
+    if [[ $# -lt 1 ]]; then
+        usage
+        exit 1
+    fi
+
+    local cmd="$1"
+    shift
+
+    case "$cmd" in
+        help|--help|-h)
+            usage
+            ;;
+        list|delete|update)
+            check_root
+            "cmd_$cmd" "$@"
+            ;;
+        *)
+            error "Unknown command: $cmd"
+            ;;
+    esac
+}
+
+main "$@"
