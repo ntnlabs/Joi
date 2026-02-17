@@ -282,6 +282,15 @@ class MemoryStore:
                     "running UNENCRYPTED. Install: pip install sqlcipher3-binary"
                 )
 
+        # Enforce encryption requirement if configured (default: required)
+        require_encrypted = os.getenv("JOI_REQUIRE_ENCRYPTED_DB", "1") == "1"
+        if require_encrypted and not self._encrypted:
+            raise RuntimeError(
+                "Encrypted database required but not available. "
+                "Set JOI_REQUIRE_ENCRYPTED_DB=0 to allow unencrypted (NOT RECOMMENDED), "
+                "or install sqlcipher3-binary and provide JOI_MEMORY_KEY_FILE"
+            )
+
         # Ensure directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 

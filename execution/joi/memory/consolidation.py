@@ -252,8 +252,14 @@ Corrected JSON:"""
             if len(sender_ids) == 1:
                 # Single sender - safe to store facts
                 sender_id = sender_ids.pop()
+                # Determine if this is a group or DM based on channel
+                is_group = any(m.channel == "group" for m in messages)
                 # Use composite key for groups: conversation_id:sender_id
-                fact_key = f"{convo_id}:{sender_id}" if sender_id and convo_id else convo_id or ""
+                # For DMs, use just conversation_id (matches live server behavior)
+                if is_group:
+                    fact_key = f"{convo_id}:{sender_id}" if sender_id and convo_id else convo_id or ""
+                else:
+                    fact_key = convo_id or ""
 
                 stored_count = 0
                 for fact in valid_facts:

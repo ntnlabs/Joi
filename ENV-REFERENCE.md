@@ -49,6 +49,7 @@ Prompts directory structure:
 | `JOI_MEMORY_DB` | `/var/lib/joi/memory.db` | SQLite database path |
 | `JOI_MEMORY_KEY` | (none) | SQLCipher encryption key (future) |
 | `JOI_CONTEXT_MESSAGES` | `40` | Recent messages to include in LLM context |
+| `JOI_REQUIRE_ENCRYPTED_DB` | `1` | Require encrypted DB (fail startup if unavailable) |
 
 ### Memory Consolidation
 
