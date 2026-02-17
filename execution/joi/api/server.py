@@ -37,6 +37,7 @@ from config import (
     get_prompt_for_conversation_optional,
     get_model_for_conversation,
     get_context_for_conversation,
+    get_knowledge_scopes_for_conversation,
     ensure_prompts_dir,
 )
 from llm import OllamaClient
@@ -869,6 +870,13 @@ def receive_message(msg: InboundMessage):
             sender_id=msg.sender.transport_id,
         )
 
+        # Get knowledge scopes for RAG access control
+        knowledge_scopes = get_knowledge_scopes_for_conversation(
+            conversation_type=msg.conversation.type,
+            conversation_id=msg.conversation.id,
+            sender_id=msg.sender.transport_id,
+        )
+
         # Get system prompt based on whether custom model is used
         if custom_model:
             # Custom model: prompt is optional (Modelfile has baked-in SYSTEM)
@@ -878,10 +886,10 @@ def receive_message(msg: InboundMessage):
                 sender_id=msg.sender.transport_id,
             )
             if base_prompt:
-                enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key)
+                enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
             else:
                 # No prompt file - only add facts/summaries/RAG if available
-                enriched_prompt = _build_enriched_prompt("", user_text, conversation_id=fact_key)
+                enriched_prompt = _build_enriched_prompt("", user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
                 enriched_prompt = enriched_prompt.strip() or None  # None if empty
         else:
             # No custom model: use prompt with fallback to default
@@ -890,7 +898,7 @@ def receive_message(msg: InboundMessage):
                 conversation_id=msg.conversation.id,
                 sender_id=msg.sender.transport_id,
             )
-            enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key)
+            enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
 
         # Add hint if we just saved a fact
         if saved_fact and enriched_prompt:
@@ -1034,7 +1042,12 @@ def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[st
     return chat_messages
 
 
-def _build_enriched_prompt(base_prompt: str, user_message: Optional[str] = None, conversation_id: Optional[str] = None) -> str:
+def _build_enriched_prompt(
+    base_prompt: str,
+    user_message: Optional[str] = None,
+    conversation_id: Optional[str] = None,
+    knowledge_scopes: Optional[List[str]] = None,
+) -> str:
     """Build system prompt enriched with user facts, summaries, and RAG context for this conversation."""
     parts = [base_prompt]
 
@@ -1050,10 +1063,14 @@ def _build_enriched_prompt(base_prompt: str, user_message: Optional[str] = None,
 
     # Add RAG context if enabled and user message provided
     if RAG_ENABLED and user_message:
-        rag_context = memory.get_knowledge_as_context(user_message, max_tokens=RAG_MAX_TOKENS)
+        rag_context = memory.get_knowledge_as_context(
+            user_message,
+            max_tokens=RAG_MAX_TOKENS,
+            scopes=knowledge_scopes,
+        )
         if rag_context:
             parts.append("\n\n" + rag_context)
-            logger.debug("Added RAG context for query: %s", user_message[:50])
+            logger.debug("Added RAG context for query: %s (scopes: %s)", user_message[:50], knowledge_scopes)
 
     # Add current datetime if time awareness is enabled
     if TIME_AWARENESS_ENABLED:

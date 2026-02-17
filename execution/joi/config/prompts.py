@@ -249,3 +249,48 @@ def get_context_for_conversation(conversation_type: str, conversation_id: str, s
         return get_group_context(conversation_id)
     else:
         return get_user_context(sender_id)
+
+
+# --- Knowledge Scope Configuration ---
+
+def _read_knowledge_file(path: Path) -> List[str]:
+    """Read knowledge scopes from file if it exists."""
+    try:
+        if path.exists():
+            content = path.read_text(encoding="utf-8").strip()
+            if content:
+                # One scope per line, strip whitespace, ignore empty lines
+                return [line.strip() for line in content.splitlines() if line.strip()]
+    except Exception as e:
+        logger.warning("Failed to read knowledge scopes from %s: %s", path, e)
+    return []
+
+
+def get_user_knowledge_scopes(user_id: str) -> List[str]:
+    """Get knowledge scopes for a user. Always includes own scope."""
+    user_file = PROMPTS_DIR / "users" / f"{user_id}.knowledge"
+    extra_scopes = _read_knowledge_file(user_file)
+    # Always include own scope first
+    return [user_id] + [s for s in extra_scopes if s != user_id]
+
+
+def get_group_knowledge_scopes(group_id: str) -> List[str]:
+    """Get knowledge scopes for a group. Always includes own scope."""
+    safe_group_id = group_id.replace("/", "_").replace("+", "-")
+    group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.knowledge"
+    extra_scopes = _read_knowledge_file(group_file)
+    # Always include own scope first
+    return [group_id] + [s for s in extra_scopes if s != group_id]
+
+
+def get_knowledge_scopes_for_conversation(conversation_type: str, conversation_id: str, sender_id: str) -> List[str]:
+    """
+    Get the allowed knowledge scopes for a conversation.
+
+    Always includes the conversation's own scope, plus any additional
+    scopes listed in the .knowledge file.
+    """
+    if conversation_type == "group":
+        return get_group_knowledge_scopes(conversation_id)
+    else:
+        return get_user_knowledge_scopes(sender_id)

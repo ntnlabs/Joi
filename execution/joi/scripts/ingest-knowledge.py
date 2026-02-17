@@ -3,7 +3,17 @@
 Knowledge ingestion script for Joi RAG.
 
 Usage:
-    ./ingest-knowledge.py <file_or_directory> [--chunk-size 500] [--overlap 50]
+    ./ingest-knowledge.py <file_or_directory> [--scope SCOPE] [--chunk-size 500] [--overlap 50]
+
+Examples:
+    # Ingest for a specific user
+    ./ingest-knowledge.py notes.txt --scope +1234567890
+
+    # Ingest for a group
+    ./ingest-knowledge.py docs/ --scope "GroupID123"
+
+    # Ingest globally (legacy, accessible by all)
+    ./ingest-knowledge.py docs/
 
 Supports:
     - .txt files (plain text)
@@ -103,9 +113,18 @@ def ingest_file(
     chunk_size: int,
     overlap: int,
     base_path: Path,
+    scope: str = "",
 ) -> int:
     """
     Ingest a single file.
+
+    Args:
+        filepath: Path to file
+        memory: MemoryStore instance
+        chunk_size: Characters per chunk
+        overlap: Overlap between chunks
+        base_path: Base path for relative source naming
+        scope: Access scope (conversation_id or empty for global)
 
     Returns:
         Number of chunks created
@@ -147,9 +166,11 @@ def ingest_file(
             title=title,
             content=chunk_content,
             chunk_index=i,
+            scope=scope,
         )
 
-    logger.info("Ingested %s: %d chunks", source, len(chunks))
+    scope_info = f" (scope: {scope})" if scope else " (global)"
+    logger.info("Ingested %s: %d chunks%s", source, len(chunks), scope_info)
     return len(chunks)
 
 
@@ -158,6 +179,7 @@ def ingest_directory(
     memory: MemoryStore,
     chunk_size: int,
     overlap: int,
+    scope: str = "",
 ) -> Tuple[int, int]:
     """
     Ingest all supported files in directory.
@@ -171,7 +193,7 @@ def ingest_directory(
 
     for filepath in directory.rglob('*'):
         if filepath.suffix.lower() in supported_extensions:
-            chunks = ingest_file(filepath, memory, chunk_size, overlap, directory)
+            chunks = ingest_file(filepath, memory, chunk_size, overlap, directory, scope)
             if chunks > 0:
                 files_processed += 1
                 total_chunks += chunks
@@ -182,6 +204,7 @@ def ingest_directory(
 def main():
     parser = argparse.ArgumentParser(description="Ingest knowledge documents for Joi RAG")
     parser.add_argument("path", help="File or directory to ingest")
+    parser.add_argument("--scope", default="", help="Access scope (conversation_id). Empty = global/legacy")
     parser.add_argument("--chunk-size", type=int, default=500, help="Chunk size in characters (default: 500)")
     parser.add_argument("--overlap", type=int, default=50, help="Overlap between chunks (default: 50)")
     parser.add_argument("--db", default=None, help="Database path (default: from JOI_MEMORY_DB)")
@@ -218,12 +241,14 @@ def main():
         logger.error("Path does not exist: %s", path)
         sys.exit(1)
 
+    scope_info = f" into scope '{args.scope}'" if args.scope else " (global)"
+
     if path.is_file():
-        chunks = ingest_file(path, memory, args.chunk_size, args.overlap, path.parent)
-        print(f"Ingested 1 file, {chunks} chunks")
+        chunks = ingest_file(path, memory, args.chunk_size, args.overlap, path.parent, args.scope)
+        print(f"Ingested 1 file, {chunks} chunks{scope_info}")
     elif path.is_dir():
-        files, chunks = ingest_directory(path, memory, args.chunk_size, args.overlap)
-        print(f"Ingested {files} files, {chunks} chunks")
+        files, chunks = ingest_directory(path, memory, args.chunk_size, args.overlap, args.scope)
+        print(f"Ingested {files} files, {chunks} chunks{scope_info}")
     else:
         logger.error("Path is not a file or directory: %s", path)
         sys.exit(1)
