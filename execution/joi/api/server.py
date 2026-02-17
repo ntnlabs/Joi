@@ -1,3 +1,5 @@
+import glob
+import hashlib
 import logging
 import os
 import queue
@@ -570,6 +572,38 @@ async def hmac_verification_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+# --- Runtime Fingerprint ---
+
+def _compute_file_hash(path: str) -> str:
+    """Compute SHA256 hash of a file."""
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()[:16]
+    except Exception:
+        return "missing"
+
+
+def _log_runtime_fingerprint():
+    """Log hashes of important config files for tamper detection."""
+    fingerprints = []
+
+    # System config
+    for path in ["/etc/default/joi-api", "/etc/joi/memory.key", "/etc/joi/hmac.key"]:
+        if os.path.exists(path):
+            fingerprints.append(f"{os.path.basename(path)}:{_compute_file_hash(path)}")
+
+    # Prompts directory
+    prompts_dir = os.getenv("JOI_PROMPTS_DIR", "/var/lib/joi/prompts")
+    for pattern in ["*.txt", "*.model", "*.context", "users/*", "groups/*"]:
+        for path in glob.glob(os.path.join(prompts_dir, pattern)):
+            if os.path.isfile(path):
+                rel_path = os.path.relpath(path, prompts_dir)
+                fingerprints.append(f"{rel_path}:{_compute_file_hash(path)}")
+
+    if fingerprints:
+        logger.info("Runtime fingerprint: %s", " | ".join(sorted(fingerprints)))
+
+
 # --- Lifecycle Events ---
 
 @app.on_event("startup")
@@ -582,6 +616,7 @@ def startup_event():
     scheduler_status = f"scheduler enabled (interval: {SCHEDULER_INTERVAL}s)" if scheduler else "scheduler disabled"
     time_status = f"time awareness enabled (tz: {TIME_AWARENESS_TIMEZONE})" if TIME_AWARENESS_ENABLED else "time awareness disabled"
     logger.info("Joi API started: %s, %s, %s", hmac_status, scheduler_status, time_status)
+    _log_runtime_fingerprint()
 
 
 @app.on_event("shutdown")
