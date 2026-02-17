@@ -253,13 +253,23 @@ class Scheduler:
         """
         logger.debug("Scheduler tick #%d", self._tick_count + 1)
 
-        # Cleanup expired nonces every 60 ticks (~1 hour with 60s interval)
+        # Low-priority maintenance tasks every 60 ticks (~1 hour with 60s interval)
         if self._tick_count % 60 == 0:
             self._cleanup_nonces()
+            self._check_tamper()
 
         # Placeholder for future implementation:
         # - self._check_reminders()
         # - self._check_wind_impulse()
+
+    def _check_tamper(self):
+        """Check for config file tampering."""
+        try:
+            changed = _check_fingerprints()
+            if changed:
+                logger.warning("Scheduler: %d config file(s) tampered with!", len(changed))
+        except Exception as e:
+            logger.warning("Scheduler: tamper check failed: %s", e)
 
     def _cleanup_nonces(self):
         """Cleanup expired nonces from the replay protection store."""
@@ -572,7 +582,10 @@ async def hmac_verification_middleware(request: Request, call_next):
     return await call_next(request)
 
 
-# --- Runtime Fingerprint ---
+# --- Runtime Fingerprint (Tamper Detection) ---
+
+_startup_fingerprints: Dict[str, str] = {}
+
 
 def _compute_file_hash(path: str) -> str:
     """Compute SHA256 hash of a file."""
@@ -583,25 +596,61 @@ def _compute_file_hash(path: str) -> str:
         return "missing"
 
 
-def _log_runtime_fingerprint():
-    """Log hashes of important config files for tamper detection."""
-    fingerprints = []
+def _get_config_files() -> List[str]:
+    """Get list of config files to monitor."""
+    files = []
 
     # System config
     for path in ["/etc/default/joi-api", "/etc/joi/memory.key", "/etc/joi/hmac.key"]:
         if os.path.exists(path):
-            fingerprints.append(f"{os.path.basename(path)}:{_compute_file_hash(path)}")
+            files.append(path)
 
     # Prompts directory
     prompts_dir = os.getenv("JOI_PROMPTS_DIR", "/var/lib/joi/prompts")
     for pattern in ["*.txt", "*.model", "*.context", "users/*", "groups/*"]:
         for path in glob.glob(os.path.join(prompts_dir, pattern)):
             if os.path.isfile(path):
-                rel_path = os.path.relpath(path, prompts_dir)
-                fingerprints.append(f"{rel_path}:{_compute_file_hash(path)}")
+                files.append(path)
 
-    if fingerprints:
-        logger.info("Runtime fingerprint: %s", " | ".join(sorted(fingerprints)))
+    return files
+
+
+def _compute_fingerprints() -> Dict[str, str]:
+    """Compute fingerprints for all config files."""
+    return {path: _compute_file_hash(path) for path in _get_config_files()}
+
+
+def _init_fingerprints():
+    """Initialize fingerprints at startup."""
+    global _startup_fingerprints
+    _startup_fingerprints = _compute_fingerprints()
+    if _startup_fingerprints:
+        summary = " | ".join(f"{os.path.basename(p)}:{h}" for p, h in sorted(_startup_fingerprints.items()))
+        logger.info("Runtime fingerprint initialized: %s", summary)
+
+
+def _check_fingerprints() -> List[str]:
+    """Check for tampered files. Returns list of changed file paths."""
+    if not _startup_fingerprints:
+        return []
+
+    current = _compute_fingerprints()
+    changed = []
+
+    # Check for modified or deleted files
+    for path, original_hash in _startup_fingerprints.items():
+        current_hash = current.get(path, "deleted")
+        if current_hash != original_hash:
+            changed.append(path)
+            logger.warning("TAMPER DETECTED: %s changed (%s -> %s)", path, original_hash, current_hash)
+
+    # Check for new files
+    for path in current:
+        if path not in _startup_fingerprints:
+            changed.append(path)
+            logger.warning("TAMPER DETECTED: new file %s", path)
+
+    return changed
 
 
 # --- Lifecycle Events ---
@@ -616,7 +665,7 @@ def startup_event():
     scheduler_status = f"scheduler enabled (interval: {SCHEDULER_INTERVAL}s)" if scheduler else "scheduler disabled"
     time_status = f"time awareness enabled (tz: {TIME_AWARENESS_TIMEZONE})" if TIME_AWARENESS_ENABLED else "time awareness disabled"
     logger.info("Joi API started: %s, %s, %s", hmac_status, scheduler_status, time_status)
-    _log_runtime_fingerprint()
+    _init_fingerprints()
 
 
 @app.on_event("shutdown")
