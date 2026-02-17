@@ -40,6 +40,7 @@ from config import (
     get_knowledge_scopes_for_conversation,
     ensure_prompts_dir,
 )
+from ingestion import run_auto_ingestion
 from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
 
@@ -254,6 +255,9 @@ class Scheduler:
         """
         logger.debug("Scheduler tick #%d", self._tick_count + 1)
 
+        # Auto-ingestion check every tick (cheap if no files)
+        self._check_ingestion()
+
         # Low-priority maintenance tasks every 60 ticks (~1 hour with 60s interval)
         if self._tick_count % 60 == 0:
             self._cleanup_nonces()
@@ -286,6 +290,13 @@ class Scheduler:
                     logger.info("Scheduler: cleaned up %d expired nonces", deleted)
             except Exception as e:
                 logger.warning("Scheduler: nonce cleanup failed: %s", e)
+
+    def _check_ingestion(self):
+        """Check for pending knowledge files to ingest."""
+        try:
+            run_auto_ingestion(memory)
+        except Exception as e:
+            logger.warning("Scheduler: auto-ingestion failed: %s", e)
 
     def get_status(self) -> dict:
         """Get scheduler status for health endpoint."""
