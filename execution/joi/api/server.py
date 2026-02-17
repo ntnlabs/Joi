@@ -263,11 +263,16 @@ class Scheduler:
         # - self._check_wind_impulse()
 
     def _check_tamper(self):
-        """Check for config file tampering."""
+        """Check for config file tampering. Shuts down service if detected."""
         try:
             changed = _check_fingerprints()
             if changed:
-                logger.warning("Scheduler: %d config file(s) tampered with!", len(changed))
+                logger.critical("SECURITY: %d config file(s) tampered - SHUTTING DOWN", len(changed))
+                for path in changed:
+                    logger.critical("SECURITY: Tampered file: %s", path)
+                # Give logs time to flush
+                time.sleep(1)
+                os._exit(78)  # EX_CONFIG - configuration error
         except Exception as e:
             logger.warning("Scheduler: tamper check failed: %s", e)
 
