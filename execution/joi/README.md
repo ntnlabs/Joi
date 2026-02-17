@@ -86,6 +86,7 @@ See [ENV-REFERENCE.md](../../ENV-REFERENCE.md) for complete documentation.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_TIME_AWARENESS` | 0 | Inject current datetime into system prompt |
+| `JOI_TIMEZONE` | Europe/Bratislava | User timezone (IANA format) |
 
 ### Scheduler
 | Variable | Default | Description |

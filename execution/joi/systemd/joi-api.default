@@ -38,6 +38,8 @@ JOI_RAG_MAX_TOKENS=500
 # Set to 1 to inject current datetime into system prompt
 # Enables appropriate greetings and understanding of relative time
 JOI_TIME_AWARENESS=0
+# User timezone in IANA format (e.g., Europe/Bratislava, America/New_York)
+JOI_TIMEZONE=Europe/Bratislava
 
 # --- Scheduler (Wind/Tasks) ---
 # Background scheduler for proactive messaging and reminders

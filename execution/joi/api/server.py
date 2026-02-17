@@ -8,6 +8,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Any, Callable, Dict, List, Optional
 
 # Add api/ and parent dirs to path for imports
@@ -323,6 +324,7 @@ RAG_MAX_TOKENS = int(os.getenv("JOI_RAG_MAX_TOKENS", "500"))  # Max tokens for R
 
 # Time awareness - inject current datetime into system prompt
 TIME_AWARENESS_ENABLED = os.getenv("JOI_TIME_AWARENESS", "0") == "1"  # Default: disabled
+TIME_AWARENESS_TIMEZONE = os.getenv("JOI_TIMEZONE", "Europe/Bratislava")  # User timezone
 
 # Response cooldown - minimum seconds between sends to same conversation
 RESPONSE_COOLDOWN_DM_SECONDS = float(os.getenv("JOI_RESPONSE_COOLDOWN_SECONDS", "5.0"))
@@ -564,7 +566,7 @@ def startup_event():
         scheduler.start()
     hmac_status = "HMAC enabled" if HMAC_ENABLED else "HMAC DISABLED - set JOI_HMAC_SECRET"
     scheduler_status = f"scheduler enabled (interval: {SCHEDULER_INTERVAL}s)" if scheduler else "scheduler disabled"
-    time_status = "time awareness enabled" if TIME_AWARENESS_ENABLED else "time awareness disabled"
+    time_status = f"time awareness enabled (tz: {TIME_AWARENESS_TIMEZONE})" if TIME_AWARENESS_ENABLED else "time awareness disabled"
     logger.info("Joi API started: %s, %s, %s", hmac_status, scheduler_status, time_status)
 
 
@@ -952,9 +954,16 @@ def _build_enriched_prompt(base_prompt: str, user_message: Optional[str] = None,
 
     # Add current datetime if time awareness is enabled
     if TIME_AWARENESS_ENABLED:
-        now = datetime.now()
-        time_str = now.strftime("Current date and time: %A, %B %d, %Y, %I:%M %p")
-        parts.append(f"\n\n{time_str}")
+        try:
+            tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+        except Exception:
+            tz = ZoneInfo("UTC")
+        now = datetime.now(tz)
+        parts.append(
+            f"\n\nSYSTEM CONTEXT:\n"
+            f"Current datetime: {now.isoformat()}\n"
+            f"User timezone: {TIME_AWARENESS_TIMEZONE}"
+        )
 
     return "".join(parts)
 
