@@ -46,9 +46,13 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Real-time fact saving ("remember that...", "my name is...")
 - ✅ Memory consolidation (after silence or message threshold)
 - ✅ RAG knowledge retrieval (FTS5 full-text search)
+- ✅ Per-user/group RAG scopes with access control
+- ✅ Auto-ingestion via watched directory
 - ✅ SQLCipher database encryption (key file: `/etc/joi/memory.key`)
 
 ### Pending
+- ⏳ Config push from Joi to mesh (centralized policy)
+- ⏳ Business mode (DM access to group knowledge)
 - ⏳ System Channel integration
 
 ### Nice to Have
