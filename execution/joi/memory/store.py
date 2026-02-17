@@ -117,6 +117,7 @@ class KnowledgeChunk:
     content: str
     chunk_index: int
     created_at: int
+    scope: str = ""  # access scope (conversation_id or empty for global)
 
 
 # Schema version for migrations
@@ -210,16 +211,18 @@ CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON context_summaries(conve
 -- Knowledge chunks table (for RAG)
 CREATE TABLE IF NOT EXISTS knowledge_chunks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    scope TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
     chunk_index INTEGER NOT NULL DEFAULT 0,
     metadata_json TEXT,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
-    UNIQUE(source, chunk_index)
+    UNIQUE(scope, source, chunk_index)
 );
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_source ON knowledge_chunks(source);
+CREATE INDEX IF NOT EXISTS idx_knowledge_scope ON knowledge_chunks(scope);
 
 -- FTS5 virtual table for full-text search
 CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
@@ -385,6 +388,17 @@ class MemoryStore:
                 logger.info("Migration: Adding 'conversation_id' column to context_summaries table")
                 conn.execute("ALTER TABLE context_summaries ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_summaries_conversation ON context_summaries(conversation_id, period_end DESC)")
+                conn.commit()
+
+        # Check knowledge_chunks table for scope column
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_chunks'")
+        if cursor.fetchone():
+            cursor = conn.execute("PRAGMA table_info(knowledge_chunks)")
+            knowledge_columns = [row[1] for row in cursor.fetchall()]
+            if "scope" not in knowledge_columns:
+                logger.info("Migration: Adding 'scope' column to knowledge_chunks table")
+                conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN scope TEXT NOT NULL DEFAULT ''")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_scope ON knowledge_chunks(scope)")
                 conn.commit()
 
     def close(self) -> None:
@@ -981,28 +995,40 @@ class MemoryStore:
         content: str,
         chunk_index: int = 0,
         metadata_json: Optional[str] = None,
+        scope: str = "",
     ) -> int:
-        """Store a knowledge chunk for RAG retrieval."""
+        """Store a knowledge chunk for RAG retrieval.
+
+        Args:
+            source: Source identifier (e.g., filename)
+            title: Chunk title
+            content: Chunk content
+            chunk_index: Index within source (for multi-chunk docs)
+            metadata_json: Optional JSON metadata
+            scope: Access scope (conversation_id or empty for legacy global)
+        """
         conn = self._connect()
         now_ms = int(time.time() * 1000)
 
         cursor = conn.execute(
             """
             INSERT OR REPLACE INTO knowledge_chunks (
-                source, title, content, chunk_index, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                scope, source, title, content, chunk_index, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (source, title, content, chunk_index, metadata_json, now_ms)
+            (scope, source, title, content, chunk_index, metadata_json, now_ms)
         )
         conn.commit()
 
-        logger.debug("Stored knowledge chunk: %s [%d]", source, chunk_index)
+        scope_info = f" (scope: {scope})" if scope else ""
+        logger.debug("Stored knowledge chunk: %s [%d]%s", source, chunk_index, scope_info)
         return cursor.lastrowid or 0
 
     def search_knowledge(
         self,
         query: str,
         limit: int = 5,
+        scopes: Optional[List[str]] = None,
     ) -> List[KnowledgeChunk]:
         """
         Search knowledge base using FTS5 full-text search.
@@ -1010,6 +1036,8 @@ class MemoryStore:
         Args:
             query: Search query (plain text, will be sanitized)
             limit: Maximum number of results
+            scopes: List of allowed scopes (None = all, empty list = none)
+                   Empty string scope ('') means legacy global knowledge.
 
         Returns:
             List of matching KnowledgeChunk objects, ranked by relevance
@@ -1023,22 +1051,39 @@ class MemoryStore:
         if not words:
             return []
 
+        # If scopes is empty list, no access to anything
+        if scopes is not None and len(scopes) == 0:
+            return []
+
         # Join words with OR, each word quoted to treat as literal
         fts_query = " OR ".join(f'"{word}"' for word in words[:20])  # Limit to 20 words
 
         try:
+            # Build scope filter
+            if scopes is None:
+                # No filter - access all (backwards compat / admin)
+                scope_filter = ""
+                params = [fts_query, limit]
+            else:
+                # Filter by allowed scopes (always include '' for legacy global)
+                allowed = list(scopes) + ['']
+                placeholders = ','.join('?' * len(allowed))
+                scope_filter = f"AND k.scope IN ({placeholders})"
+                params = [fts_query] + allowed + [limit]
+
             # Use FTS5 MATCH for full-text search
             cursor = conn.execute(
-                """
-                SELECT k.id, k.source, k.title, k.content, k.chunk_index, k.created_at,
+                f"""
+                SELECT k.id, k.scope, k.source, k.title, k.content, k.chunk_index, k.created_at,
                        bm25(knowledge_fts) as rank
                 FROM knowledge_chunks k
                 JOIN knowledge_fts f ON k.id = f.rowid
                 WHERE knowledge_fts MATCH ?
+                {scope_filter}
                 ORDER BY rank
                 LIMIT ?
                 """,
-                (fts_query, limit)
+                params
             )
         except sqlite3.OperationalError as e:
             logger.warning("FTS5 search failed: %s (query: %s)", e, fts_query[:100])
@@ -1052,11 +1097,12 @@ class MemoryStore:
                 content=row["content"],
                 chunk_index=row["chunk_index"],
                 created_at=row["created_at"],
+                scope=row["scope"],
             )
             for row in cursor.fetchall()
         ]
 
-    def get_knowledge_by_source(self, source: str) -> List[KnowledgeChunk]:
+    def get_knowledge_by_source(self, source: str, scope: Optional[str] = None) -> List[KnowledgeChunk]:
         """Get all chunks from a specific source."""
         conn = self._connect()
 
@@ -1115,18 +1161,24 @@ class MemoryStore:
             for row in cursor.fetchall()
         ]
 
-    def get_knowledge_as_context(self, query: str, max_tokens: int = 1000) -> str:
+    def get_knowledge_as_context(
+        self,
+        query: str,
+        max_tokens: int = 1000,
+        scopes: Optional[List[str]] = None,
+    ) -> str:
         """
         Search knowledge and format as context for LLM.
 
         Args:
             query: Search query
             max_tokens: Approximate max tokens (chars / 4)
+            scopes: Allowed knowledge scopes (None = all)
 
         Returns:
             Formatted context string
         """
-        chunks = self.search_knowledge(query, limit=10)
+        chunks = self.search_knowledge(query, limit=10, scopes=scopes)
         if not chunks:
             return ""
 

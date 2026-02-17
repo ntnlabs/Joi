@@ -173,6 +173,7 @@ Different users or groups can use different models and context sizes via config 
 | `.txt` | System prompt text | default.txt → hardcoded |
 | `.model` | Model name (e.g., `joi-creative`) | default.model → `JOI_OLLAMA_MODEL` |
 | `.context` | Number of messages (e.g., `20`) | default.context → `JOI_CONTEXT_MESSAGES` |
+| `.knowledge` | Additional RAG scopes (one per line) | Own scope only |
 
 ### Model/Prompt Combinations
 
@@ -289,4 +290,44 @@ sudo joi-admin purge --all-data --all-keys
 
 # True factory reset
 sudo joi-admin purge --everything --nebula-ca
+```
+
+## RAG Knowledge
+
+Knowledge is scoped per-user/group by default. Each conversation can only access its own knowledge.
+
+### Ingesting Knowledge
+
+```bash
+# Ingest for a specific user
+./scripts/ingest-knowledge.py notes.txt --scope +1234567890
+
+# Ingest for a group
+./scripts/ingest-knowledge.py docs/ --scope "GroupID123"
+
+# Ingest globally (legacy, accessible by all)
+./scripts/ingest-knowledge.py docs/
+```
+
+### Sharing Knowledge Between Users/Groups
+
+Create a `.knowledge` file to grant access to other scopes:
+
+```bash
+# Give user +5678 access to +1234's knowledge
+echo "+1234567890" > /var/lib/joi/prompts/users/+5678901234.knowledge
+
+# Give a group access to multiple user's knowledge
+cat > /var/lib/joi/prompts/groups/ABC123.knowledge << 'EOF'
++1234567890
++5678901234
+EOF
+```
+
+Each user/group always has access to their own scope. The `.knowledge` file adds additional scopes.
+
+### Listing Knowledge
+
+```bash
+./scripts/ingest-knowledge.py --list
 ```
