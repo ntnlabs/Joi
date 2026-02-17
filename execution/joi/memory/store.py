@@ -1065,8 +1065,10 @@ class MemoryStore:
                 scope_filter = ""
                 params = [fts_query, limit]
             else:
-                # Filter by allowed scopes (always include '' for legacy global)
-                allowed = list(scopes) + ['']
+                # Filter by allowed scopes only - no global/legacy access
+                # NOTE: Empty scope ('') knowledge is orphaned and inaccessible
+                # TODO(v2): Add cleanup to delete orphaned empty-scope knowledge chunks
+                allowed = list(scopes)
                 placeholders = ','.join('?' * len(allowed))
                 scope_filter = f"AND k.scope IN ({placeholders})"
                 params = [fts_query] + allowed + [limit]

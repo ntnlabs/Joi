@@ -12,8 +12,7 @@ Examples:
     # Ingest for a group
     ./ingest-knowledge.py docs/ --scope "GroupID123"
 
-    # Ingest globally (legacy, accessible by all)
-    ./ingest-knowledge.py docs/
+NOTE: --scope is required! Knowledge without scope is orphaned and inaccessible.
 
 Supports:
     - .txt files (plain text)
@@ -241,7 +240,16 @@ def main():
         logger.error("Path does not exist: %s", path)
         sys.exit(1)
 
-    scope_info = f" into scope '{args.scope}'" if args.scope else " (global)"
+    # Warn if no scope - knowledge will be orphaned
+    if not args.scope:
+        logger.warning("No --scope provided! Knowledge will be orphaned and inaccessible.")
+        logger.warning("Use --scope <conversation_id> to make knowledge searchable.")
+        response = input("Continue anyway? [y/N] ").strip().lower()
+        if response != 'y':
+            print("Aborted.")
+            sys.exit(0)
+
+    scope_info = f" into scope '{args.scope}'" if args.scope else " (orphaned - no scope!)"
 
     if path.is_file():
         chunks = ingest_file(path, memory, args.chunk_size, args.overlap, path.parent, args.scope)

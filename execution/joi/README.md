@@ -298,15 +298,14 @@ Knowledge is scoped per-user/group by default. Each conversation can only access
 
 ### Ingesting Knowledge
 
+**Scope is required** - knowledge without scope is inaccessible.
+
 ```bash
 # Ingest for a specific user
 ./scripts/ingest-knowledge.py notes.txt --scope +1234567890
 
 # Ingest for a group
 ./scripts/ingest-knowledge.py docs/ --scope "GroupID123"
-
-# Ingest globally (legacy, accessible by all)
-./scripts/ingest-knowledge.py docs/
 ```
 
 ### Sharing Knowledge Between Users/Groups
