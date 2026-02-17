@@ -355,8 +355,32 @@ EOF
 
 Each user/group always has access to their own scope. The `.knowledge` file adds additional scopes.
 
-### Listing Knowledge
+### Managing Knowledge
+
+**List all knowledge with scopes:**
 
 ```bash
 ./scripts/ingest-knowledge.py --list
+# Output:
+# Scope                                    Source                         Chunks
+# --------------------------------------------------------------------------------
+# +1234567890                              notes.txt                           3
+# GroupABC123                              docs/guide.md                       5
+# (no scope)                               orphaned.txt                        1
+```
+
+**Move knowledge between scopes (rescope):**
+
+```bash
+# Fix orphaned knowledge (empty scope → user)
+./scripts/ingest-knowledge.py --rescope "" "+1234567890"
+
+# Move knowledge to different scope
+./scripts/ingest-knowledge.py --rescope "OldGroupID" "NewGroupID"
+```
+
+**Delete knowledge source:**
+
+```bash
+./scripts/ingest-knowledge.py --delete "notes.txt"
 ```
