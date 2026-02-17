@@ -3,7 +3,10 @@
 Knowledge ingestion script for Joi RAG.
 
 Usage:
-    ./ingest-knowledge.py <file_or_directory> [--scope SCOPE] [--chunk-size 500] [--overlap 50]
+    ./ingest-knowledge.py <file_or_directory> --scope SCOPE
+    ./ingest-knowledge.py --list
+    ./ingest-knowledge.py --rescope OLD_SCOPE NEW_SCOPE
+    ./ingest-knowledge.py --delete SOURCE
 
 Examples:
     # Ingest for a specific user
@@ -12,7 +15,13 @@ Examples:
     # Ingest for a group
     ./ingest-knowledge.py docs/ --scope "GroupID123"
 
-NOTE: --scope is required! Knowledge without scope is orphaned and inaccessible.
+    # List all knowledge with scopes
+    ./ingest-knowledge.py --list
+
+    # Move orphaned knowledge to a scope
+    ./ingest-knowledge.py --rescope "" "+1234567890"
+
+NOTE: --scope is required for ingestion! Knowledge without scope is orphaned.
 
 Supports:
     - .txt files (plain text)
@@ -202,13 +211,14 @@ def ingest_directory(
 
 def main():
     parser = argparse.ArgumentParser(description="Ingest knowledge documents for Joi RAG")
-    parser.add_argument("path", help="File or directory to ingest")
+    parser.add_argument("path", nargs="?", default=None, help="File or directory to ingest")
     parser.add_argument("--scope", default="", help="Access scope (conversation_id). Empty = global/legacy")
     parser.add_argument("--chunk-size", type=int, default=500, help="Chunk size in characters (default: 500)")
     parser.add_argument("--overlap", type=int, default=50, help="Overlap between chunks (default: 50)")
     parser.add_argument("--db", default=None, help="Database path (default: from JOI_MEMORY_DB)")
     parser.add_argument("--list", action="store_true", help="List current knowledge sources")
     parser.add_argument("--delete", metavar="SOURCE", help="Delete a knowledge source")
+    parser.add_argument("--rescope", nargs=2, metavar=("OLD", "NEW"), help="Move knowledge from OLD scope to NEW scope")
     args = parser.parse_args()
 
     # Initialize memory store
@@ -221,10 +231,11 @@ def main():
         if not sources:
             print("No knowledge sources found.")
         else:
-            print(f"{'Source':<50} {'Chunks':>8}")
-            print("-" * 60)
+            print(f"{'Scope':<40} {'Source':<30} {'Chunks':>8}")
+            print("-" * 80)
             for s in sources:
-                print(f"{s['source']:<50} {s['chunk_count']:>8}")
+                scope = s['scope'] or "(no scope)"
+                print(f"{scope:<40} {s['source']:<30} {s['chunk_count']:>8}")
         return
 
     # Handle delete command
@@ -233,7 +244,18 @@ def main():
         print(f"Deleted {deleted} chunks from '{args.delete}'")
         return
 
+    # Handle rescope command
+    if args.rescope:
+        old_scope, new_scope = args.rescope
+        updated = memory.rescope_knowledge(old_scope, new_scope)
+        print(f"Rescoped {updated} chunks: '{old_scope}' -> '{new_scope}'")
+        return
+
     # Ingest
+    if not args.path:
+        parser.print_help()
+        sys.exit(1)
+
     path = Path(args.path)
 
     if not path.exists():

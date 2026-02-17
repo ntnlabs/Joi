@@ -1145,21 +1145,41 @@ class MemoryStore:
             logger.info("Deleted %d chunks from source: %s", deleted, source)
         return deleted
 
+    def rescope_knowledge(self, old_scope: str, new_scope: str) -> int:
+        """Move all knowledge from one scope to another."""
+        conn = self._connect()
+
+        cursor = conn.execute(
+            "UPDATE knowledge_chunks SET scope = ? WHERE scope = ?",
+            (new_scope, old_scope)
+        )
+        conn.commit()
+
+        updated = cursor.rowcount
+        if updated > 0:
+            logger.info("Rescoped %d chunks: '%s' -> '%s'", updated, old_scope, new_scope)
+        return updated
+
     def get_knowledge_sources(self) -> List[Dict[str, Any]]:
-        """Get list of all knowledge sources with chunk counts."""
+        """Get list of all knowledge sources with chunk counts and scopes."""
         conn = self._connect()
 
         cursor = conn.execute(
             """
-            SELECT source, COUNT(*) as chunk_count, MAX(created_at) as last_updated
+            SELECT scope, source, COUNT(*) as chunk_count, MAX(created_at) as last_updated
             FROM knowledge_chunks
-            GROUP BY source
-            ORDER BY source
+            GROUP BY scope, source
+            ORDER BY scope, source
             """
         )
 
         return [
-            {"source": row["source"], "chunk_count": row["chunk_count"], "last_updated": row["last_updated"]}
+            {
+                "scope": row["scope"],
+                "source": row["source"],
+                "chunk_count": row["chunk_count"],
+                "last_updated": row["last_updated"],
+            }
             for row in cursor.fetchall()
         ]
 
