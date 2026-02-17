@@ -9,6 +9,7 @@ duality-system.md
 ntp-fw.sh
 ntp-update.sh
 execution/joi/ollama/Modelfile
+local-prep/
 
 # Data (databases, logs, runtime files)
 data/

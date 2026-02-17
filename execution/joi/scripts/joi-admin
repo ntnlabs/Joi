@@ -5,20 +5,38 @@
 #
 # SAFE BY DEFAULT: No flags = no action. Must explicitly specify what to purge.
 
-set -euo pipefail
+set -Eeuo pipefail
 
 SCRIPT_NAME=$(basename "$0")
 MEMORY_DB="${JOI_MEMORY_DB:-/var/lib/joi/memory.db}"
 NONCE_DB="${JOI_NONCE_DB:-/var/lib/joi/nonces.db}"
 HMAC_KEY_FILE="${JOI_HMAC_KEY_FILE:-/etc/joi/hmac.key}"
+MEMORY_KEY_FILE="${JOI_MEMORY_KEY_FILE:-/etc/joi/memory.key}"
+SQLCIPHER_BIN="${JOI_SQLCIPHER_BIN:-sqlcipher}"
 NEBULA_DIR="/etc/nebula"
 SERVICE_USER="${JOI_SERVICE_USER:-joi}"
+DB_MODE=""
+DB_KEY=""
+DB_MODE_INITIALIZED=false
 
 # Colors for output
 RED='\033[0;31m'
 YELLOW='\033[1;33m'
 GREEN='\033[0;32m'
 NC='\033[0m' # No Color
+DEBUG="${JOI_ADMIN_DEBUG:-0}"
+
+if [[ "$DEBUG" == "1" ]]; then
+    set -x
+fi
+
+on_err() {
+    local exit_code=$?
+    echo -e "${RED}Error at line ${BASH_LINENO[0]}: ${BASH_COMMAND} (exit ${exit_code})${NC}" >&2
+    exit "$exit_code"
+}
+
+trap on_err ERR
 
 usage() {
     cat << 'EOF'
@@ -41,6 +59,14 @@ DATA FLAGS (what to delete):
     --knowledge         Delete RAG knowledge chunks
     --all-data          All of the above (contexts + facts + knowledge)
 
+RESET FLAGS:
+    --reset-counters    Reset AUTOINCREMENT counters (sqlite_sequence) for
+                        messages, user_facts, context_summaries, knowledge_chunks
+                        Requires global full-memory purge (no --conversation)
+    --vacuum            Compact memory DB file after purge (VACUUM)
+                        Requires global full-memory purge (no --conversation)
+                        Shows extra warnings and asks for double confirmation
+
 SCOPE FLAGS (limit deletion):
     --conversation ID   Only affect specific conversation (phone/group ID)
                         Without this, affects ALL conversations
@@ -60,6 +86,8 @@ EXAMPLES:
     joi-admin purge --contexts --conversation +1234    # Clear one conversation (//reload)
     joi-admin purge --contexts --facts --conversation +1234  # //restart equivalent
     joi-admin purge --all-data --conversation +1234    # //reset equivalent
+    joi-admin purge --all-data --reset-counters        # Full data purge + ID counters reset
+    joi-admin purge --all-data --reset-counters --vacuum
     joi-admin purge --all-data --all-keys              # Customer handoff
     joi-admin purge --everything --nebula-ca           # True factory reset
 
@@ -87,6 +115,92 @@ check_root() {
     fi
 }
 
+sql_escape_literal() {
+    # Escape single quotes for SQL string literals.
+    printf "%s" "$1" | sed "s/'/''/g"
+}
+
+ensure_db_mode() {
+    if $DB_MODE_INITIALIZED; then
+        return
+    fi
+    DB_MODE_INITIALIZED=true
+
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        return
+    fi
+
+    if command -v sqlite3 >/dev/null 2>&1; then
+        # Probe schema access (not just SELECT 1), so encrypted DBs are rejected.
+        if sqlite3 "$MEMORY_DB" "SELECT count(*) FROM sqlite_master WHERE type='table';" >/dev/null 2>&1; then
+            DB_MODE="sqlite3"
+            return
+        fi
+    fi
+
+    if command -v "$SQLCIPHER_BIN" >/dev/null 2>&1; then
+        if [[ -f "$MEMORY_KEY_FILE" ]]; then
+            DB_KEY=$(tr -d '\r\n' < "$MEMORY_KEY_FILE")
+            if [[ -n "$DB_KEY" ]]; then
+                if "$SQLCIPHER_BIN" "$MEMORY_DB" <<EOF >/dev/null 2>&1
+PRAGMA key = '$DB_KEY';
+SELECT count(*) FROM sqlite_master WHERE type='table';
+EOF
+                then
+                    DB_MODE="sqlcipher_key"
+                    return
+                fi
+            fi
+        fi
+
+        # Fallback: sqlcipher can also open plaintext DBs.
+        if "$SQLCIPHER_BIN" "$MEMORY_DB" "SELECT count(*) FROM sqlite_master WHERE type='table';" >/dev/null 2>&1; then
+            DB_MODE="sqlcipher_plain"
+            return
+        fi
+    fi
+
+    error "Cannot open memory DB ($MEMORY_DB). Install sqlite3/sqlcipher and check JOI_MEMORY_KEY_FILE."
+}
+
+db_exec() {
+    local sql="$1"
+    ensure_db_mode
+
+    if [[ "$DEBUG" == "1" ]]; then
+        echo "[DEBUG] DB mode: ${DB_MODE}" >&2
+        echo "[DEBUG] SQL: ${sql}" >&2
+    fi
+
+    case "$DB_MODE" in
+        sqlite3)
+            sqlite3 "$MEMORY_DB" "$sql"
+            ;;
+        sqlcipher_key)
+            "$SQLCIPHER_BIN" "$MEMORY_DB" <<EOF
+PRAGMA key = '$DB_KEY';
+$sql
+EOF
+            ;;
+        sqlcipher_plain)
+            "$SQLCIPHER_BIN" "$MEMORY_DB" "$sql"
+            ;;
+        *)
+            error "Database engine not initialized"
+            ;;
+    esac
+}
+
+db_scalar() {
+    local sql="$1"
+    local output
+    output=$(db_exec "$sql")
+
+    # sqlcipher can emit a standalone "ok" line from PRAGMA key.
+    # Return first real scalar value.
+    printf "%s\n" "$output" | awk 'NF && $0 != "ok" { print; exit }'
+}
+
 # Purge messages and summaries
 purge_contexts() {
     local conversation="$1"
@@ -98,15 +212,22 @@ purge_contexts() {
     fi
 
     if [[ -n "$conversation" ]]; then
+        local conversation_escaped
+        conversation_escaped=$(sql_escape_literal "$conversation")
         echo "Purging contexts for conversation: $conversation"
-        count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM messages WHERE conversation_id = '$conversation';")
-        sqlite3 "$MEMORY_DB" "DELETE FROM messages WHERE conversation_id = '$conversation';"
-        sqlite3 "$MEMORY_DB" "DELETE FROM context_summaries WHERE conversation_id = '$conversation';"
+        count=$(db_scalar "SELECT COUNT(*) FROM messages WHERE conversation_id = '$conversation_escaped';")
+        # Break self-referential reply chains before deleting parent rows.
+        # Without this, SQLite can fail with FOREIGN KEY constraint errors.
+        db_exec "UPDATE messages SET reply_to_id = NULL WHERE reply_to_id IN (SELECT message_id FROM messages WHERE conversation_id = '$conversation_escaped');"
+        db_exec "DELETE FROM messages WHERE conversation_id = '$conversation_escaped';"
+        db_exec "DELETE FROM context_summaries WHERE conversation_id = '$conversation_escaped';"
     else
         echo "Purging ALL contexts"
-        count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM messages;")
-        sqlite3 "$MEMORY_DB" "DELETE FROM messages;"
-        sqlite3 "$MEMORY_DB" "DELETE FROM context_summaries;"
+        count=$(db_scalar "SELECT COUNT(*) FROM messages;")
+        # Clear reply links first to avoid FK failures on bulk delete.
+        db_exec "UPDATE messages SET reply_to_id = NULL WHERE reply_to_id IS NOT NULL;"
+        db_exec "DELETE FROM messages;"
+        db_exec "DELETE FROM context_summaries;"
     fi
 
     info "  Deleted $count messages"
@@ -123,13 +244,15 @@ purge_facts() {
     fi
 
     if [[ -n "$conversation" ]]; then
+        local conversation_escaped
+        conversation_escaped=$(sql_escape_literal "$conversation")
         echo "Purging facts for conversation: $conversation"
-        count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM user_facts WHERE conversation_id = '$conversation';")
-        sqlite3 "$MEMORY_DB" "DELETE FROM user_facts WHERE conversation_id = '$conversation';"
+        count=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE conversation_id = '$conversation_escaped';")
+        db_exec "DELETE FROM user_facts WHERE conversation_id = '$conversation_escaped';"
     else
         echo "Purging ALL facts"
-        count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM user_facts;")
-        sqlite3 "$MEMORY_DB" "DELETE FROM user_facts;"
+        count=$(db_scalar "SELECT COUNT(*) FROM user_facts;")
+        db_exec "DELETE FROM user_facts;"
     fi
 
     info "  Deleted $count facts"
@@ -138,6 +261,7 @@ purge_facts() {
 # Purge knowledge chunks
 purge_knowledge() {
     local count=0
+    local delete_err=""
 
     if [[ ! -f "$MEMORY_DB" ]]; then
         warn "Memory database not found: $MEMORY_DB"
@@ -145,10 +269,27 @@ purge_knowledge() {
     fi
 
     echo "Purging knowledge chunks"
-    count=$(sqlite3 "$MEMORY_DB" "SELECT COUNT(*) FROM knowledge_chunks;")
-    sqlite3 "$MEMORY_DB" "DELETE FROM knowledge_chunks;"
-    # Also clear FTS index if it exists
-    sqlite3 "$MEMORY_DB" "DELETE FROM knowledge_fts;" 2>/dev/null || true
+    count=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks;")
+
+    # Primary path: delete chunks directly.
+    # Fallback path: some sqlcipher builds lack FTS5 module and fail via triggers.
+    if ! delete_err=$(db_exec "DELETE FROM knowledge_chunks;" 2>&1); then
+        if printf "%s" "$delete_err" | grep -qi "no such module: fts5"; then
+            warn "FTS5 module unavailable in current sqlcipher; dropping knowledge FTS triggers and retrying."
+            db_exec "DROP TRIGGER IF EXISTS knowledge_ai;"
+            db_exec "DROP TRIGGER IF EXISTS knowledge_ad;"
+            db_exec "DROP TRIGGER IF EXISTS knowledge_au;"
+            db_exec "DELETE FROM knowledge_chunks;"
+        else
+            printf "%s\n" "$delete_err" >&2
+            error "Failed to purge knowledge chunks"
+        fi
+    fi
+
+    # Also clear FTS index if available in this engine build.
+    if ! db_exec "DELETE FROM knowledge_fts;" >/dev/null 2>&1; then
+        warn "Skipping knowledge_fts clear (FTS5 module not available in this sqlcipher build)."
+    fi
 
     info "  Deleted $count knowledge chunks"
 }
@@ -231,7 +372,7 @@ reset_system_state() {
     fi
 
     echo "Resetting system state"
-    sqlite3 "$MEMORY_DB" << 'SQL'
+    db_exec "$(cat << 'SQL'
 UPDATE system_state SET value = '0' WHERE key IN (
     'last_interaction_at',
     'last_impulse_check_at',
@@ -243,7 +384,51 @@ UPDATE system_state SET value = '0' WHERE key IN (
 UPDATE system_state SET value = '' WHERE key = 'current_conversation_topic';
 UPDATE system_state SET value = '"idle"' WHERE key = 'agent_state';
 SQL
+)"
     info "  System state reset"
+}
+
+reset_autoincrement_counters() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        return
+    fi
+
+    echo "Resetting AUTOINCREMENT counters"
+
+    local non_empty_tables
+    non_empty_tables=$(db_exec "$(cat << 'SQL'
+SELECT table_name || ' (' || row_count || ' rows)'
+FROM (
+    SELECT 'messages' AS table_name, COUNT(*) AS row_count FROM messages
+    UNION ALL
+    SELECT 'user_facts', COUNT(*) FROM user_facts
+    UNION ALL
+    SELECT 'context_summaries', COUNT(*) FROM context_summaries
+    UNION ALL
+    SELECT 'knowledge_chunks', COUNT(*) FROM knowledge_chunks
+) t
+WHERE row_count > 0
+ORDER BY table_name;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+    if [[ -n "${non_empty_tables//[$'\t\r\n ']/}" ]]; then
+        error "--reset-counters requires empty memory tables, found data in: $non_empty_tables"
+    fi
+
+    db_exec "DELETE FROM sqlite_sequence WHERE name IN ('messages','user_facts','context_summaries','knowledge_chunks');"
+    info "  AUTOINCREMENT counters reset"
+}
+
+vacuum_memory_db() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        warn "Memory database not found: $MEMORY_DB"
+        return
+    fi
+
+    echo "Running VACUUM on memory database"
+    db_exec "VACUUM;"
+    info "  Memory database compacted"
 }
 
 # Main purge command
@@ -251,6 +436,8 @@ cmd_purge() {
     local do_contexts=false
     local do_facts=false
     local do_knowledge=false
+    local do_reset_counters=false
+    local do_vacuum=false
     local do_hmac=false
     local do_nebula_keys=false
     local do_nebula_ca=false
@@ -275,6 +462,14 @@ cmd_purge() {
                 do_contexts=true
                 do_facts=true
                 do_knowledge=true
+                shift
+                ;;
+            --reset-counters)
+                do_reset_counters=true
+                shift
+                ;;
+            --vacuum)
+                do_vacuum=true
                 shift
                 ;;
             --conversation)
@@ -317,7 +512,7 @@ cmd_purge() {
     done
 
     # Check if anything to do
-    if ! $do_contexts && ! $do_facts && ! $do_knowledge && ! $do_hmac && ! $do_nebula_keys && ! $do_nebula_ca; then
+    if ! $do_contexts && ! $do_facts && ! $do_knowledge && ! $do_hmac && ! $do_nebula_keys && ! $do_nebula_ca && ! $do_reset_counters && ! $do_vacuum; then
         echo "No purge flags specified. Nothing to do."
         echo ""
         echo "Run 'joi-admin purge --help' for usage."
@@ -329,12 +524,34 @@ cmd_purge() {
         error "--nebula-ca requires --nebula-keys or --everything"
     fi
 
+    # Counter reset safety checks
+    if $do_reset_counters; then
+        if [[ -n "$conversation" ]]; then
+            error "--reset-counters cannot be used with --conversation"
+        fi
+        if ! $do_contexts || ! $do_facts || ! $do_knowledge; then
+            error "--reset-counters requires full memory purge: --all-data (or --contexts --facts --knowledge)"
+        fi
+    fi
+
+    # Vacuum safety checks
+    if $do_vacuum; then
+        if [[ -n "$conversation" ]]; then
+            error "--vacuum cannot be used with --conversation"
+        fi
+        if ! $do_contexts || ! $do_facts || ! $do_knowledge; then
+            error "--vacuum requires full memory purge: --all-data (or --contexts --facts --knowledge)"
+        fi
+    fi
+
     # Confirm destructive action
     echo ""
     echo "=== PURGE SUMMARY ==="
     $do_contexts && echo "  - Contexts (messages, summaries)"
     $do_facts && echo "  - User facts"
     $do_knowledge && echo "  - Knowledge chunks"
+    $do_reset_counters && echo "  - Reset AUTOINCREMENT counters"
+    $do_vacuum && echo "  - VACUUM memory database"
     $do_hmac && echo "  - HMAC key (regenerate)"
     $do_nebula_keys && echo "  - Nebula host keys"
     $do_nebula_ca && echo "  - Nebula CA certificate"
@@ -348,6 +565,28 @@ cmd_purge() {
         exit 1
     fi
 
+    if $do_vacuum; then
+        echo ""
+        warn "VACUUM rewrites the entire database file."
+        warn "Ensure sufficient free disk space (roughly at least DB size)."
+        warn "If joi-api is running and writing to DB, VACUUM can fail (database locked)."
+        warn "Recommended: stop joi-api before running purge with --vacuum."
+
+        read -p "Proceed with VACUUM after purge? [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 1
+        fi
+
+        read -p "Confirm VACUUM again (second confirmation) [y/N] " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Aborted."
+            exit 1
+        fi
+    fi
+
     echo ""
     echo "=== PURGING ==="
 
@@ -355,6 +594,8 @@ cmd_purge() {
     $do_contexts && purge_contexts "$conversation"
     $do_facts && purge_facts "$conversation"
     $do_knowledge && purge_knowledge
+    $do_reset_counters && reset_autoincrement_counters
+    $do_vacuum && vacuum_memory_db
 
     # Reset system state if purging all data
     if $do_contexts && $do_facts && [[ -z "$conversation" ]]; then

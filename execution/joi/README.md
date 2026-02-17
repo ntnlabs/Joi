@@ -68,6 +68,7 @@ See [ENV-REFERENCE.md](../../ENV-REFERENCE.md) for complete documentation.
 |----------|---------|-------------|
 | `JOI_MEMORY_DB` | /var/lib/joi/memory.db | SQLite database path |
 | `JOI_CONTEXT_MESSAGES` | 40 | Recent messages in LLM context |
+| `JOI_REQUIRE_ENCRYPTED_DB` | 1 | Require encrypted DB (fail if not available) |
 
 ### Consolidation
 | Variable | Default | Description |
