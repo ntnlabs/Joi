@@ -322,6 +322,15 @@ Drop files into scope directories for automatic ingestion:
 
 The scheduler checks every tick (60s default). Supported: `.txt`, `.md` files.
 
+**Directory setup** (setgid allows admin users to drop files):
+
+```bash
+sudo mkdir -p /var/lib/joi/ingestion/input /var/lib/joi/ingestion/done
+sudo chown -R joi:joi /var/lib/joi/ingestion
+sudo chmod 2775 /var/lib/joi/ingestion/input
+sudo usermod -aG joi <your-admin-user>
+```
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_INGESTION_DIR` | /var/lib/joi/ingestion | Base ingestion directory |
