@@ -180,6 +180,19 @@ class NonceStore:
         )
         # Don't commit here - will be committed with the nonce insert
 
+    def cleanup_expired(self) -> int:
+        """Public method to cleanup expired nonces. Returns count deleted."""
+        now = get_timestamp_ms()
+        cursor = self._conn.execute(
+            "DELETE FROM replay_nonces WHERE expires_at < ?",
+            (now,)
+        )
+        deleted = cursor.rowcount
+        self._conn.commit()
+        if deleted > 0:
+            logger.debug("Cleaned up %d expired nonces", deleted)
+        return deleted
+
 
 def create_request_headers(body: bytes, secret: bytes) -> dict:
     """Create HMAC authentication headers for a request.

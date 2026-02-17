@@ -251,9 +251,23 @@ class Scheduler:
         """
         logger.debug("Scheduler tick #%d", self._tick_count + 1)
 
+        # Cleanup expired nonces every 60 ticks (~1 hour with 60s interval)
+        if self._tick_count % 60 == 0:
+            self._cleanup_nonces()
+
         # Placeholder for future implementation:
         # - self._check_reminders()
         # - self._check_wind_impulse()
+
+    def _cleanup_nonces(self):
+        """Cleanup expired nonces from the replay protection store."""
+        if nonce_store:
+            try:
+                deleted = nonce_store.cleanup_expired()
+                if deleted > 0:
+                    logger.info("Scheduler: cleaned up %d expired nonces", deleted)
+            except Exception as e:
+                logger.warning("Scheduler: nonce cleanup failed: %s", e)
 
     def get_status(self) -> dict:
         """Get scheduler status for health endpoint."""
