@@ -308,6 +308,27 @@ Knowledge is scoped per-user/group by default. Each conversation can only access
 ./scripts/ingest-knowledge.py docs/ --scope "GroupID123"
 ```
 
+### Auto-Ingestion (Watched Directory)
+
+Drop files into scope directories for automatic ingestion:
+
+```
+/var/lib/joi/ingestion/
+├── input/
+│   ├── +1234567890/     # files here → scope "+1234567890"
+│   └── GroupABC123/     # files here → scope "GroupABC123"
+└── done/                # processed files tracked here
+```
+
+The scheduler checks every tick (60s default). Supported: `.txt`, `.md` files.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_INGESTION_DIR` | /var/lib/joi/ingestion | Base ingestion directory |
+| `JOI_INGESTION_KEEP_FILES` | 0 | 0=touch marker + delete original, 1=move to done/ |
+| `JOI_INGESTION_CHUNK_SIZE` | 500 | Chunk size in characters |
+| `JOI_INGESTION_OVERLAP` | 50 | Overlap between chunks |
+
 ### Sharing Knowledge Between Users/Groups
 
 Create a `.knowledge` file to grant access to other scopes:
