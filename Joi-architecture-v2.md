@@ -2654,21 +2654,22 @@ sudo ufw enable
 
 All VMs on vmbr1 must maintain synchronized clocks for API timestamp validation (5-minute tolerance).
 
-**NTP Source:** Firewall/gateway on vmbr1 network
-- Gateway syncs to external NTP (pool.ntp.org) via WAN
-- All vmbr1 VMs sync to gateway as their NTP server
+**NTP Source:** Dedicated NTP VM on vmbr1 network (e.g., `172.22.22.3`)
+- NTP VM syncs to external NTP (pool.ntp.org) via WAN
+- All vmbr1 clients sync to NTP VM (including gateway, mesh, joi, openhab)
 - This keeps joi air-gapped (no direct internet NTP access)
 
 **Configuration (all VMs on vmbr1):**
 ```bash
 # /etc/chrony/chrony.conf (or /etc/ntp.conf)
-server 10.99.0.254 iburst prefer  # Gateway IP (adjust as needed)
+server 172.22.22.3 iburst prefer  # NTP VM IP (adjust as needed)
 # No pool.ntp.org - isolated network
 ```
 
 **VMs requiring sync:**
 | VM | NTP Client | Notes |
 |----|------------|-------|
+| gateway | Yes | Admin node should use same trusted internal time source |
 | joi | Yes | Critical - validates all inbound timestamps |
 | mesh | Yes | Sends timestamps to joi |
 | openhab | Yes | Sends event timestamps to joi |
@@ -2683,7 +2684,7 @@ server 10.99.0.254 iburst prefer  # Gateway IP (adjust as needed)
 - Log NTP sync failures
 
 > **NTP Attack Vector:**
-> If an attacker compromises the gateway (NTP source), they could:
+> If an attacker compromises the NTP VM (time source), they could:
 > - Set clocks far in future → all cached nonces appear valid for replay
 > - Set clocks far in past → all timestamps rejected, denial of service
 > - Slowly drift clocks → gradual timestamp manipulation
@@ -2699,8 +2700,7 @@ server 10.99.0.254 iburst prefer  # Gateway IP (adjust as needed)
 >    of old challenges are rejected even if clock is manipulated
 > 3. **Cross-check mesh/joi clocks:** During heartbeat, compare joi and mesh timestamps.
 >    If delta > 60 seconds, alert (possible NTP compromise or network issue)
-> 4. **Gateway is trusted:** Gateway compromise = network compromise anyway.
->    NTP spoofing is lower priority than other gateway-level attacks.
+> 4. **NTP VM is trusted infrastructure:** If compromised, treat as network integrity incident.
 
 ## Open Questions / Next Decisions
 - ✓ RESOLVED: mesh ↔ joi auth uses Nebula certificates (annual rotation recommended).
