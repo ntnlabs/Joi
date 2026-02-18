@@ -61,6 +61,39 @@ Note: socket mode is not supported by this build.
 curl http://127.0.0.1:8444/health
 ```
 
+## Delivery Tracking
+
+Outbound messages are tracked for delivery confirmation. When Signal sends delivery/read receipts, the tracker updates status.
+
+**Query status for a specific message (by timestamp):**
+
+```bash
+curl "http://127.0.0.1:8444/api/v1/delivery/status?timestamp=1234567890123"
+```
+
+Response:
+```json
+{
+  "status": "ok",
+  "data": {
+    "timestamp": 1234567890123,
+    "delivered": true,
+    "read": false,
+    "delivered_at": 1234567891000,
+    "read_at": null,
+    "sent_at": 1234567890500
+  }
+}
+```
+
+**Query all tracked messages (debugging):**
+
+```bash
+curl http://127.0.0.1:8444/api/v1/delivery/status
+```
+
+Messages are tracked for 24 hours (configurable via `DeliveryTracker` TTL).
+
 ## Test Send (disabled by default)
 
 Enable explicitly:
