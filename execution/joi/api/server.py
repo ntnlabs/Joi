@@ -30,6 +30,8 @@ from hmac_auth import (
     verify_timestamp,
     DEFAULT_TIMESTAMP_TOLERANCE_MS,
 )
+from policy_manager import PolicyManager
+from hmac_rotator import HMACRotator
 
 from config import (
     load_settings,
@@ -224,6 +226,9 @@ class Scheduler:
             if self._stop_event.wait(self._startup_delay):
                 return  # Stop requested during startup delay
 
+        # Push config to mesh on startup
+        self._startup_config_push()
+
         logger.info("Scheduler active, first tick in %.1fs", self._interval)
 
         while self._running:
@@ -258,10 +263,18 @@ class Scheduler:
         # Auto-ingestion check every tick (cheap if no files)
         self._check_ingestion()
 
+        # Config sync check every 10 ticks (~10 min with 60s interval)
+        if self._tick_count % 10 == 0:
+            self._check_config_sync()
+
         # Low-priority maintenance tasks every 60 ticks (~1 hour with 60s interval)
         if self._tick_count % 60 == 0:
             self._cleanup_nonces()
             self._check_tamper()
+
+        # Weekly HMAC rotation check once per day (1440 ticks with 60s interval)
+        if self._tick_count % 1440 == 0 and self._tick_count > 0:
+            self._check_hmac_rotation()
 
         # Placeholder for future implementation:
         # - self._check_reminders()
@@ -297,6 +310,50 @@ class Scheduler:
             run_auto_ingestion(memory)
         except Exception as e:
             logger.warning("Scheduler: auto-ingestion failed: %s", e)
+
+    def _check_config_sync(self):
+        """Check if config needs to be pushed to mesh."""
+        if not config_push_client:
+            return
+        try:
+            if config_push_client.needs_push():
+                logger.info("Scheduler: config changed, pushing to mesh")
+                success, result = config_push_client.push_config()
+                if success:
+                    logger.info("Scheduler: config push successful, hash=%s", result[:16])
+                else:
+                    logger.warning("Scheduler: config push failed: %s", result)
+        except Exception as e:
+            logger.warning("Scheduler: config sync check failed: %s", e)
+
+    def _check_hmac_rotation(self):
+        """Check if HMAC rotation is due (weekly)."""
+        if not hmac_rotator:
+            return
+        try:
+            if hmac_rotator.should_rotate():
+                logger.info("Scheduler: HMAC rotation due, rotating...")
+                success, result = hmac_rotator.rotate(use_grace_period=True)
+                if success:
+                    logger.info("Scheduler: HMAC rotation successful")
+                else:
+                    logger.warning("Scheduler: HMAC rotation failed: %s", result)
+        except Exception as e:
+            logger.warning("Scheduler: HMAC rotation check failed: %s", e)
+
+    def _startup_config_push(self):
+        """Push config to mesh on startup to ensure sync."""
+        if not config_push_client:
+            return
+        try:
+            logger.info("Startup: pushing config to mesh...")
+            success, result = config_push_client.push_config(force=True)
+            if success:
+                logger.info("Startup: config push successful, hash=%s", result[:16])
+            else:
+                logger.warning("Startup: config push failed: %s", result)
+        except Exception as e:
+            logger.warning("Startup: config push failed: %s", e)
 
     def get_status(self) -> dict:
         """Get scheduler status for health endpoint."""
@@ -377,6 +434,122 @@ _send_lock = threading.Lock()
 
 # Initialize memory consolidator
 consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
+
+# Initialize policy manager for mesh config sync
+policy_manager = PolicyManager()
+
+
+class ConfigPushClient:
+    """
+    Pushes config to mesh and tracks sync state.
+
+    Joi is authoritative for mesh policy. This client pushes updates
+    to mesh whenever policy changes, on startup, and periodically.
+    """
+
+    def __init__(
+        self,
+        mesh_url: str,
+        hmac_secret: Optional[bytes],
+        policy: PolicyManager,
+    ):
+        self._mesh_url = mesh_url
+        self._hmac_secret = hmac_secret
+        self._policy = policy
+        self._last_push_hash: Optional[str] = None
+        self._last_push_time: Optional[float] = None
+        self._lock = threading.Lock()
+
+    def push_config(self, force: bool = False) -> tuple[bool, str]:
+        """
+        Push current config to mesh.
+
+        Args:
+            force: Push even if hash unchanged
+
+        Returns:
+            (success, mesh_reported_hash or error message)
+        """
+        import json
+
+        with self._lock:
+            current_hash = self._policy.get_config_hash()
+
+            # Skip if unchanged (unless forced)
+            if not force and self._last_push_hash == current_hash:
+                logger.debug("Config unchanged, skipping push")
+                return True, current_hash
+
+            config = self._policy.get_config_for_push()
+            body = json.dumps(config).encode("utf-8")
+
+            headers = {"Content-Type": "application/json"}
+            if self._hmac_secret:
+                hmac_headers = create_request_headers(body, self._hmac_secret)
+                headers.update(hmac_headers)
+
+            url = f"{self._mesh_url}/config/sync"
+
+            try:
+                with httpx.Client(timeout=10.0) as client:
+                    resp = client.post(url, content=body, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
+
+                if data.get("status") == "ok":
+                    mesh_hash = data.get("data", {}).get("config_hash", "")
+                    self._last_push_hash = mesh_hash
+                    self._last_push_time = time.time()
+                    logger.info(
+                        "Config push successful, hash=%s",
+                        mesh_hash[:16] if mesh_hash else "none",
+                    )
+                    return True, mesh_hash
+
+                error = data.get("error", "unknown")
+                logger.error("Mesh returned error on config push: %s", error)
+                return False, error
+
+            except httpx.HTTPStatusError as exc:
+                logger.error("Config push HTTP error: %s", exc)
+                return False, f"http_error_{exc.response.status_code}"
+            except Exception as exc:
+                logger.error("Config push failed: %s", exc)
+                return False, str(exc)
+
+    def verify_sync(self, mesh_hash: str) -> bool:
+        """Verify mesh config hash matches local."""
+        return mesh_hash == self._policy.get_config_hash()
+
+    def needs_push(self) -> bool:
+        """Check if config has changed since last push."""
+        return self._last_push_hash != self._policy.get_config_hash()
+
+    def get_status(self) -> dict:
+        """Get sync status info."""
+        with self._lock:
+            local_hash = self._policy.get_config_hash()
+            return {
+                "local_hash": local_hash,
+                "last_push_hash": self._last_push_hash,
+                "last_push_time": self._last_push_time,
+                "in_sync": self._last_push_hash == local_hash,
+            }
+
+
+# Initialize config push client (None if HMAC not enabled)
+config_push_client: Optional[ConfigPushClient] = None
+hmac_rotator: Optional[HMACRotator] = None
+if HMAC_ENABLED:
+    config_push_client = ConfigPushClient(
+        mesh_url=settings.mesh_url,
+        hmac_secret=HMAC_SECRET,
+        policy=policy_manager,
+    )
+    hmac_rotator = HMACRotator(
+        mesh_url=settings.mesh_url,
+        policy_manager=policy_manager,
+    )
 
 # Ensure prompts directory exists
 ensure_prompts_dir()
@@ -703,6 +876,7 @@ def health():
     summaries = memory.get_recent_summaries(days=30, limit=100)
     knowledge_sources = memory.get_knowledge_sources()
     knowledge_chunks = sum(s["chunk_count"] for s in knowledge_sources)
+    config_sync = config_push_client.get_status() if config_push_client else {"enabled": False}
     return {
         "status": "ok",
         "model": settings.ollama_model,
@@ -721,7 +895,107 @@ def health():
         "queue": {
             "size": message_queue.get_queue_size(),
         },
-        "scheduler": scheduler.get_status() if scheduler else {"running": False}
+        "scheduler": scheduler.get_status() if scheduler else {"running": False},
+        "config_sync": config_sync,
+    }
+
+
+# --- Admin Endpoints ---
+
+def _is_local_request(request: Request) -> bool:
+    """Check if request is from localhost or Nebula network (10.x.x.x)."""
+    client_ip = request.client.host if request.client else ""
+    return client_ip in ("127.0.0.1", "::1") or client_ip.startswith("10.")
+
+
+@app.get("/admin/config/status")
+def admin_config_status(request: Request):
+    """Get config sync status."""
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    if not config_push_client:
+        return {"status": "error", "error": "config_push_not_enabled"}
+
+    return {
+        "status": "ok",
+        "data": config_push_client.get_status(),
+    }
+
+
+@app.post("/admin/config/push")
+def admin_config_push(request: Request):
+    """Force push current config to mesh."""
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    if not config_push_client:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "error": "config_push_not_enabled"},
+        )
+
+    success, result = config_push_client.push_config(force=True)
+    if success:
+        return {"status": "ok", "data": {"mesh_config_hash": result}}
+
+    return JSONResponse(
+        status_code=500,
+        content={"status": "error", "error": result},
+    )
+
+
+@app.post("/admin/hmac/rotate")
+def admin_hmac_rotate(request: Request):
+    """
+    Manually trigger HMAC key rotation.
+
+    Query params:
+        grace: Set to "false" for immediate rotation (no grace period). Default: true.
+    """
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    if not hmac_rotator:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "error": "hmac_rotation_not_enabled"},
+        )
+
+    # Check for grace period option
+    use_grace = request.query_params.get("grace", "true").lower() != "false"
+
+    success, result = hmac_rotator.rotate(use_grace_period=use_grace)
+    if success:
+        return {
+            "status": "ok",
+            "message": "HMAC rotation complete",
+            "grace_period": use_grace,
+        }
+
+    return JSONResponse(
+        status_code=500,
+        content={"status": "error", "error": result},
+    )
+
+
+@app.get("/admin/hmac/status")
+def admin_hmac_status(request: Request):
+    """Get HMAC rotation status."""
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    if not hmac_rotator:
+        return {"status": "error", "error": "hmac_rotation_not_enabled"}
+
+    last_rotation = hmac_rotator.get_last_rotation_time()
+    return {
+        "status": "ok",
+        "data": {
+            "last_rotation_time": last_rotation,
+            "last_rotation_ago_hours": (time.time() - last_rotation) / 3600 if last_rotation else None,
+            "rotation_due": hmac_rotator.should_rotate(),
+        },
     }
 
 

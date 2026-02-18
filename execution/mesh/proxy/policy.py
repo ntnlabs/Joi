@@ -1,10 +1,14 @@
 from dataclasses import dataclass
 import json
+import logging
 from pathlib import Path
+import threading
 import time
 from typing import Any, Dict, List, Optional, Set
 
 from rate_limiter import InboundRateLimiter
+
+logger = logging.getLogger("mesh.policy")
 
 
 @dataclass(frozen=True)
@@ -17,7 +21,12 @@ class PolicyDecision:
 class MeshPolicy:
     def __init__(self, policy_path: str):
         self.policy_path = policy_path
-        self._config = self._load_config(policy_path)
+        self._lock = threading.Lock()
+        self._load_policy()
+
+    def _load_policy(self) -> None:
+        """Load and parse policy from disk. Caller should hold lock or be in __init__."""
+        self._config = self._load_config(self.policy_path)
 
         identity = self._config.get("identity", {})
         self.allowed_senders: Set[str] = set(identity.get("allowed_senders", []))
@@ -48,6 +57,12 @@ class MeshPolicy:
         validation = self._config.get("validation", {})
         self.max_text_length = int(validation.get("max_text_length", 1500))
         self.max_timestamp_skew_ms = int(validation.get("max_timestamp_skew_ms", 300_000))
+
+    def reload(self) -> None:
+        """Reload policy from disk. Thread-safe."""
+        with self._lock:
+            self._load_policy()
+        logger.info("Policy reloaded from %s", self.policy_path)
 
     @staticmethod
     def _load_config(path: str) -> Dict[str, Any]:

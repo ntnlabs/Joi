@@ -43,6 +43,16 @@ def _get_hmac_secret() -> Optional[bytes]:
     return _hmac_secret
 
 
+def _get_config_hash() -> Optional[str]:
+    """Get current config hash for sync verification (lazy import to avoid circular deps)."""
+    try:
+        from signal_worker import _config_state
+        config_hash = _config_state.get_hash()
+        return config_hash if config_hash else None
+    except Exception:
+        return None
+
+
 def _forward_async(url: str, payload: Dict[str, Any]) -> None:
     """Forward message in background thread with HMAC signing."""
     try:
@@ -57,6 +67,11 @@ def _forward_async(url: str, payload: Dict[str, Any]) -> None:
         if secret:
             hmac_headers = create_request_headers(body, secret)
             headers.update(hmac_headers)
+
+        # Add config hash for sync verification
+        config_hash = _get_config_hash()
+        if config_hash:
+            headers["X-Config-Hash"] = config_hash
 
         resp = client.post(url, content=body, headers=headers)
         resp.raise_for_status()
