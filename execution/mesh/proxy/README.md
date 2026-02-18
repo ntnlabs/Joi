@@ -1,29 +1,38 @@
 # Mesh Proxy
 
+## Architecture
+
+**Mesh is stateless.** It stores nothing on disk - all config comes from Joi via config push.
+
+On startup:
+1. Mesh starts with empty policy (denies all messages)
+2. Joi pushes config via `/config/sync` endpoint
+3. Mesh applies config in memory and starts processing
+
+On restart:
+1. Config is lost (by design - no traces)
+2. Joi pushes config again on next scheduler tick or startup
+
 ## First Run Setup
 
-Before starting the mesh worker for the first time:
+1. **Configure environment** in `/etc/default/mesh-signal-worker`:
+   - `SIGNAL_ACCOUNT` - Your Signal phone number
+   - `MESH_HMAC_SECRET` - Shared secret (must match Joi)
+   - `MESH_JOI_INBOUND_URL` - Joi's inbound endpoint
 
-1. **Set up policy.json** with your Signal bot's profile name:
-
-```bash
-sudo nano /etc/mesh-proxy/policy.json
-```
+2. **Configure policy on Joi** at `/var/lib/joi/policy/mesh-policy.json`:
 
 ```json
 {
   "identity": {
     "bot_name": "Your Bot Name",
-    "allowed_senders": ["+<YOUR_PHONE>"]
+    "allowed_senders": ["+<YOUR_PHONE>"],
+    "groups": {}
   }
 }
 ```
 
-The `bot_name` must match your Signal bot's profile name exactly (as it appears in Signal contacts). This is used for @mention detection in group chats - users type `@Your Bot Name` to address the bot.
-
-2. **Configure environment** in `/etc/default/mesh-signal-worker`
-
-3. **Start the service** (see systemd section below)
+3. **Start mesh first**, then Joi - Joi will push config on startup
 
 ## Run API
 
@@ -67,8 +76,12 @@ Outbound messages are tracked for delivery confirmation. When Signal sends deliv
 
 **Query status for a specific message (by timestamp):**
 
+Note: This endpoint requires HMAC authentication (X-Nonce, X-Timestamp, X-HMAC-SHA256 headers).
+
 ```bash
-curl "http://127.0.0.1:8444/api/v1/delivery/status?timestamp=1234567890123"
+# From Joi (with HMAC headers)
+curl -H "X-Nonce: ..." -H "X-Timestamp: ..." -H "X-HMAC-SHA256: ..." \
+  "http://mesh:8444/api/v1/delivery/status?timestamp=1234567890123"
 ```
 
 Response:
@@ -105,17 +118,27 @@ curl -X POST "http://127.0.0.1:8444/send_test?recipient=+<REDACTED>&message=hell
 
 ## Environment Variables
 
-- `MESH_BIND_HOST` (default: 0.0.0.0)
-- `MESH_BIND_PORT` (default: 8444)
-- `MESH_SIGNAL_MODE` (default: stdio; `socket` enables `/send_test`)
-- `SIGNAL_CLI_SOCKET` (default: /var/run/signal-cli/socket; only used in socket mode)
-- `MESH_LOG_DIR` (default: /var/log/mesh-proxy)
-- `MESH_ENABLE_TEST` (default: 0)
-- `SIGNAL_ACCOUNT` (required for `/send_test` and worker)
-- `MESH_SIGNAL_POLL_SECONDS` (default: 5; notification wait timeout)
+- `SIGNAL_ACCOUNT` (required - Signal phone number)
+- `MESH_HMAC_SECRET` (required - shared secret for auth)
+- `MESH_WORKER_HTTP_PORT` (default: 8444)
+- `MESH_SIGNAL_POLL_SECONDS` (default: 5)
 - `SIGNAL_CLI_BIN` (default: /usr/local/bin/signal-cli)
 - `SIGNAL_CLI_CONFIG_DIR` (default: /var/lib/signal-cli)
-- `MESH_POLICY_FILE` (default: /etc/mesh-proxy/policy.json)
+- `MESH_LOG_LEVEL` (default: INFO)
+
+## HMAC Authentication
+
+All requests between Joi and mesh are authenticated with HMAC-SHA256:
+- Header format: `X-Nonce`, `X-Timestamp`, `X-HMAC-SHA256`
+- Timestamp tolerance: 5 minutes
+- Nonce replay protection: 15 minutes
+
+**Key rotation** is handled automatically by Joi (weekly by default). During rotation:
+1. Joi pushes new key via config sync
+2. Mesh accepts both old and new key during 60-second grace period
+3. Old key expires after grace period
+
+Since mesh is stateless, the rotated key is stored in memory only. On restart, mesh uses `MESH_HMAC_SECRET` from environment until Joi pushes the current key.
 
 ## Forwarding to Joi (optional)
 
@@ -134,15 +157,19 @@ This is the recommended mode for production on mesh VM.
 ```bash
 sudo cp systemd/mesh-signal-worker.service /etc/systemd/system/
 sudo cp systemd/mesh-signal-worker.env.example /etc/default/mesh-signal-worker
-sudo mkdir -p /etc/mesh-proxy
-sudo cp config/policy.example.json /etc/mesh-proxy/policy.json
 ```
 
-2. Edit account and options:
+2. Edit account and HMAC secret:
 
 ```bash
 sudo nano /etc/default/mesh-signal-worker
 ```
+
+Required settings:
+- `SIGNAL_ACCOUNT` - Your Signal phone number
+- `MESH_HMAC_SECRET` - Shared secret (must match Joi)
+- `MESH_ENABLE_FORWARD=1` - Enable forwarding to Joi
+- `MESH_JOI_INBOUND_URL` - Joi's inbound endpoint
 
 3. Stop old `signal-cli` daemon service if it is still enabled:
 
@@ -157,3 +184,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now mesh-signal-worker
 sudo systemctl status mesh-signal-worker
 ```
+
+5. **Configure policy on Joi** (not on mesh - mesh is stateless):
+
+Policy is managed on Joi at `/var/lib/joi/policy/mesh-policy.json` and pushed to mesh automatically. See the First Run Setup section above.
