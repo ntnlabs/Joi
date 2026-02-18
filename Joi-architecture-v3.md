@@ -304,7 +304,9 @@ Systemd restarts the service, which re-initializes fingerprints from current sta
 | Scope | Default | Location |
 |-------|---------|----------|
 | Inbound per user | 120/hr, 20/min | Mesh (memory) |
-| Outbound | 60/hr normal, unlimited critical | Joi |
+| Outbound cooldown | 5s DM, 2s group | Joi (per-conversation) |
+
+Note: Outbound rate limiting (messages/hour) is not implemented. Only per-conversation cooldown prevents rapid-fire responses.
 
 ---
 
@@ -422,8 +424,8 @@ Actions:
 # /etc/systemd/system/joi-api.service
 [Service]
 User=joi
-WorkingDirectory=/opt/joi/execution/joi/api
-ExecStart=/opt/joi/.venv/bin/python -m uvicorn server:app
+WorkingDirectory=/opt/joi/execution/joi
+ExecStart=/usr/bin/python3 -m api.server
 EnvironmentFile=/etc/default/joi-api
 ```
 
