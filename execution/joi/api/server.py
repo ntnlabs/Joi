@@ -267,10 +267,12 @@ class Scheduler:
         if self._tick_count % 10 == 0:
             self._check_config_sync()
 
+        # Tamper detection every tick (SHA256 is cheap)
+        self._check_tamper()
+
         # Low-priority maintenance tasks every 60 ticks (~1 hour with 60s interval)
         if self._tick_count % 60 == 0:
             self._cleanup_nonces()
-            self._check_tamper()
 
         # Weekly HMAC rotation check once per day (1440 ticks with 60s interval)
         if self._tick_count % 1440 == 0 and self._tick_count > 0:
