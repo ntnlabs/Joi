@@ -1031,8 +1031,11 @@ def main() -> None:
     # Policy file may not exist on fresh deploy - service starts and waits for Joi push
     if not Path(policy_file).exists():
         logger.warning("Policy file not found: %s - will deny all until Joi pushes config", policy_file)
-        # Ensure directory exists for config push
-        Path(policy_file).parent.mkdir(parents=True, exist_ok=True)
+        # Try to create directory for config push (may fail due to sandbox)
+        try:
+            Path(policy_file).parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            logger.warning("Cannot create config directory (create manually): %s", e)
 
     policy = MeshPolicy(policy_file)
 
