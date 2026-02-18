@@ -744,9 +744,19 @@ async def hmac_verification_middleware(request: Request, call_next):
     if request.url.path == "/health":
         return await call_next(request)
 
-    # Skip HMAC for admin endpoints (protected by local-only check instead)
+    # Admin endpoints: read-only status = IP check only, sensitive actions = require HMAC
     if request.url.path.startswith("/admin/"):
-        return await call_next(request)
+        # Sensitive admin actions require HMAC (even from local)
+        sensitive_admin_paths = [
+            "/admin/hmac/rotate",
+            "/admin/security/kill-switch",
+            "/admin/security/privacy-mode",
+            "/admin/config/push",
+        ]
+        if request.url.path not in sensitive_admin_paths:
+            # Read-only status endpoints - IP check is sufficient
+            return await call_next(request)
+        # Sensitive endpoints fall through to HMAC verification below
 
     # Skip if HMAC not configured
     if not HMAC_ENABLED:
