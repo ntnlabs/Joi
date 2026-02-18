@@ -352,18 +352,17 @@ def _handle_receipt_message(raw: Dict[str, Any]) -> bool:
     if not receipt:
         return False
 
-    receipt_type = receipt.get("type", "")
-    # Signal-cli may use different field names or formats
-    if not receipt_type:
-        receipt_type = receipt.get("receiptType", "")
-    receipt_type = str(receipt_type).upper()
+    # Signal-cli uses boolean fields: isDelivery, isRead, isViewed
+    is_delivery = receipt.get("isDelivery", False)
+    is_read = receipt.get("isRead", False)
+    is_viewed = receipt.get("isViewed", False)  # For media messages
 
     timestamps = receipt.get("timestamps", [])
-    # Also try "when" field which some signal-cli versions use
-    if not timestamps:
-        timestamps = receipt.get("when", [])
 
-    logger.debug("Receipt: type=%s timestamps=%s raw=%s", receipt_type, timestamps, receipt)
+    logger.debug(
+        "Receipt: isDelivery=%s isRead=%s isViewed=%s timestamps=%s",
+        is_delivery, is_read, is_viewed, timestamps
+    )
 
     if not timestamps:
         return True  # It's a receipt but no timestamps to process
@@ -374,16 +373,14 @@ def _handle_receipt_message(raw: Dict[str, Any]) -> bool:
     # Convert to ints
     timestamps = [int(ts) for ts in timestamps if isinstance(ts, (int, float))]
 
-    if receipt_type == "DELIVERY":
+    if is_delivery:
         count = _delivery_tracker.mark_delivered(timestamps)
         if count > 0:
             logger.info("Processed %d delivery receipt(s)", count)
-    elif receipt_type == "READ":
+    if is_read or is_viewed:
         count = _delivery_tracker.mark_read(timestamps)
         if count > 0:
             logger.info("Processed %d read receipt(s)", count)
-    else:
-        logger.debug("Unknown receipt type: %s", receipt_type)
 
     return True
 
