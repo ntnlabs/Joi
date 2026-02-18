@@ -79,6 +79,86 @@ class MessageDedupeCache:
             logger.debug("Pruned %d expired dedupe entries", len(expired))
 
 
+# --- Delivery Tracker ---
+
+class DeliveryTracker:
+    """Track sent messages and their delivery status."""
+
+    def __init__(self, ttl_seconds: int = 86400, max_size: int = 10000):
+        # timestamp -> {message_id, recipient, sent_at, delivered_at, read_at}
+        self._messages: Dict[int, Dict[str, Any]] = {}
+        self._lock = threading.Lock()
+        self._ttl = ttl_seconds
+        self._max_size = max_size
+
+    def register_sent(self, timestamp: int, recipient: str, message_id: Optional[str] = None) -> None:
+        """Register a sent message for delivery tracking."""
+        with self._lock:
+            self._prune()
+            self._messages[timestamp] = {
+                "message_id": message_id,
+                "recipient": recipient,
+                "sent_at": int(time.time() * 1000),
+                "delivered_at": None,
+                "read_at": None,
+            }
+            logger.debug("Tracking message ts=%d to %s", timestamp, recipient)
+
+    def mark_delivered(self, timestamps: List[int]) -> int:
+        """Mark messages as delivered. Returns count of newly marked."""
+        count = 0
+        now = int(time.time() * 1000)
+        with self._lock:
+            for ts in timestamps:
+                if ts in self._messages and self._messages[ts]["delivered_at"] is None:
+                    self._messages[ts]["delivered_at"] = now
+                    count += 1
+                    logger.info("Message ts=%d delivered", ts)
+        return count
+
+    def mark_read(self, timestamps: List[int]) -> int:
+        """Mark messages as read. Returns count of newly marked."""
+        count = 0
+        now = int(time.time() * 1000)
+        with self._lock:
+            for ts in timestamps:
+                if ts in self._messages and self._messages[ts]["read_at"] is None:
+                    self._messages[ts]["read_at"] = now
+                    # Also mark as delivered if not already
+                    if self._messages[ts]["delivered_at"] is None:
+                        self._messages[ts]["delivered_at"] = now
+                    count += 1
+                    logger.info("Message ts=%d read", ts)
+        return count
+
+    def get_status(self, timestamp: int) -> Optional[Dict[str, Any]]:
+        """Get delivery status for a message."""
+        with self._lock:
+            return self._messages.get(timestamp)
+
+    def get_all_status(self) -> Dict[int, Dict[str, Any]]:
+        """Get all tracked messages (for debugging)."""
+        with self._lock:
+            return dict(self._messages)
+
+    def _prune(self) -> None:
+        """Remove old entries."""
+        now = time.time()
+        cutoff = int((now - self._ttl) * 1000)
+        expired = [ts for ts, data in self._messages.items() if data["sent_at"] < cutoff]
+        for ts in expired:
+            del self._messages[ts]
+
+        if len(self._messages) > self._max_size:
+            sorted_items = sorted(self._messages.items(), key=lambda x: x[1]["sent_at"])
+            to_remove = len(self._messages) - self._max_size
+            for ts, _ in sorted_items[:to_remove]:
+                del self._messages[ts]
+
+
+_delivery_tracker = DeliveryTracker()
+
+
 # Global RPC client (shared between receiver thread and HTTP server)
 _rpc: Optional[JsonRpcStdioClient] = None
 _rpc_lock = threading.Lock()
@@ -149,6 +229,39 @@ def health():
     return jsonify({"status": "ok", "mode": "worker", "hmac": hmac_status})
 
 
+@flask_app.route("/api/v1/delivery/status", methods=["GET"])
+def delivery_status():
+    """Query delivery status for a message by timestamp."""
+    ts_str = request.args.get("timestamp")
+    if not ts_str:
+        # Return all tracked messages (for debugging)
+        return jsonify({
+            "status": "ok",
+            "data": {str(k): v for k, v in _delivery_tracker.get_all_status().items()}
+        })
+
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        return jsonify({"status": "error", "error": "invalid_timestamp"}), 400
+
+    status = _delivery_tracker.get_status(ts)
+    if status is None:
+        return jsonify({"status": "ok", "data": None, "message": "not_tracked"})
+
+    return jsonify({
+        "status": "ok",
+        "data": {
+            "timestamp": ts,
+            "delivered": status["delivered_at"] is not None,
+            "read": status["read_at"] is not None,
+            "delivered_at": status["delivered_at"],
+            "read_at": status["read_at"],
+            "sent_at": status["sent_at"],
+        }
+    })
+
+
 @flask_app.route("/api/v1/message/outbound", methods=["POST"])
 def send_outbound():
     """Handle outbound messages from Joi."""
@@ -207,19 +320,63 @@ def send_outbound():
     elif isinstance(res, list) and res:
         sent_at = res[0].get("timestamp")
 
-    logger.info("Sent message to %s", transport_id or group_id)
+    # Track for delivery confirmation
+    if sent_at:
+        recipient_id = group_id if target == "group" else transport_id
+        _delivery_tracker.register_sent(sent_at, recipient_id)
+
+    logger.info("Sent message to %s (ts=%s)", transport_id or group_id, sent_at)
     return jsonify({
         "status": "ok",
         "data": {
             "message_id": str(sent_at) if sent_at else None,
             "transport": "signal",
             "sent_at": sent_at,
-            "delivered": False,
+            "delivered": False,  # Will be updated async via receipts
         }
     })
 
 
 # --- Helper functions ---
+
+def _handle_receipt_message(raw: Dict[str, Any]) -> bool:
+    """
+    Handle receipt messages (delivery/read confirmations).
+    Returns True if this was a receipt message, False otherwise.
+    """
+    envelope = _as_dict(raw.get("envelope"))
+    if not envelope:
+        return False
+
+    receipt = _as_dict(envelope.get("receiptMessage"))
+    if not receipt:
+        return False
+
+    receipt_type = receipt.get("type", "").upper()
+    timestamps = receipt.get("timestamps", [])
+
+    if not timestamps:
+        return True  # It's a receipt but no timestamps to process
+
+    if not isinstance(timestamps, list):
+        timestamps = [timestamps]
+
+    # Convert to ints
+    timestamps = [int(ts) for ts in timestamps if isinstance(ts, (int, float))]
+
+    if receipt_type == "DELIVERY":
+        count = _delivery_tracker.mark_delivered(timestamps)
+        if count > 0:
+            logger.info("Processed %d delivery receipt(s)", count)
+    elif receipt_type == "READ":
+        count = _delivery_tracker.mark_read(timestamps)
+        if count > 0:
+            logger.info("Processed %d read receipt(s)", count)
+    else:
+        logger.debug("Unknown receipt type: %s", receipt_type)
+
+    return True
+
 
 def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
@@ -472,11 +629,15 @@ def main() -> None:
                 messages = _extract_messages([notification])
 
                 if messages:
-                    logger.info("Received %d message(s) from Signal", len(messages))
+                    logger.debug("Received %d raw message(s) from Signal", len(messages))
                 for msg in messages:
+                    # Check for delivery/read receipts first
+                    if _handle_receipt_message(msg):
+                        continue  # Receipt handled, no further processing needed
+
                     payload = _normalize_signal_message(msg, bot_account=_account)
                     if payload is None:
-                        logger.info("Skipping unsupported Signal event")
+                        logger.debug("Skipping unsupported Signal event")
                         continue
 
                     # Dedupe check - drop if we've seen this message_id before
