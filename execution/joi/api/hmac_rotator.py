@@ -53,7 +53,10 @@ class HMACRotator:
         self._grace_period_ms = grace_period_ms
         self._lock = threading.Lock()
 
-        # Track old secret during grace period
+        # Live secret (updated after rotation, used for signing)
+        self._current_secret: Optional[bytes] = None
+
+        # Track old secret during grace period (for verification)
         self._old_secret: Optional[bytes] = None
         self._old_secret_expires: float = 0
 
@@ -146,7 +149,10 @@ class HMACRotator:
                 self._old_secret_expires = time.time() + (grace_ms / 1000)
                 logger.info("Old key valid until: %s", time.ctime(self._old_secret_expires))
 
-            # Update local env file
+            # Store new secret in memory for immediate use
+            self._current_secret = new_secret
+
+            # Update local env file (for persistence across restarts)
             if not self._update_env_file(new_secret_hex):
                 return False, "failed_to_update_env"
 
@@ -154,7 +160,7 @@ class HMACRotator:
             self._last_rotation_time = time.time()
             self._save_state()
 
-            logger.info("HMAC rotation complete, new key active")
+            logger.info("HMAC rotation complete, new key active in memory")
             return True, "ok"
 
     def _update_env_file(self, new_secret_hex: str) -> bool:
@@ -192,6 +198,17 @@ class HMACRotator:
             logger.error("Failed to update env file: %s", e)
             return False
 
+    def get_current_secret(self) -> Optional[bytes]:
+        """
+        Get current secret for signing outbound requests.
+
+        Returns in-memory secret if rotated, otherwise falls back to env.
+        """
+        with self._lock:
+            if self._current_secret:
+                return self._current_secret
+        return get_shared_secret()
+
     def get_valid_secrets(self) -> list[bytes]:
         """
         Get list of valid secrets (current + old during grace period).
@@ -200,7 +217,8 @@ class HMACRotator:
         """
         secrets_list = []
 
-        current = get_shared_secret()
+        # Use in-memory secret if available, otherwise env
+        current = self.get_current_secret()
         if current:
             secrets_list.append(current)
 

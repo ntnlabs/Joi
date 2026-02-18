@@ -31,8 +31,24 @@ def _get_client() -> httpx.Client:
 
 
 def _get_hmac_secret() -> Optional[bytes]:
-    """Get cached HMAC secret."""
+    """
+    Get current HMAC secret for signing.
+
+    Gets live secret from config_state (supports rotation),
+    falls back to env if config_state not ready.
+    """
     global _hmac_secret, _hmac_secret_loaded
+
+    # Try to get live secret from config_state (supports rotation)
+    try:
+        from signal_worker import _config_state
+        current, _ = _config_state.get_hmac_secrets()
+        if current:
+            return current
+    except Exception:
+        pass  # config_state not ready yet
+
+    # Fall back to env-loaded secret
     if not _hmac_secret_loaded:
         _hmac_secret = get_shared_secret()
         _hmac_secret_loaded = True

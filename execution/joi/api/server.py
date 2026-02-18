@@ -385,9 +385,33 @@ settings = load_settings()
 app = FastAPI(title="joi-api", version="0.1.0")
 
 # HMAC authentication settings
-HMAC_SECRET = get_shared_secret()
+HMAC_SECRET = get_shared_secret()  # Initial secret from env (fallback)
 HMAC_ENABLED = HMAC_SECRET is not None
 HMAC_TIMESTAMP_TOLERANCE_MS = int(os.getenv("JOI_HMAC_TIMESTAMP_TOLERANCE_MS", str(DEFAULT_TIMESTAMP_TOLERANCE_MS)))
+
+
+def _get_current_hmac_secret() -> Optional[bytes]:
+    """
+    Get current HMAC secret for signing outbound requests.
+
+    Uses rotator's live secret if available, otherwise falls back to startup secret.
+    """
+    if hmac_rotator:
+        return hmac_rotator.get_current_secret()
+    return HMAC_SECRET
+
+
+def _get_valid_hmac_secrets() -> list[bytes]:
+    """
+    Get list of valid HMAC secrets for verification.
+
+    During rotation, both current and old keys are valid.
+    """
+    if hmac_rotator:
+        return hmac_rotator.get_valid_secrets()
+    if HMAC_SECRET:
+        return [HMAC_SECRET]
+    return []
 
 # Initialize Ollama client
 LLM_TIMEOUT = float(os.getenv("JOI_LLM_TIMEOUT", "180"))
@@ -450,11 +474,9 @@ class ConfigPushClient:
     def __init__(
         self,
         mesh_url: str,
-        hmac_secret: Optional[bytes],
         policy: PolicyManager,
     ):
         self._mesh_url = mesh_url
-        self._hmac_secret = hmac_secret
         self._policy = policy
         self._last_push_hash: Optional[str] = None
         self._last_push_time: Optional[float] = None
@@ -484,8 +506,10 @@ class ConfigPushClient:
             body = json.dumps(config).encode("utf-8")
 
             headers = {"Content-Type": "application/json"}
-            if self._hmac_secret:
-                hmac_headers = create_request_headers(body, self._hmac_secret)
+            # Get current secret dynamically (supports rotation)
+            current_secret = _get_current_hmac_secret()
+            if current_secret:
+                hmac_headers = create_request_headers(body, current_secret)
                 headers.update(hmac_headers)
 
             url = f"{self._mesh_url}/config/sync"
@@ -498,6 +522,14 @@ class ConfigPushClient:
 
                 if data.get("status") == "ok":
                     mesh_hash = data.get("data", {}).get("config_hash", "")
+
+                    # Verify hash match
+                    if mesh_hash and mesh_hash != current_hash:
+                        logger.warning(
+                            "Config hash mismatch: local=%s mesh=%s",
+                            current_hash[:16], mesh_hash[:16],
+                        )
+
                     self._last_push_hash = mesh_hash
                     self._last_push_time = time.time()
                     logger.info(
@@ -541,14 +573,14 @@ class ConfigPushClient:
 config_push_client: Optional[ConfigPushClient] = None
 hmac_rotator: Optional[HMACRotator] = None
 if HMAC_ENABLED:
-    config_push_client = ConfigPushClient(
-        mesh_url=settings.mesh_url,
-        hmac_secret=HMAC_SECRET,
-        policy=policy_manager,
-    )
+    # Note: hmac_rotator must be initialized first so _get_current_hmac_secret() works
     hmac_rotator = HMACRotator(
         mesh_url=settings.mesh_url,
         policy_manager=policy_manager,
+    )
+    config_push_client = ConfigPushClient(
+        mesh_url=settings.mesh_url,
+        policy=policy_manager,
     )
 
 # Ensure prompts directory exists
@@ -760,8 +792,15 @@ async def hmac_verification_middleware(request: Request, call_next):
     # Read body for HMAC verification
     body = await request.body()
 
-    # Verify HMAC signature
-    if not verify_hmac(nonce, timestamp, body, signature, HMAC_SECRET):
+    # Verify HMAC signature - try all valid secrets (supports grace period)
+    valid_secrets = _get_valid_hmac_secrets()
+    signature_valid = False
+    for secret in valid_secrets:
+        if verify_hmac(nonce, timestamp, body, signature, secret):
+            signature_valid = True
+            break
+
+    if not signature_valid:
         logger.warning("HMAC auth failed: invalid signature")
         return JSONResponse(
             status_code=401,
@@ -1519,8 +1558,9 @@ def _send_to_mesh(
 
         # Build headers with HMAC if configured
         headers = {"Content-Type": "application/json"}
-        if HMAC_ENABLED:
-            hmac_headers = create_request_headers(body, HMAC_SECRET)
+        current_secret = _get_current_hmac_secret()
+        if current_secret:
+            hmac_headers = create_request_headers(body, current_secret)
             headers.update(hmac_headers)
 
         with httpx.Client(timeout=10.0) as client:
