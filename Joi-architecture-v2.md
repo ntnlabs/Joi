@@ -1,5 +1,11 @@
 # Joi Architecture v2 (Security-Hardened)
 
+> **SUPERSEDED:** This document has been superseded by `Joi-architecture-v3.md`.
+> Key changes in v3: stateless mesh, config push from Joi, HMAC rotation, privacy mode, kill switch, tamper detection.
+> This file is retained for historical reference only.
+
+---
+
 ## Goals
 - Offline LLM on Proxmox VM with GPU passthrough (Llama 3.1 8B + NVIDIA RTX 3060).
 - Free-running agent that reacts to context and can message the user.
