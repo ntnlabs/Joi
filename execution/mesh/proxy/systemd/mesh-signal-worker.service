@@ -20,5 +20,8 @@ ProtectHome=true
 ReadWritePaths=/var/lib/signal-cli /var/lib/mesh-proxy
 UMask=0077
 
+# Allow chattr +i/-i for config file protection
+AmbientCapabilities=CAP_LINUX_IMMUTABLE
+
 [Install]
 WantedBy=multi-user.target
