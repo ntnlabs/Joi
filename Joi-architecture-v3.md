@@ -90,8 +90,12 @@
 
 ### On Mesh Restart
 1. All config is lost (by design - no traces)
-2. Joi pushes config again on next scheduler tick (~60s max)
-3. Messages are dropped until config received
+2. Messages are dropped until config received
+3. Recovery options:
+   - **Joi restart:** Pushes config on startup
+   - **Policy change:** Joi pushes on next tick when local hash changes
+   - **Manual:** `POST /admin/config/push` force push
+   - **Note:** Periodic sync only triggers on Joi-side changes, not mesh restart
 
 ### Why Stateless?
 - **No traces:** Restart leaves no evidence of previous config
@@ -142,8 +146,10 @@ Joi pushes config to mesh on:
   "validation": {
     "max_text_length": 1500
   },
-  "privacy_mode": true,
-  "kill_switch": false,
+  "security": {
+    "privacy_mode": true,
+    "kill_switch": false
+  },
   "hmac_rotation": {
     "new_secret": "<64-char-hex>",
     "effective_at_ms": 1708300060000,
@@ -182,7 +188,7 @@ X-HMAC-SHA256: HMAC-SHA256(nonce + timestamp + body, secret)
 
 | Location | Purpose |
 |----------|---------|
-| Joi: `/etc/default/joi-api` | `MESH_HMAC_SECRET` env var |
+| Joi: `/etc/default/joi-api` | `JOI_HMAC_SECRET` env var |
 | Mesh: `/etc/default/mesh-signal-worker` | `MESH_HMAC_SECRET` env var (seed) |
 | Mesh: memory | Rotated keys (lost on restart) |
 
@@ -243,7 +249,8 @@ Every 60 seconds, Joi checks SHA256 fingerprints of:
 - `/etc/default/joi-api`
 - System prompt files
 
-On mismatch: logs warning, pushes config to mesh.
+On mismatch: **service exits immediately** (`os._exit(78)` - EX_CONFIG).
+Systemd restarts the service, which re-initializes fingerprints from current state.
 
 ---
 
@@ -273,12 +280,15 @@ On mismatch: logs warning, pushes config to mesh.
 ```
 1. Signal message received by mesh
 2. Mesh checks policy (in memory):
-   - Sender in allowed_senders? → continue
-   - Sender in group participants? → continue
-   - Unknown sender? → drop silently
+   - Sender in allowed_senders (DM)? → forward normally
+   - Sender in group participants? → forward normally
+   - Sender in configured group but not participant? → forward as store_only
+   - Unknown sender (not in any allowlist)? → drop silently
 3. Mesh checks rate limits (in memory)
 4. Mesh forwards to Joi with HMAC auth
-5. Joi processes and queues response
+5. Joi processes:
+   - Normal messages: may trigger response
+   - store_only messages: stored for context, no response
 ```
 
 ### Outbound (Joi → Signal)
@@ -413,9 +423,9 @@ Actions:
 # /etc/systemd/system/joi-api.service
 [Service]
 User=joi
-WorkingDirectory=/opt/joi
+WorkingDirectory=/opt/joi/execution/joi/api
 ExecStart=/opt/joi/.venv/bin/python -m uvicorn server:app
-Environment=...
+EnvironmentFile=/etc/default/joi-api
 ```
 
 ### Mesh
@@ -424,8 +434,9 @@ Environment=...
 # /etc/systemd/system/mesh-signal-worker.service
 [Service]
 User=signal
-WorkingDirectory=/opt/mesh-proxy
-ExecStart=/opt/mesh-proxy/.venv/bin/python signal_worker.py
+WorkingDirectory=/opt/joi/execution/mesh/proxy
+ExecStart=/opt/joi/execution/mesh/proxy/run-worker.sh
+EnvironmentFile=/etc/default/mesh-signal-worker
 ProtectSystem=strict
 ReadWritePaths=/var/lib/signal-cli
 ```
