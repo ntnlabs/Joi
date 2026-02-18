@@ -744,6 +744,10 @@ async def hmac_verification_middleware(request: Request, call_next):
     if request.url.path == "/health":
         return await call_next(request)
 
+    # Skip HMAC for admin endpoints (protected by local-only check instead)
+    if request.url.path.startswith("/admin/"):
+        return await call_next(request)
+
     # Skip if HMAC not configured
     if not HMAC_ENABLED:
         return await call_next(request)

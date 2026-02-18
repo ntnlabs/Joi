@@ -26,9 +26,8 @@ from policy import MeshPolicy
 logger = logging.getLogger("mesh.signal_worker")
 
 # HMAC authentication
-_hmac_secret = get_shared_secret()
-_hmac_enabled = _hmac_secret is not None
-_nonce_store = InMemoryNonceStore() if _hmac_enabled else None
+_hmac_secret = get_shared_secret()  # Initial secret from env (fallback)
+_nonce_store = InMemoryNonceStore()  # Always create - needed when HMAC becomes available
 _hmac_timestamp_tolerance = int(os.getenv("MESH_HMAC_TIMESTAMP_TOLERANCE_MS", str(DEFAULT_TIMESTAMP_TOLERANCE_MS)))
 
 
@@ -137,7 +136,7 @@ class DeliveryTracker:
                 "delivered_at": None,
                 "read_at": None,
             }
-            logger.debug("Tracking message ts=%d to %s", timestamp, recipient)
+            logger.debug("Tracking message ts=%d to %s", timestamp, _redact_pii(recipient, "phone"))
 
     def mark_delivered(self, timestamps: List[int]) -> int:
         """Mark messages as delivered. Returns count of newly marked."""
@@ -226,7 +225,7 @@ class ConfigState:
     SECURITY: Joi is authoritative. Config push MUST succeed or mesh fails safe.
     """
 
-    def __init__(self, policy_file: str = "/etc/mesh-proxy/policy.json"):
+    def __init__(self, policy_file: str = "/var/lib/mesh-proxy/policy.json"):
         self._policy_file = Path(policy_file)
         self._lock = threading.Lock()
         self._config: Dict[str, Any] = {}
@@ -319,11 +318,16 @@ class ConfigState:
             self._old_hmac_secret = get_shared_secret()
             self._old_hmac_expires = time.time() + (grace_period_ms / 1000)
 
-            # Store new secret (will be written to env file)
+            # Store new secret in memory
             self._new_hmac_secret = bytes.fromhex(new_secret_hex)
 
-            # Write new secret to env file
-            self._update_hmac_env_forced(new_secret_hex)
+            # Persist to key file (for restart survival) - MUST succeed
+            if not self._update_hmac_key_file(new_secret_hex):
+                # Roll back in-memory changes since file wasn't updated
+                self._new_hmac_secret = None
+                self._old_hmac_secret = None
+                self._old_hmac_expires = 0
+                raise RuntimeError("HMAC key file update failed - rotation aborted to prevent auth drift")
 
             logger.info(
                 "HMAC rotation: new key active, old key valid for %ds",
@@ -425,41 +429,24 @@ class ConfigState:
                 temp_file.unlink()
             raise
 
-    def _update_hmac_env_forced(self, new_secret_hex: str) -> None:
+    def _update_hmac_key_file(self, new_secret_hex: str) -> bool:
         """
-        Update HMAC secret in env file with force-write.
+        Update HMAC secret in key file with force-write.
 
         Uses atomic write to prevent corruption.
+        Returns True on success, False on failure.
         """
-        env_file = Path("/etc/default/mesh-signal-worker")
-        if not env_file.exists():
-            logger.warning("Env file not found: %s, skipping HMAC env update", env_file)
-            return
+        key_file = Path("/var/lib/mesh-proxy/hmac.key")
 
         try:
-            self._force_writable(env_file)
-            content = env_file.read_text()
-            lines = content.splitlines()
-            new_lines = []
-            found = False
-
-            for line in lines:
-                if line.startswith("MESH_HMAC_SECRET="):
-                    new_lines.append(f'MESH_HMAC_SECRET="{new_secret_hex}"')
-                    found = True
-                else:
-                    new_lines.append(line)
-
-            if not found:
-                new_lines.append(f'MESH_HMAC_SECRET="{new_secret_hex}"')
-
-            new_content = "\n".join(new_lines) + "\n"
-            self._atomic_write(env_file, new_content)
-            logger.info("Updated HMAC secret in %s", env_file)
+            # Write just the hex key (simple format)
+            self._atomic_write(key_file, new_secret_hex + "\n")
+            logger.info("Updated HMAC secret in %s", key_file)
+            return True
 
         except Exception as e:
-            logger.error("Failed to update HMAC env file: %s", e)
-            # HMAC env update failure is not fatal - grace period handles it
+            logger.error("Failed to update HMAC key file: %s", e)
+            return False
 
     def _compute_hash(self, config: Dict[str, Any]) -> str:
         """Compute SHA256 hash of config."""
@@ -535,16 +522,32 @@ flask_app = Flask("mesh-outbound")
 flask_app.logger.setLevel(logging.WARNING)  # Quiet Flask logs
 
 
+def _is_hmac_available() -> bool:
+    """Check if HMAC authentication is available (dynamic check)."""
+    # Check config_state for rotated secret
+    try:
+        current, _ = _config_state.get_hmac_secrets()
+        if current:
+            return True
+    except Exception:
+        pass
+
+    # Fall back to module-level or env
+    return get_shared_secret() is not None
+
+
 @flask_app.before_request
 def verify_hmac_auth():
     """Verify HMAC authentication for incoming requests from Joi."""
     # Skip health and monitoring endpoints
-    if request.path in ("/health", "/api/v1/delivery/status"):
+    if request.path in ("/health", "/api/v1/delivery/status", "/config/status"):
         return None
 
-    # Skip if HMAC not configured
-    if not _hmac_enabled:
-        return None
+    # Check if HMAC is available (dynamic check - not just startup state)
+    if not _is_hmac_available():
+        # Fail-closed: reject if no HMAC configured
+        logger.error("HMAC auth failed: no secret configured (fail-closed)")
+        return jsonify({"status": "error", "error": {"code": "hmac_not_configured", "message": "HMAC authentication not configured"}}), 503
 
     # Extract headers
     nonce = request.headers.get("X-Nonce")
@@ -600,7 +603,7 @@ def verify_hmac_auth():
 
 @flask_app.route("/health", methods=["GET"])
 def health():
-    hmac_status = "enabled" if _hmac_enabled else "disabled"
+    hmac_status = "enabled" if _is_hmac_available() else "disabled"
     return jsonify({"status": "ok", "mode": "worker", "hmac": hmac_status})
 
 
@@ -689,6 +692,11 @@ def send_outbound():
     """Handle outbound messages from Joi."""
     global _rpc, _account
 
+    # Check kill switch - block all message sending when active
+    if _config_state.is_kill_switch_active():
+        logger.warning("Kill switch active - blocking outbound message")
+        return jsonify({"status": "error", "error": "kill_switch_active"}), 503
+
     data = request.get_json()
     if not data:
         return jsonify({"status": "error", "error": "invalid_json"}), 400
@@ -747,7 +755,8 @@ def send_outbound():
         recipient_id = group_id if target == "group" else transport_id
         _delivery_tracker.register_sent(sent_at, recipient_id)
 
-    logger.info("Sent message to %s (ts=%s)", transport_id or group_id, sent_at)
+    recipient_display = _redact_pii(transport_id, "phone") if transport_id else _redact_pii(group_id, "group")
+    logger.info("Sent message to %s (ts=%s)", recipient_display, sent_at)
     return jsonify({
         "status": "ok",
         "data": {
@@ -966,7 +975,7 @@ def _send_rate_limit_notice(payload: Dict[str, Any]) -> None:
     now = time.time()
     last_sent = _rate_limit_notice_sent.get(sender, 0)
     if now - last_sent < _rate_limit_notice_cooldown:
-        logger.debug("Skipping rate limit notice to %s (cooldown)", sender)
+        logger.debug("Skipping rate limit notice to %s (cooldown)", _redact_pii(sender, "phone"))
         return
     _rate_limit_notice_sent[sender] = now
 
@@ -988,7 +997,7 @@ def _send_rate_limit_notice(payload: Dict[str, Any]) -> None:
             return
         try:
             _rpc.call("send", send_payload, timeout=10.0)
-            logger.info("Sent rate limit notice to %s", sender)
+            logger.info("Sent rate limit notice to %s", _redact_pii(sender, "phone"))
         except Exception as exc:
             logger.error("Failed to send rate limit notice: %s", exc)
 
@@ -1016,7 +1025,7 @@ def main() -> None:
     notification_wait_seconds = float(os.getenv("MESH_SIGNAL_POLL_SECONDS", "5"))
     signal_cli_bin = os.getenv("SIGNAL_CLI_BIN", "/usr/local/bin/signal-cli")
     signal_cli_config_dir = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/var/lib/signal-cli")
-    policy_file = os.getenv("MESH_POLICY_FILE", "/etc/mesh-proxy/policy.json")
+    policy_file = os.getenv("MESH_POLICY_FILE", "/var/lib/mesh-proxy/policy.json")
 
     if not Path(signal_cli_bin).exists():
         raise SystemExit(f"SIGNAL_CLI_BIN not found: {signal_cli_bin}")
@@ -1043,7 +1052,7 @@ def main() -> None:
 
     logger.info("Signal worker started (on-connection notifications)")
     logger.info("Policy loaded from %s", policy_file)
-    if _hmac_enabled:
+    if _is_hmac_available():
         logger.info("HMAC authentication enabled")
     else:
         logger.warning("HMAC authentication DISABLED - set MESH_HMAC_SECRET")
@@ -1082,13 +1091,14 @@ def main() -> None:
                     decision = policy.evaluate_inbound(payload)
                     if not decision.allowed:
                         sender = payload.get("sender", {}).get("transport_id", "unknown")
+                        sender_display = _redact_pii(sender, "phone")
                         if decision.reason == "unknown_sender":
-                            logger.info("Dropping unknown sender=%s", sender)
+                            logger.info("Dropping unknown sender=%s", sender_display)
                         elif decision.reason.startswith("rate_limited"):
-                            logger.warning("Rate limited sender=%s reason=%s", sender, decision.reason)
+                            logger.warning("Rate limited sender=%s reason=%s", sender_display, decision.reason)
                             _send_rate_limit_notice(payload)
                         else:
-                            logger.warning("Dropping sender=%s reason=%s", sender, decision.reason)
+                            logger.warning("Dropping sender=%s reason=%s", sender_display, decision.reason)
                         continue
 
                     # Add store_only flag to payload for Joi
