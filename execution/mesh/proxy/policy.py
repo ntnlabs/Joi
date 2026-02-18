@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 import json
 import logging
-from pathlib import Path
 import threading
 import time
 from typing import Any, Dict, List, Optional, Set
@@ -19,22 +18,37 @@ class PolicyDecision:
 
 
 class MeshPolicy:
-    def __init__(self, policy_path: str):
-        self.policy_path = policy_path
+    def __init__(self):
         self._lock = threading.Lock()
-        self._load_policy()
+        self._config: Dict[str, Any] = {}  # Empty until Joi pushes config
+        self._init_empty()
 
-    def _load_policy(self) -> None:
-        """Load and parse policy from disk. Caller should hold lock or be in __init__."""
-        self._config = self._load_config(self.policy_path)
-
-        identity = self._config.get("identity", {})
-        self.allowed_senders: Set[str] = set(identity.get("allowed_senders", []))
-        self.bot_name: Optional[str] = identity.get("bot_name")
-
-        groups = identity.get("groups", {})
+    def _init_empty(self) -> None:
+        """Initialize with empty policy - deny all until Joi pushes config."""
+        self.allowed_senders: Set[str] = set()
+        self.bot_name: Optional[str] = None
         self.group_participants: Dict[str, Set[str]] = {}
         self.group_names: Dict[str, List[str]] = {}
+        self.rate_limiter = InboundRateLimiter(max_per_hour=120, max_per_minute=20)
+        self.max_text_length = 1500
+        self.max_timestamp_skew_ms = 300_000
+
+    def update_from_config(self, config: Dict[str, Any]) -> None:
+        """Update policy from config dict pushed by Joi. Thread-safe."""
+        with self._lock:
+            self._config = config
+            self._apply_config()
+        logger.info("Policy updated from Joi config push")
+
+    def _apply_config(self) -> None:
+        """Apply self._config to internal state. Caller should hold lock."""
+        identity = self._config.get("identity", {})
+        self.allowed_senders = set(identity.get("allowed_senders", []))
+        self.bot_name = identity.get("bot_name")
+
+        groups = identity.get("groups", {})
+        self.group_participants = {}
+        self.group_names = {}
         if isinstance(groups, dict):
             for group_id, group_cfg in groups.items():
                 if not isinstance(group_cfg, dict):
@@ -44,7 +58,6 @@ class MeshPolicy:
                     self.group_participants[group_id] = {
                         p for p in participants if isinstance(p, str)
                     }
-                # Parse names for this group (names Joi responds to)
                 names = group_cfg.get("names", [])
                 if isinstance(names, list) and names:
                     self.group_names[group_id] = [n for n in names if isinstance(n, str)]
@@ -57,25 +70,6 @@ class MeshPolicy:
         validation = self._config.get("validation", {})
         self.max_text_length = int(validation.get("max_text_length", 1500))
         self.max_timestamp_skew_ms = int(validation.get("max_timestamp_skew_ms", 300_000))
-
-    def reload(self) -> None:
-        """Reload policy from disk. Thread-safe."""
-        with self._lock:
-            self._load_policy()
-        logger.info("Policy reloaded from %s", self.policy_path)
-
-    @staticmethod
-    def _load_config(path: str) -> Dict[str, Any]:
-        p = Path(path)
-        if not p.exists():
-            # Return empty config - deny all until Joi pushes config
-            logger.warning("Policy file not found: %s - denying all until config push", path)
-            return {}
-        with p.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        if not isinstance(data, dict):
-            raise ValueError("Policy config must be a JSON object")
-        return data
 
     def evaluate_inbound(self, payload: Dict[str, Any]) -> PolicyDecision:
         sender = self._sender_transport_id(payload)
