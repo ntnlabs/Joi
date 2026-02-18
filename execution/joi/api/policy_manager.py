@@ -36,7 +36,7 @@ DEFAULT_POLICY = {
         "max_timestamp_skew_ms": 300000,
     },
     "security": {
-        "privacy_mode": False,
+        "privacy_mode": True,
         "kill_switch": False,
     },
 }
