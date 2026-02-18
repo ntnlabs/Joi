@@ -830,6 +830,24 @@ async def hmac_verification_middleware(request: Request, call_next):
 _startup_fingerprints: Dict[str, str] = {}
 
 
+def _redact_filename_pii(filename: str) -> str:
+    """Redact phone numbers in filenames for privacy mode.
+
+    Examples:
+        +421905867511.txt -> +***7511.txt
+        +421905867511.model -> +***7511.model
+    """
+    import re
+    # Match phone number pattern at start of filename (with or without extension)
+    pattern = r'^\+\d+(?=\.|$)'
+    def redact_match(m):
+        phone = m.group(0)
+        if len(phone) > 5:
+            return f"+***{phone[-4:]}"
+        return "+***"
+    return re.sub(pattern, redact_match, filename)
+
+
 def _compute_file_hash(path: str) -> str:
     """Compute SHA256 hash of a file."""
     try:
@@ -868,7 +886,20 @@ def _init_fingerprints():
     global _startup_fingerprints
     _startup_fingerprints = _compute_fingerprints()
     if _startup_fingerprints:
-        summary = " | ".join(f"{os.path.basename(p)}:{h}" for p, h in sorted(_startup_fingerprints.items()))
+        # Check privacy mode for log redaction
+        privacy_mode = False
+        try:
+            privacy_mode = policy_manager.is_privacy_mode()
+        except Exception:
+            pass  # policy_manager may not be initialized yet
+
+        def format_entry(path, hash):
+            name = os.path.basename(path)
+            if privacy_mode:
+                name = _redact_filename_pii(name)
+            return f"{name}:{hash}"
+
+        summary = " | ".join(format_entry(p, h) for p, h in sorted(_startup_fingerprints.items()))
         logger.info("Runtime fingerprint initialized: %s", summary)
 
 
@@ -876,6 +907,17 @@ def _check_fingerprints() -> List[str]:
     """Check for tampered files. Returns list of changed file paths."""
     if not _startup_fingerprints:
         return []
+
+    # Check privacy mode for log redaction
+    privacy_mode = False
+    try:
+        privacy_mode = policy_manager.is_privacy_mode()
+    except Exception:
+        pass
+
+    def display_path(path):
+        name = os.path.basename(path)
+        return _redact_filename_pii(name) if privacy_mode else name
 
     current = _compute_fingerprints()
     changed = []
@@ -885,13 +927,13 @@ def _check_fingerprints() -> List[str]:
         current_hash = current.get(path, "deleted")
         if current_hash != original_hash:
             changed.append(path)
-            logger.warning("TAMPER DETECTED: %s changed (%s -> %s)", path, original_hash, current_hash)
+            logger.warning("TAMPER DETECTED: %s changed (%s -> %s)", display_path(path), original_hash, current_hash)
 
     # Check for new files
     for path in current:
         if path not in _startup_fingerprints:
             changed.append(path)
-            logger.warning("TAMPER DETECTED: new file %s", path)
+            logger.warning("TAMPER DETECTED: new file %s", display_path(path))
 
     return changed
 
