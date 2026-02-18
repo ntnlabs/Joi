@@ -174,8 +174,8 @@ flask_app.logger.setLevel(logging.WARNING)  # Quiet Flask logs
 @flask_app.before_request
 def verify_hmac_auth():
     """Verify HMAC authentication for incoming requests from Joi."""
-    # Skip health endpoint
-    if request.path == "/health":
+    # Skip health and monitoring endpoints
+    if request.path in ("/health", "/api/v1/delivery/status"):
         return None
 
     # Skip if HMAC not configured
