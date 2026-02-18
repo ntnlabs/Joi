@@ -1,8 +1,8 @@
 # Joi API Contracts
 
 > API specification for communication between mesh, joi, and external systems.
-> Version: 1.1 (Draft)
-> Last updated: 2026-02-08
+> Version: 1.2
+> Last updated: 2026-02-18
 
 ## Overview
 
@@ -291,7 +291,110 @@ POST https://mesh:8444/api/v1/message/outbound
 
 ---
 
-## 3. OpenHAB Events: openhab → joi
+## 3. Control Plane: joi → mesh
+
+Config sync and security management endpoints. Joi pushes config to stateless mesh.
+
+### 3.1 Config Sync
+
+```
+POST https://mesh:8444/config/sync
+```
+
+Pushes policy config from Joi to mesh. Mesh applies in memory (no disk persistence).
+
+**Request Body:**
+```json
+{
+  "version": 1,
+  "timestamp_ms": 1708300000000,
+  "identity": {
+    "bot_name": "Joi",
+    "allowed_senders": ["+1234567890"],
+    "groups": { ... }
+  },
+  "rate_limits": {
+    "inbound": { "max_per_hour": 120, "max_per_minute": 20 }
+  },
+  "validation": {
+    "max_text_length": 1500
+  },
+  "hmac_rotation": {                    // Optional: HMAC key rotation
+    "new_secret": "<64-char-hex>",
+    "effective_at_ms": 1708300060000,
+    "grace_period_ms": 60000
+  }
+}
+```
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "config_hash": "<sha256-hex>"
+  }
+}
+```
+
+### 3.2 Config Status
+
+```
+GET https://mesh:8444/config/status
+```
+
+Returns current config hash. Used by Joi to detect drift.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "config_hash": "<sha256-hex>",
+    "applied_at_ms": 1708300000500
+  }
+}
+```
+
+### 3.3 Delivery Status
+
+```
+GET https://mesh:8444/api/v1/delivery/status?timestamp=<msg_timestamp>
+```
+
+Query delivery/read status for a sent message. Requires HMAC auth.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "timestamp": 1234567890123,
+    "delivered": true,
+    "read": false,
+    "delivered_at": 1234567891000,
+    "read_at": null,
+    "sent_at": 1234567890500
+  }
+}
+```
+
+### 3.4 Admin Endpoints (Joi only)
+
+These endpoints are on Joi, accessed locally or via Nebula.
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/admin/config/push` | POST | HMAC | Force push config to mesh |
+| `/admin/config/status` | GET | IP | Show sync status |
+| `/admin/hmac/rotate` | POST | HMAC | Manual HMAC key rotation |
+| `/admin/security/kill-switch` | POST | HMAC | Enable/disable kill switch |
+| `/admin/security/privacy-mode` | POST | HMAC | Enable/disable privacy mode |
+| `/health` | GET | None | Health check |
+
+---
+
+## 4. OpenHAB Events: openhab → joi
 
 > **Migration Notice:** These endpoints are legacy. New integrations should use the generic
 > System Channel API (`POST /api/v1/system/event`). See `system-channel.md` for details.
@@ -460,7 +563,7 @@ POST /api/v1/openhab/state
 
 ---
 
-## 4. System Channel (Generic)
+## 5. System Channel (Generic)
 
 The System Channel provides a unified, type-agnostic interface for machine-to-machine communication. It replaces the openhab-specific endpoints with a generic pattern that supports any registered source.
 
