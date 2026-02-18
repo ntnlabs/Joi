@@ -1,10 +1,12 @@
+import hashlib
+import json
 import logging
 import os
 import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from flask import Flask, jsonify, request
 
@@ -159,6 +161,257 @@ class DeliveryTracker:
 _delivery_tracker = DeliveryTracker()
 
 
+# --- Config State for Joi-pushed config ---
+
+# Failsafe threshold: after this many consecutive persist failures, trigger failsafe
+CONFIG_PERSIST_FAILSAFE_THRESHOLD = 3
+
+
+def _failsafe_shutdown(reason: str) -> None:
+    """
+    Failsafe shutdown placeholder.
+
+    Called when mesh cannot accept authoritative config from Joi.
+    Better to shut down than run with stale/potentially compromised config.
+
+    TODO: Implement actual VM poweroff via:
+    - subprocess.run(["sudo", "poweroff"])
+    - Or cloud API call to stop instance
+    """
+    logger.critical("FAILSAFE: %s - VM should power off here", reason)
+    # PLACEHOLDER: Do not implement actual poweroff yet
+    # For now, just exit the process with error code
+    # os._exit(1)
+
+
+class ConfigState:
+    """
+    Thread-safe config state management for pushed config from Joi.
+
+    Handles config updates, persistence, and HMAC key rotation with grace period.
+
+    SECURITY: Joi is authoritative. Config push MUST succeed or mesh fails safe.
+    """
+
+    def __init__(self, policy_file: str = "/etc/mesh-proxy/policy.json"):
+        self._policy_file = Path(policy_file)
+        self._lock = threading.Lock()
+        self._config: Dict[str, Any] = {}
+        self._config_hash: str = ""
+        self._last_update: float = 0
+
+        # HMAC rotation support
+        self._old_hmac_secret: Optional[bytes] = None
+        self._old_hmac_expires: float = 0
+        self._new_hmac_secret: Optional[bytes] = None
+
+        # Reference to MeshPolicy instance (set by main)
+        self._mesh_policy: Optional[MeshPolicy] = None
+
+        # Failsafe tracking
+        self._consecutive_persist_failures: int = 0
+
+    def set_mesh_policy(self, policy: MeshPolicy) -> None:
+        """Set reference to MeshPolicy instance for reloading."""
+        self._mesh_policy = policy
+
+    def apply_config(self, config: Dict[str, Any]) -> str:
+        """
+        Apply new config from Joi.
+
+        Writes to policy file and reloads MeshPolicy.
+        Returns config hash.
+
+        Raises exception if persist fails (caller should handle).
+        """
+        with self._lock:
+            # Handle HMAC rotation if present
+            rotation = config.pop("hmac_rotation", None)
+            if rotation:
+                self._handle_hmac_rotation(rotation)
+
+            # Remove timestamp_ms before storing (it's metadata, not config)
+            config.pop("timestamp_ms", None)
+
+            self._config = config
+            self._config_hash = self._compute_hash(config)
+            self._last_update = time.time()
+
+            # Persist to disk - this MUST succeed
+            self._persist_config_forced()
+
+            # Reload MeshPolicy
+            if self._mesh_policy:
+                self._mesh_policy.reload()
+                logger.info("MeshPolicy reloaded after config push")
+
+            return self._config_hash
+
+    def _handle_hmac_rotation(self, rotation: Dict[str, Any]) -> None:
+        """Handle HMAC key rotation from config push."""
+        new_secret_hex = rotation.get("new_secret")
+        grace_period_ms = rotation.get("grace_period_ms", 60000)
+
+        if new_secret_hex:
+            # Save current secret as old (for grace period)
+            self._old_hmac_secret = get_shared_secret()
+            self._old_hmac_expires = time.time() + (grace_period_ms / 1000)
+
+            # Store new secret (will be written to env file)
+            self._new_hmac_secret = bytes.fromhex(new_secret_hex)
+
+            # Write new secret to env file
+            self._update_hmac_env_forced(new_secret_hex)
+
+            logger.info(
+                "HMAC rotation: new key active, old key valid for %ds",
+                grace_period_ms // 1000,
+            )
+
+    def _force_writable(self, path: Path) -> None:
+        """Force a file to be writable, removing read-only if needed."""
+        import stat
+        if path.exists():
+            current_mode = path.stat().st_mode
+            # Add write permission for owner
+            path.chmod(current_mode | stat.S_IWUSR)
+
+    def _atomic_write(self, path: Path, content: str) -> None:
+        """
+        Atomically write content to file.
+
+        Uses temp file + rename to prevent corruption from partial writes.
+        Forces file to be writable if needed.
+        """
+        import tempfile
+
+        # Ensure parent directory exists
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Force existing file writable
+        self._force_writable(path)
+
+        # Write to temp file in same directory (for atomic rename)
+        temp_fd, temp_path = tempfile.mkstemp(
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+        )
+        temp_file = Path(temp_path)
+
+        try:
+            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
+                f.write(content)
+                f.flush()
+                os.fsync(f.fileno())
+
+            # Atomic rename
+            temp_file.rename(path)
+
+        except Exception:
+            # Cleanup temp file on failure
+            if temp_file.exists():
+                temp_file.unlink()
+            raise
+
+    def _update_hmac_env_forced(self, new_secret_hex: str) -> None:
+        """
+        Update HMAC secret in env file with force-write.
+
+        Uses atomic write to prevent corruption.
+        """
+        env_file = Path("/etc/default/mesh-signal-worker")
+        if not env_file.exists():
+            logger.warning("Env file not found: %s, skipping HMAC env update", env_file)
+            return
+
+        try:
+            self._force_writable(env_file)
+            content = env_file.read_text()
+            lines = content.splitlines()
+            new_lines = []
+            found = False
+
+            for line in lines:
+                if line.startswith("MESH_HMAC_SECRET="):
+                    new_lines.append(f'MESH_HMAC_SECRET="{new_secret_hex}"')
+                    found = True
+                else:
+                    new_lines.append(line)
+
+            if not found:
+                new_lines.append(f'MESH_HMAC_SECRET="{new_secret_hex}"')
+
+            new_content = "\n".join(new_lines) + "\n"
+            self._atomic_write(env_file, new_content)
+            logger.info("Updated HMAC secret in %s", env_file)
+
+        except Exception as e:
+            logger.error("Failed to update HMAC env file: %s", e)
+            # HMAC env update failure is not fatal - grace period handles it
+
+    def _compute_hash(self, config: Dict[str, Any]) -> str:
+        """Compute SHA256 hash of config."""
+        normalized = json.dumps(config, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+    def _persist_config_forced(self) -> None:
+        """
+        Write config to policy file with force-write and failsafe.
+
+        This MUST succeed. If it fails repeatedly, trigger failsafe shutdown.
+        """
+        try:
+            content = json.dumps(self._config, indent=2)
+            self._atomic_write(self._policy_file, content)
+            logger.info("Config persisted to %s", self._policy_file)
+
+            # Reset failure counter on success
+            self._consecutive_persist_failures = 0
+
+        except Exception as e:
+            self._consecutive_persist_failures += 1
+            logger.error(
+                "Failed to persist config (attempt %d/%d): %s",
+                self._consecutive_persist_failures,
+                CONFIG_PERSIST_FAILSAFE_THRESHOLD,
+                e,
+            )
+
+            if self._consecutive_persist_failures >= CONFIG_PERSIST_FAILSAFE_THRESHOLD:
+                _failsafe_shutdown(
+                    f"Config persist failed {self._consecutive_persist_failures} times: {e}"
+                )
+
+            # Re-raise so caller knows it failed
+            raise
+
+    def get_hash(self) -> str:
+        """Get current config hash."""
+        with self._lock:
+            return self._config_hash
+
+    def get_hmac_secrets(self) -> Tuple[bytes, Optional[bytes]]:
+        """
+        Get HMAC secrets for verification.
+
+        Returns (current_secret, old_secret_if_in_grace_period).
+        During rotation, both keys are valid.
+        """
+        with self._lock:
+            # If we have a new secret that hasn't been loaded into module-level yet
+            current = self._new_hmac_secret if self._new_hmac_secret else get_shared_secret()
+
+            # Check if old secret is still valid (grace period)
+            if self._old_hmac_secret and time.time() < self._old_hmac_expires:
+                return current, self._old_hmac_secret
+
+            return current, None
+
+
+_config_state = ConfigState()
+
+
 # Global RPC client (shared between receiver thread and HTTP server)
 _rpc: Optional[JsonRpcStdioClient] = None
 _rpc_lock = threading.Lock()
@@ -214,13 +467,24 @@ def verify_hmac_auth():
     # Get raw body for HMAC verification
     body = request.get_data()
 
-    # Verify HMAC signature
-    if not verify_hmac(nonce, timestamp, body, signature, _hmac_secret):
-        logger.warning("HMAC auth failed: invalid signature")
-        return jsonify({"status": "error", "error": {"code": "hmac_invalid_signature", "message": "Invalid HMAC signature"}}), 401
+    # Verify HMAC signature - try current key first, then old key during grace period
+    current_secret, old_secret = _config_state.get_hmac_secrets()
 
-    logger.debug("HMAC auth passed for %s", request.path)
-    return None
+    # Use module-level secret if config state doesn't have one yet
+    if current_secret is None:
+        current_secret = _hmac_secret
+
+    if verify_hmac(nonce, timestamp, body, signature, current_secret):
+        logger.debug("HMAC auth passed for %s (current key)", request.path)
+        return None
+
+    # Try old key during grace period
+    if old_secret and verify_hmac(nonce, timestamp, body, signature, old_secret):
+        logger.info("HMAC auth passed for %s (grace period key)", request.path)
+        return None
+
+    logger.warning("HMAC auth failed: invalid signature")
+    return jsonify({"status": "error", "error": {"code": "hmac_invalid_signature", "message": "Invalid HMAC signature"}}), 401
 
 
 @flask_app.route("/health", methods=["GET"])
@@ -258,6 +522,53 @@ def delivery_status():
             "delivered_at": status["delivered_at"],
             "read_at": status["read_at"],
             "sent_at": status["sent_at"],
+        }
+    })
+
+
+@flask_app.route("/config/sync", methods=["POST"])
+def config_sync():
+    """
+    Receive config push from Joi.
+
+    Joi is authoritative for policy config. This endpoint accepts
+    pushed config, persists it, and reloads MeshPolicy.
+
+    HMAC authentication is required (verified by before_request middleware).
+    """
+    data = request.get_json()
+    if not data:
+        return jsonify({"status": "error", "error": "invalid_json"}), 400
+
+    # Validate required fields
+    if "identity" not in data:
+        return jsonify({"status": "error", "error": "missing_identity"}), 400
+
+    # Apply config and get hash
+    try:
+        config_hash = _config_state.apply_config(data)
+    except Exception as e:
+        logger.error("Config sync failed: %s", e)
+        return jsonify({"status": "error", "error": "apply_failed"}), 500
+
+    logger.info("Config sync applied, hash=%s", config_hash[:16])
+
+    return jsonify({
+        "status": "ok",
+        "data": {
+            "config_hash": config_hash,
+            "applied_at": int(time.time() * 1000),
+        }
+    })
+
+
+@flask_app.route("/config/status", methods=["GET"])
+def config_status():
+    """Get current config sync status."""
+    return jsonify({
+        "status": "ok",
+        "data": {
+            "config_hash": _config_state.get_hash(),
         }
     })
 
@@ -604,6 +915,10 @@ def main() -> None:
         raise SystemExit(f"MESH_POLICY_FILE not found: {policy_file}")
 
     policy = MeshPolicy(policy_file)
+
+    # Set up config state for Joi-pushed config
+    _config_state._policy_file = Path(policy_file)
+    _config_state.set_mesh_policy(policy)
 
     _rpc = JsonRpcStdioClient(
         [
