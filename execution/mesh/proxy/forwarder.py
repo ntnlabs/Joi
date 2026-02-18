@@ -10,13 +10,23 @@ from hmac_auth import create_request_headers, get_shared_secret
 
 logger = logging.getLogger("mesh.forwarder")
 
-# Cache the shared secret
+# Reference to ConfigState - set by worker at startup to avoid module import issues
+_config_state_ref: Optional[Any] = None
+
+# Cache the shared secret (fallback if config_state not set)
 _hmac_secret: Optional[bytes] = None
 _hmac_secret_loaded = False
 
 # Reusable client for connection pooling
 _client: httpx.Client = None
 _client_lock = threading.Lock()
+
+
+def set_config_state(config_state) -> None:
+    """Set reference to ConfigState from worker (avoids module import issues)."""
+    global _config_state_ref
+    _config_state_ref = config_state
+    logger.debug("Forwarder config_state reference set")
 
 
 def _get_client() -> httpx.Client:
@@ -40,13 +50,13 @@ def _get_hmac_secret() -> Optional[bytes]:
     global _hmac_secret, _hmac_secret_loaded
 
     # Try to get live secret from config_state (supports rotation)
-    try:
-        from signal_worker import _config_state
-        current, _ = _config_state.get_hmac_secrets()
-        if current:
-            return current
-    except Exception:
-        pass  # config_state not ready yet
+    if _config_state_ref is not None:
+        try:
+            current, _ = _config_state_ref.get_hmac_secrets()
+            if current:
+                return current
+        except Exception:
+            pass
 
     # Fall back to env-loaded secret
     if not _hmac_secret_loaded:
@@ -60,13 +70,14 @@ def _get_hmac_secret() -> Optional[bytes]:
 
 
 def _get_config_hash() -> Optional[str]:
-    """Get current config hash for sync verification (lazy import to avoid circular deps)."""
-    try:
-        from signal_worker import _config_state
-        config_hash = _config_state.get_hash()
-        return config_hash if config_hash else None
-    except Exception:
-        return None
+    """Get current config hash for sync verification."""
+    if _config_state_ref is not None:
+        try:
+            config_hash = _config_state_ref.get_hash()
+            return config_hash if config_hash else None
+        except Exception:
+            pass
+    return None
 
 
 def _forward_async(url: str, payload: Dict[str, Any]) -> None:

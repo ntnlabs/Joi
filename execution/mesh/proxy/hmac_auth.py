@@ -27,27 +27,13 @@ NONCE_RETENTION_MS = 15 * 60 * 1000
 
 def get_shared_secret() -> Optional[bytes]:
     """
-    Get the shared secret from environment or key file.
+    Get the shared secret from environment variable.
 
-    Checks:
-    1. MESH_HMAC_SECRET environment variable
-    2. /var/lib/mesh-proxy/hmac.key file (for rotated keys)
+    Mesh is stateless - no key file fallback. Rotated keys are in-memory only.
     """
-    # First check environment
     secret = os.getenv("MESH_HMAC_SECRET")
     if secret:
         return secret.encode("utf-8")
-
-    # Fall back to key file (written by config push rotation)
-    key_file = "/var/lib/mesh-proxy/hmac.key"
-    try:
-        with open(key_file, "r") as f:
-            secret = f.read().strip()
-            if secret:
-                return bytes.fromhex(secret)
-    except (FileNotFoundError, ValueError):
-        pass
-
     return None
 
 

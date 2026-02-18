@@ -51,7 +51,7 @@ class HMACRotator:
         self._mesh_url = mesh_url
         self._policy = policy_manager
         self._grace_period_ms = grace_period_ms
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()  # Reentrant - rotate() calls get_current_secret()
 
         # Live secret (updated after rotation, used for signing)
         self._current_secret: Optional[bytes] = None
