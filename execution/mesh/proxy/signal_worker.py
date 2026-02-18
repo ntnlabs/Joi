@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from flask import Flask, jsonify, request
 
 from config import load_settings
-from forwarder import forward_to_joi
+from forwarder import forward_to_joi, set_config_state
 from hmac_auth import (
     InMemoryNonceStore,
     get_shared_secret,
@@ -284,7 +284,8 @@ class ConfigState:
 
         if new_secret_hex:
             # Save current secret as old (for grace period)
-            self._old_hmac_secret = get_shared_secret()
+            # Use in-memory key if set (from previous rotation), otherwise env
+            self._old_hmac_secret = self._new_hmac_secret if self._new_hmac_secret else get_shared_secret()
             self._old_hmac_expires = time.time() + (grace_period_ms / 1000)
 
             # Store new secret in memory (no disk - mesh is stateless)
@@ -847,6 +848,7 @@ def main() -> None:
 
     # Set up config state for Joi-pushed config (memory-only)
     _config_state.set_mesh_policy(policy)
+    set_config_state(_config_state)  # Share with forwarder to avoid module import issues
 
     _rpc = JsonRpcStdioClient(
         [
