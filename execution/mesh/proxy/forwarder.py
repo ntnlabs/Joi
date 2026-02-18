@@ -1,4 +1,6 @@
 from typing import Any, Dict, Optional
+from concurrent.futures import ThreadPoolExecutor
+import atexit
 import json
 import logging
 import os
@@ -20,6 +22,10 @@ _hmac_secret_loaded = False
 # Reusable client for connection pooling
 _client: httpx.Client = None
 _client_lock = threading.Lock()
+
+# Bounded thread pool for async forwarding (prevents unbounded thread spawning)
+_executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="forward")
+atexit.register(_executor.shutdown, wait=False)
 
 
 def set_config_state(config_state) -> None:
@@ -114,6 +120,9 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
 
     url = os.getenv("MESH_JOI_INBOUND_URL", "http://joi:8443/api/v1/message/inbound")
 
-    # Fire-and-forget: don't block signal worker
-    thread = threading.Thread(target=_forward_async, args=(url, payload), daemon=True)
-    thread.start()
+    # Submit to bounded thread pool (max 4 concurrent forwards)
+    try:
+        _executor.submit(_forward_async, url, payload)
+    except RuntimeError:
+        # Executor shutdown - log but don't crash
+        logger.warning("Forwarder executor shutdown, dropping message")
