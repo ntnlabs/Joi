@@ -32,6 +32,39 @@ _nonce_store = InMemoryNonceStore() if _hmac_enabled else None
 _hmac_timestamp_tolerance = int(os.getenv("MESH_HMAC_TIMESTAMP_TOLERANCE_MS", str(DEFAULT_TIMESTAMP_TOLERANCE_MS)))
 
 
+def _redact_pii(value: str, pii_type: str = "phone") -> str:
+    """
+    Redact PII when privacy mode is enabled.
+
+    Args:
+        value: The value to potentially redact
+        pii_type: Type of PII ("phone", "group", "uuid")
+
+    Returns:
+        Redacted value if privacy mode, original otherwise
+    """
+    # Import here to avoid circular dependency at module load
+    # _config_state may not be initialized yet
+    try:
+        if _config_state.is_privacy_mode():
+            if pii_type == "phone":
+                # Show last 4 digits: +1234567890 -> +***7890
+                if len(value) > 4:
+                    return f"+***{value[-4:]}"
+                return "***"
+            elif pii_type == "group":
+                # Show first 8 chars of group ID
+                return f"[GRP:{value[:8]}...]" if len(value) > 8 else "[GRP:***]"
+            elif pii_type == "uuid":
+                # Show first 8 chars of UUID
+                return f"{value[:8]}..." if len(value) > 8 else "***"
+            else:
+                return "***"
+    except Exception:
+        pass  # _config_state not ready yet
+    return value
+
+
 # --- Dedupe Cache ---
 
 class MessageDedupeCache:
@@ -211,6 +244,10 @@ class ConfigState:
         # Failsafe tracking
         self._consecutive_persist_failures: int = 0
 
+        # Security flags (pushed from Joi)
+        self._privacy_mode: bool = False
+        self._kill_switch: bool = False
+
     def set_mesh_policy(self, policy: MeshPolicy) -> None:
         """Set reference to MeshPolicy instance for reloading."""
         self._mesh_policy = policy
@@ -230,6 +267,21 @@ class ConfigState:
             if rotation:
                 self._handle_hmac_rotation(rotation)
 
+            # Handle security flags (extract before storing)
+            security = config.get("security", {})
+            old_kill_switch = self._kill_switch
+            self._privacy_mode = bool(security.get("privacy_mode", False))
+            self._kill_switch = bool(security.get("kill_switch", False))
+
+            # Log security flag changes
+            if self._kill_switch and not old_kill_switch:
+                logger.warning("KILL SWITCH ACTIVATED - forwarding to Joi disabled")
+            elif not self._kill_switch and old_kill_switch:
+                logger.info("Kill switch deactivated - forwarding resumed")
+
+            if self._privacy_mode:
+                logger.info("Privacy mode enabled - PII will be redacted in logs")
+
             # Remove timestamp_ms before storing (it's metadata, not config)
             config.pop("timestamp_ms", None)
 
@@ -246,6 +298,16 @@ class ConfigState:
                 logger.info("MeshPolicy reloaded after config push")
 
             return self._config_hash
+
+    def is_kill_switch_active(self) -> bool:
+        """Check if kill switch is active (forwarding disabled)."""
+        with self._lock:
+            return self._kill_switch
+
+    def is_privacy_mode(self) -> bool:
+        """Check if privacy mode is enabled (PII redaction)."""
+        with self._lock:
+            return self._privacy_mode
 
     def _handle_hmac_rotation(self, rotation: Dict[str, Any]) -> None:
         """Handle HMAC key rotation from config push."""
@@ -268,27 +330,71 @@ class ConfigState:
                 grace_period_ms // 1000,
             )
 
-    def _force_writable(self, path: Path) -> None:
-        """Force a file to be writable, removing read-only if needed."""
-        import stat
-        if path.exists():
-            current_mode = path.stat().st_mode
-            # Add write permission for owner
-            path.chmod(current_mode | stat.S_IWUSR)
+    def _remove_immutable(self, path: Path) -> None:
+        """Remove immutable flag from file (chattr -i). Best-effort."""
+        import subprocess
+        if not path.exists():
+            return
+        try:
+            subprocess.run(
+                ["chattr", "-i", str(path)],
+                capture_output=True,
+                timeout=5,
+            )
+        except Exception as e:
+            logger.debug("Could not remove immutable flag from %s: %s", path, e)
 
-    def _atomic_write(self, path: Path, content: str) -> None:
+    def _set_immutable(self, path: Path) -> None:
+        """Set immutable flag on file (chattr +i). Best-effort."""
+        import subprocess
+        if not path.exists():
+            return
+        try:
+            subprocess.run(
+                ["chattr", "+i", str(path)],
+                capture_output=True,
+                timeout=5,
+            )
+            logger.debug("Set immutable flag on %s", path)
+        except Exception as e:
+            logger.debug("Could not set immutable flag on %s: %s", path, e)
+
+    def _set_readonly(self, path: Path) -> None:
+        """Set file to read-only (chmod 444)."""
+        if path.exists():
+            path.chmod(0o444)
+
+    def _force_writable(self, path: Path) -> None:
+        """Force a file to be writable, removing immutable and read-only."""
+        import stat
+        if not path.exists():
+            return
+
+        # Remove immutable flag first (must be done before chmod)
+        self._remove_immutable(path)
+
+        # Add write permission for owner
+        current_mode = path.stat().st_mode
+        path.chmod(current_mode | stat.S_IWUSR)
+
+    def _atomic_write(self, path: Path, content: str, make_immutable: bool = True) -> None:
         """
-        Atomically write content to file.
+        Atomically write content to file with protection.
 
         Uses temp file + rename to prevent corruption from partial writes.
-        Forces file to be writable if needed.
+        Forces file to be writable, then locks it down after write.
+
+        Args:
+            path: Target file path
+            content: Content to write
+            make_immutable: If True, set read-only and immutable after write
         """
         import tempfile
 
         # Ensure parent directory exists
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Force existing file writable
+        # Force existing file writable (removes immutable + adds write perm)
         self._force_writable(path)
 
         # Write to temp file in same directory (for atomic rename)
@@ -307,6 +413,11 @@ class ConfigState:
 
             # Atomic rename
             temp_file.rename(path)
+
+            # Lock down the file
+            if make_immutable:
+                self._set_readonly(path)
+                self._set_immutable(path)
 
         except Exception:
             # Cleanup temp file on failure
@@ -1001,6 +1112,11 @@ def main() -> None:
                             names.extend(n for n in group_names if n not in names)
                         if names:
                             payload["group_names"] = names
+
+                    # Check kill switch before forwarding
+                    if _config_state.is_kill_switch_active():
+                        logger.warning("Kill switch active - dropping message (not forwarding to Joi)")
+                        continue
 
                     forward_to_joi(payload)
             except Exception as exc:  # noqa: BLE001
