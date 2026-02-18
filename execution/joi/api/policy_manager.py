@@ -35,6 +35,10 @@ DEFAULT_POLICY = {
         "max_text_length": 1500,
         "max_timestamp_skew_ms": 300000,
     },
+    "security": {
+        "privacy_mode": False,
+        "kill_switch": False,
+    },
 }
 
 
@@ -257,6 +261,55 @@ class PolicyManager:
             self._update_hash_unlocked()
             self._save_unlocked()
         logger.info("Updated validation settings")
+
+    # --- Security Section ---
+
+    def get_security(self) -> Dict[str, bool]:
+        """Get security settings."""
+        with self._lock:
+            security = self._config.get("security", {})
+            return {
+                "privacy_mode": bool(security.get("privacy_mode", False)),
+                "kill_switch": bool(security.get("kill_switch", False)),
+            }
+
+    def is_privacy_mode(self) -> bool:
+        """Check if privacy mode is enabled."""
+        with self._lock:
+            return bool(self._config.get("security", {}).get("privacy_mode", False))
+
+    def is_kill_switch_active(self) -> bool:
+        """Check if kill switch is active."""
+        with self._lock:
+            return bool(self._config.get("security", {}).get("kill_switch", False))
+
+    def set_privacy_mode(self, enabled: bool) -> None:
+        """Enable or disable privacy mode."""
+        with self._lock:
+            if "security" not in self._config:
+                self._config["security"] = {}
+            self._config["security"]["privacy_mode"] = enabled
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("Privacy mode %s", "enabled" if enabled else "disabled")
+
+    def set_kill_switch(self, active: bool) -> None:
+        """
+        Activate or deactivate kill switch.
+
+        When active, mesh will not forward messages to Joi.
+        Use in emergencies to immediately stop message processing.
+        """
+        with self._lock:
+            if "security" not in self._config:
+                self._config["security"] = {}
+            self._config["security"]["kill_switch"] = active
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        if active:
+            logger.warning("KILL SWITCH ACTIVATED - mesh forwarding will be disabled")
+        else:
+            logger.info("Kill switch deactivated")
 
     # --- Full Config Update ---
 

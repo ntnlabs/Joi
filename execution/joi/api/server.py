@@ -999,6 +999,79 @@ def admin_hmac_status(request: Request):
     }
 
 
+@app.get("/admin/security/status")
+def admin_security_status(request: Request):
+    """Get security settings status."""
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    return {
+        "status": "ok",
+        "data": policy_manager.get_security(),
+    }
+
+
+@app.post("/admin/security/privacy-mode")
+def admin_set_privacy_mode(request: Request):
+    """
+    Enable or disable privacy mode.
+
+    Query params:
+        enabled: "true" or "false"
+    """
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    enabled = request.query_params.get("enabled", "").lower() == "true"
+    policy_manager.set_privacy_mode(enabled)
+
+    # Push to mesh
+    if config_push_client:
+        success, result = config_push_client.push_config(force=True)
+        if not success:
+            logger.warning("Failed to push privacy mode change to mesh: %s", result)
+
+    return {
+        "status": "ok",
+        "privacy_mode": enabled,
+    }
+
+
+@app.post("/admin/security/kill-switch")
+def admin_set_kill_switch(request: Request):
+    """
+    Activate or deactivate kill switch.
+
+    When active, mesh will not forward messages to Joi.
+    Use in emergencies to immediately stop message processing.
+
+    Query params:
+        active: "true" or "false"
+    """
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    active = request.query_params.get("active", "").lower() == "true"
+    policy_manager.set_kill_switch(active)
+
+    # Push to mesh immediately
+    if config_push_client:
+        success, result = config_push_client.push_config(force=True)
+        if success:
+            logger.info("Kill switch %s pushed to mesh", "activated" if active else "deactivated")
+        else:
+            logger.error("CRITICAL: Failed to push kill switch to mesh: %s", result)
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "error": f"push_failed: {result}", "kill_switch": active},
+            )
+
+    return {
+        "status": "ok",
+        "kill_switch": active,
+    }
+
+
 @app.post("/api/v1/message/inbound", response_model=InboundResponse)
 def receive_message(msg: InboundMessage):
     """
