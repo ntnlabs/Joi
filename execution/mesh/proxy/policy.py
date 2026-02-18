@@ -68,7 +68,9 @@ class MeshPolicy:
     def _load_config(path: str) -> Dict[str, Any]:
         p = Path(path)
         if not p.exists():
-            raise FileNotFoundError(f"Policy config file not found: {path}")
+            # Return empty config - deny all until Joi pushes config
+            logger.warning("Policy file not found: %s - denying all until config push", path)
+            return {}
         with p.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
         if not isinstance(data, dict):

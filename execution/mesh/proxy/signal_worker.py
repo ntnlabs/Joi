@@ -1027,8 +1027,12 @@ def main() -> None:
         raise SystemExit(f"SIGNAL_CLI_BIN not found: {signal_cli_bin}")
     if not Path(signal_cli_config_dir).exists():
         raise SystemExit(f"SIGNAL_CLI_CONFIG_DIR not found: {signal_cli_config_dir}")
+
+    # Policy file may not exist on fresh deploy - service starts and waits for Joi push
     if not Path(policy_file).exists():
-        raise SystemExit(f"MESH_POLICY_FILE not found: {policy_file}")
+        logger.warning("Policy file not found: %s - will deny all until Joi pushes config", policy_file)
+        # Ensure directory exists for config push
+        Path(policy_file).parent.mkdir(parents=True, exist_ok=True)
 
     policy = MeshPolicy(policy_file)
 
@@ -1047,7 +1051,10 @@ def main() -> None:
     )
 
     logger.info("Signal worker started (on-connection notifications)")
-    logger.info("Policy loaded from %s", policy_file)
+    if Path(policy_file).exists():
+        logger.info("Policy loaded from %s", policy_file)
+    else:
+        logger.warning("Waiting for config push from Joi (denying all messages)")
     if _is_hmac_available():
         logger.info("HMAC authentication enabled")
     else:
