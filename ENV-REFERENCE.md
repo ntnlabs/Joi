@@ -99,7 +99,7 @@ Prompts directory structure:
 |----------|---------|-------------|
 | `MESH_WORKER_HTTP_PORT` | `8444` | HTTP port for outbound API |
 | `MESH_SIGNAL_POLL_SECONDS` | `5` | Notification poll interval |
-| `MESH_POLICY_FILE` | `/etc/mesh-proxy/policy.json` | Policy file path |
+| `MESH_LOG_LEVEL` | `INFO` | Logging level |
 
 ### Forwarding Settings
 
@@ -152,13 +152,15 @@ SIGNAL_CLI_CONFIG_DIR=/var/lib/signal-cli
 
 # Worker
 MESH_WORKER_HTTP_PORT=8444
-MESH_POLICY_FILE=/etc/mesh-proxy/policy.json
+MESH_HMAC_SECRET=<64-char-hex>
 
 # Forwarding
 MESH_ENABLE_FORWARD=1
 MESH_JOI_INBOUND_URL=http://172.22.22.2:8443/api/v1/message/inbound
 MESH_FORWARD_TIMEOUT=120
 ```
+
+Note: Mesh is stateless. Policy is pushed from Joi via `/config/sync`, not read from file.
 
 ---
 
@@ -179,6 +181,7 @@ MESH_FORWARD_TIMEOUT=120
 
 | Path | Purpose |
 |------|---------|
-| `/etc/default/mesh-signal-worker` | Environment variables |
-| `/etc/mesh-proxy/policy.json` | Sender whitelist and rate limits |
+| `/etc/default/mesh-signal-worker` | Environment variables (incl. initial HMAC secret) |
 | `/var/lib/signal-cli/` | Signal account data |
+
+Note: Mesh is stateless - policy and rotated HMAC keys are pushed from Joi and stored in memory only.

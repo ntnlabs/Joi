@@ -5,6 +5,8 @@
 
 ## Mesh VM (172.22.22.1)
 
+> **Note: Mesh is stateless.** Policy is pushed from Joi and stored in memory only. No policy files on mesh.
+
 ### /etc/default/mesh-signal-worker
 
 ```bash
@@ -15,53 +17,20 @@ SIGNAL_ACCOUNT=+<COUNTRY><NUMBER>
 SIGNAL_CLI_BIN=/usr/local/bin/signal-cli
 SIGNAL_CLI_CONFIG_DIR=/var/lib/signal-cli
 
-# Policy file location
-MESH_POLICY_FILE=/etc/mesh-proxy/policy.json
+# HMAC shared secret (64 hex chars, must match Joi)
+MESH_HMAC_SECRET=<64-char-hex>
 
 # HTTP port for outbound API
 MESH_WORKER_HTTP_PORT=8444
-```
 
-### /etc/mesh-proxy/policy.json
-
-```json
-{
-  "identity": {
-    "bot_name": "Jessica Joi",
-    "allowed_senders": [
-      "+<OWNER_PHONE_NUMBER>"
-    ],
-    "groups": {
-      "<GROUP_ID_BASE64>": {
-        "participants": [
-          "+<OWNER_PHONE_NUMBER>"
-        ],
-        "names": []
-      },
-      "<ANOTHER_GROUP_ID>": {
-        "participants": ["+<PHONE>"],
-        "names": []
-      }
-    }
-  },
-  "rate_limits": {
-    "inbound": {
-      "max_per_hour": 120,
-      "max_per_minute": 20
-    }
-  },
-  "validation": {
-    "max_text_length": 1500,
-    "max_timestamp_skew_ms": 300000
-  }
-}
+# Forwarding to Joi
+MESH_ENABLE_FORWARD=1
+MESH_JOI_INBOUND_URL=http://172.22.22.2:8443/api/v1/message/inbound
 ```
 
 **Notes**:
-- `bot_name`: The bot's Signal profile name for @mention detection (e.g., "@Jessica Joi"). Used as default for all groups.
-- Group IDs are base64-encoded. Get them with: `signal-cli -a +<ACCOUNT> listGroups`
-- `participants`: Who can trigger Joi responses (others are stored for context only)
-- `names`: Per-group override for @mention names. If empty or omitted, uses `bot_name`.
+- `MESH_HMAC_SECRET` is the initial seed. Rotated keys are pushed from Joi and stored in memory.
+- On mesh restart, it uses env var until Joi pushes current config.
 
 ### /var/lib/signal-cli/
 
@@ -105,9 +74,43 @@ JOI_CONSOLIDATION_ARCHIVE=0
 JOI_RAG_ENABLED=1
 JOI_RAG_MAX_TOKENS=500
 
+# HMAC shared secret (64 hex chars, must match mesh)
+MESH_HMAC_SECRET=<64-char-hex>
+
 # Future: SQLCipher encryption key
 # JOI_MEMORY_KEY=<generated-key>
 ```
+
+### /var/lib/joi/policy/mesh-policy.json
+
+Policy pushed to mesh on startup and changes. Contains sender whitelist, groups, rate limits.
+
+```json
+{
+  "identity": {
+    "bot_name": "Jessica Joi",
+    "allowed_senders": ["+<OWNER_PHONE_NUMBER>"],
+    "groups": {
+      "<GROUP_ID_BASE64>": {
+        "participants": ["+<OWNER_PHONE_NUMBER>"],
+        "names": []
+      }
+    }
+  },
+  "rate_limits": {
+    "inbound": { "max_per_hour": 120, "max_per_minute": 20 }
+  },
+  "validation": {
+    "max_text_length": 1500
+  }
+}
+```
+
+**Notes**:
+- `bot_name`: Signal profile name for @mention detection
+- Group IDs: base64-encoded, get with `signal-cli -a +<ACCOUNT> listGroups`
+- `participants`: Who can trigger responses (others are context-only)
+- `names`: Per-group @mention name override
 
 ### /var/lib/joi/prompts/
 
@@ -163,12 +166,9 @@ Note: Changing key requires re-creating the database.
 ## File Permissions Reference
 
 ```bash
-# Mesh VM
+# Mesh VM (stateless - only env and signal-cli data)
 sudo chmod 640 /etc/default/mesh-signal-worker
 sudo chown root:signal /etc/default/mesh-signal-worker
-
-sudo chmod 640 /etc/mesh-proxy/policy.json
-sudo chown root:signal /etc/mesh-proxy/policy.json
 
 sudo chmod 700 /var/lib/signal-cli
 sudo chown -R signal:signal /var/lib/signal-cli
@@ -179,4 +179,7 @@ sudo chown root:joi /etc/default/joi-api
 
 sudo chmod 750 /var/lib/joi
 sudo chown -R joi:joi /var/lib/joi
+
+sudo chmod 640 /var/lib/joi/policy/mesh-policy.json
+sudo chown joi:joi /var/lib/joi/policy/mesh-policy.json
 ```
