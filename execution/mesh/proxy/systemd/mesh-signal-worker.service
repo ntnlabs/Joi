@@ -17,11 +17,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/signal-cli /var/lib/mesh-proxy
+ReadWritePaths=/var/lib/signal-cli
 UMask=0077
-
-# Allow chattr +i/-i for config file protection
-AmbientCapabilities=CAP_LINUX_IMMUTABLE
 
 [Install]
 WantedBy=multi-user.target
