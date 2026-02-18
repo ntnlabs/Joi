@@ -104,8 +104,8 @@ class HMACRotator:
             new_secret = secrets.token_bytes(32)
             new_secret_hex = new_secret.hex()
 
-            # Get current secret for signing the rotation request
-            current_secret = get_shared_secret()
+            # Get current secret for signing the rotation request (use live rotated key, not env)
+            current_secret = self.get_current_secret()
             if not current_secret:
                 return False, "no_current_secret"
 
