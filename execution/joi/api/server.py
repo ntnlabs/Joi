@@ -866,6 +866,11 @@ def _get_config_files() -> List[str]:
         if os.path.exists(path):
             files.append(path)
 
+    # Policy file
+    policy_file = os.getenv("JOI_POLICY_FILE", "/var/lib/joi/policy/mesh-policy.json")
+    if os.path.exists(policy_file):
+        files.append(policy_file)
+
     # Prompts directory
     prompts_dir = os.getenv("JOI_PROMPTS_DIR", "/var/lib/joi/prompts")
     for pattern in ["*.txt", "*.model", "*.context", "users/*", "groups/*"]:
