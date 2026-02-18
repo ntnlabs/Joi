@@ -86,12 +86,6 @@ Response:
 }
 ```
 
-**Query all tracked messages (debugging):**
-
-```bash
-curl http://127.0.0.1:8444/api/v1/delivery/status
-```
-
 Messages are tracked for 24 hours (configurable via `DeliveryTracker` TTL).
 
 ## Test Send (disabled by default)
