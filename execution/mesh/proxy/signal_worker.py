@@ -193,55 +193,31 @@ class DeliveryTracker:
 _delivery_tracker = DeliveryTracker()
 
 
-# --- Config State for Joi-pushed config ---
-
-# Failsafe threshold: after this many consecutive persist failures, trigger failsafe
-CONFIG_PERSIST_FAILSAFE_THRESHOLD = 3
-
-
-def _failsafe_shutdown(reason: str) -> None:
-    """
-    Failsafe shutdown placeholder.
-
-    Called when mesh cannot accept authoritative config from Joi.
-    Better to shut down than run with stale/potentially compromised config.
-
-    TODO: Implement actual VM poweroff via:
-    - subprocess.run(["sudo", "poweroff"])
-    - Or cloud API call to stop instance
-    """
-    logger.critical("FAILSAFE: %s - VM should power off here", reason)
-    # PLACEHOLDER: Do not implement actual poweroff yet
-    # For now, just exit the process with error code
-    # os._exit(1)
+# --- Config State for Joi-pushed config (memory-only, no disk) ---
 
 
 class ConfigState:
     """
     Thread-safe config state management for pushed config from Joi.
 
-    Handles config updates, persistence, and HMAC key rotation with grace period.
+    Memory-only - no disk persistence. Mesh is stateless, always waits for Joi push.
 
-    SECURITY: Joi is authoritative. Config push MUST succeed or mesh fails safe.
+    SECURITY: Joi is authoritative. Mesh starts clean, receives config from Joi.
     """
 
-    def __init__(self, policy_file: str = "/var/lib/mesh-proxy/policy.json"):
-        self._policy_file = Path(policy_file)
+    def __init__(self):
         self._lock = threading.Lock()
         self._config: Dict[str, Any] = {}
         self._config_hash: str = ""
         self._last_update: float = 0
 
-        # HMAC rotation support
+        # HMAC rotation support (in-memory only)
         self._old_hmac_secret: Optional[bytes] = None
         self._old_hmac_expires: float = 0
         self._new_hmac_secret: Optional[bytes] = None
 
         # Reference to MeshPolicy instance (set by main)
         self._mesh_policy: Optional[MeshPolicy] = None
-
-        # Failsafe tracking
-        self._consecutive_persist_failures: int = 0
 
         # Security flags (pushed from Joi)
         self._privacy_mode: bool = False
@@ -253,12 +229,9 @@ class ConfigState:
 
     def apply_config(self, config: Dict[str, Any]) -> str:
         """
-        Apply new config from Joi.
+        Apply new config from Joi (memory only, no disk persistence).
 
-        Writes to policy file and reloads MeshPolicy.
         Returns config hash.
-
-        Raises exception if persist fails (caller should handle).
         """
         with self._lock:
             # Handle HMAC rotation if present
@@ -288,13 +261,9 @@ class ConfigState:
             self._config_hash = self._compute_hash(config)
             self._last_update = time.time()
 
-            # Persist to disk - this MUST succeed
-            self._persist_config_forced()
-
-            # Reload MeshPolicy
+            # Update MeshPolicy in memory (no disk)
             if self._mesh_policy:
-                self._mesh_policy.reload()
-                logger.info("MeshPolicy reloaded after config push")
+                self._mesh_policy.update_from_config(config)
 
             return self._config_hash
 
@@ -309,7 +278,7 @@ class ConfigState:
             return self._privacy_mode
 
     def _handle_hmac_rotation(self, rotation: Dict[str, Any]) -> None:
-        """Handle HMAC key rotation from config push."""
+        """Handle HMAC key rotation from config push (in-memory only)."""
         new_secret_hex = rotation.get("new_secret")
         grace_period_ms = rotation.get("grace_period_ms", 60000)
 
@@ -318,171 +287,18 @@ class ConfigState:
             self._old_hmac_secret = get_shared_secret()
             self._old_hmac_expires = time.time() + (grace_period_ms / 1000)
 
-            # Store new secret in memory
+            # Store new secret in memory (no disk - mesh is stateless)
             self._new_hmac_secret = bytes.fromhex(new_secret_hex)
-
-            # Persist to key file (for restart survival) - MUST succeed
-            if not self._update_hmac_key_file(new_secret_hex):
-                # Roll back in-memory changes since file wasn't updated
-                self._new_hmac_secret = None
-                self._old_hmac_secret = None
-                self._old_hmac_expires = 0
-                raise RuntimeError("HMAC key file update failed - rotation aborted to prevent auth drift")
 
             logger.info(
                 "HMAC rotation: new key active, old key valid for %ds",
                 grace_period_ms // 1000,
             )
 
-    def _remove_immutable(self, path: Path) -> None:
-        """Remove immutable flag from file (chattr -i). Best-effort."""
-        import subprocess
-        if not path.exists():
-            return
-        try:
-            subprocess.run(
-                ["chattr", "-i", str(path)],
-                capture_output=True,
-                timeout=5,
-            )
-        except Exception as e:
-            logger.debug("Could not remove immutable flag from %s: %s", path, e)
-
-    def _set_immutable(self, path: Path) -> None:
-        """Set immutable flag on file (chattr +i). Best-effort."""
-        import subprocess
-        if not path.exists():
-            return
-        try:
-            subprocess.run(
-                ["chattr", "+i", str(path)],
-                capture_output=True,
-                timeout=5,
-            )
-            logger.debug("Set immutable flag on %s", path)
-        except Exception as e:
-            logger.debug("Could not set immutable flag on %s: %s", path, e)
-
-    def _set_readonly(self, path: Path) -> None:
-        """Set file to read-only (chmod 444)."""
-        if path.exists():
-            path.chmod(0o444)
-
-    def _force_writable(self, path: Path) -> None:
-        """Force a file to be writable, removing immutable and read-only."""
-        import stat
-        if not path.exists():
-            return
-
-        # Remove immutable flag first (must be done before chmod)
-        self._remove_immutable(path)
-
-        # Add write permission for owner
-        current_mode = path.stat().st_mode
-        path.chmod(current_mode | stat.S_IWUSR)
-
-    def _atomic_write(self, path: Path, content: str, make_immutable: bool = True) -> None:
-        """
-        Atomically write content to file with protection.
-
-        Uses temp file + rename to prevent corruption from partial writes.
-        Forces file to be writable, then locks it down after write.
-
-        Args:
-            path: Target file path
-            content: Content to write
-            make_immutable: If True, set read-only and immutable after write
-        """
-        import tempfile
-
-        # Ensure parent directory exists
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Force existing file writable (removes immutable + adds write perm)
-        self._force_writable(path)
-
-        # Write to temp file in same directory (for atomic rename)
-        temp_fd, temp_path = tempfile.mkstemp(
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-        )
-        temp_file = Path(temp_path)
-
-        try:
-            with os.fdopen(temp_fd, "w", encoding="utf-8") as f:
-                f.write(content)
-                f.flush()
-                os.fsync(f.fileno())
-
-            # Atomic rename
-            temp_file.rename(path)
-
-            # Lock down the file
-            if make_immutable:
-                self._set_readonly(path)
-                self._set_immutable(path)
-
-        except Exception:
-            # Cleanup temp file on failure
-            if temp_file.exists():
-                temp_file.unlink()
-            raise
-
-    def _update_hmac_key_file(self, new_secret_hex: str) -> bool:
-        """
-        Update HMAC secret in key file with force-write.
-
-        Uses atomic write to prevent corruption.
-        Returns True on success, False on failure.
-        """
-        key_file = Path("/var/lib/mesh-proxy/hmac.key")
-
-        try:
-            # Write just the hex key (simple format)
-            self._atomic_write(key_file, new_secret_hex + "\n")
-            logger.info("Updated HMAC secret in %s", key_file)
-            return True
-
-        except Exception as e:
-            logger.error("Failed to update HMAC key file: %s", e)
-            return False
-
     def _compute_hash(self, config: Dict[str, Any]) -> str:
         """Compute SHA256 hash of config."""
         normalized = json.dumps(config, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
-
-    def _persist_config_forced(self) -> None:
-        """
-        Write config to policy file with force-write and failsafe.
-
-        This MUST succeed. If it fails repeatedly, trigger failsafe shutdown.
-        """
-        try:
-            content = json.dumps(self._config, indent=2)
-            self._atomic_write(self._policy_file, content)
-            logger.info("Config persisted to %s", self._policy_file)
-
-            # Reset failure counter on success
-            self._consecutive_persist_failures = 0
-
-        except Exception as e:
-            self._consecutive_persist_failures += 1
-            logger.error(
-                "Failed to persist config (attempt %d/%d): %s",
-                self._consecutive_persist_failures,
-                CONFIG_PERSIST_FAILSAFE_THRESHOLD,
-                e,
-            )
-
-            if self._consecutive_persist_failures >= CONFIG_PERSIST_FAILSAFE_THRESHOLD:
-                _failsafe_shutdown(
-                    f"Config persist failed {self._consecutive_persist_failures} times: {e}"
-                )
-
-            # Re-raise so caller knows it failed
-            raise
 
     def get_hash(self) -> str:
         """Get current config hash."""
@@ -1021,26 +837,15 @@ def main() -> None:
     notification_wait_seconds = float(os.getenv("MESH_SIGNAL_POLL_SECONDS", "5"))
     signal_cli_bin = os.getenv("SIGNAL_CLI_BIN", "/usr/local/bin/signal-cli")
     signal_cli_config_dir = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/var/lib/signal-cli")
-    policy_file = os.getenv("MESH_POLICY_FILE", "/var/lib/mesh-proxy/policy.json")
-
     if not Path(signal_cli_bin).exists():
         raise SystemExit(f"SIGNAL_CLI_BIN not found: {signal_cli_bin}")
     if not Path(signal_cli_config_dir).exists():
         raise SystemExit(f"SIGNAL_CLI_CONFIG_DIR not found: {signal_cli_config_dir}")
 
-    # Policy file may not exist on fresh deploy - service starts and waits for Joi push
-    if not Path(policy_file).exists():
-        logger.warning("Policy file not found: %s - will deny all until Joi pushes config", policy_file)
-        # Try to create directory for config push (may fail due to sandbox)
-        try:
-            Path(policy_file).parent.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            logger.warning("Cannot create config directory (create manually): %s", e)
+    # Mesh is stateless - always start with empty policy, wait for Joi push
+    policy = MeshPolicy()
 
-    policy = MeshPolicy(policy_file)
-
-    # Set up config state for Joi-pushed config
-    _config_state._policy_file = Path(policy_file)
+    # Set up config state for Joi-pushed config (memory-only)
     _config_state.set_mesh_policy(policy)
 
     _rpc = JsonRpcStdioClient(
@@ -1054,10 +859,7 @@ def main() -> None:
     )
 
     logger.info("Signal worker started (on-connection notifications)")
-    if Path(policy_file).exists():
-        logger.info("Policy loaded from %s", policy_file)
-    else:
-        logger.warning("Waiting for config push from Joi (denying all messages)")
+    logger.info("Waiting for config push from Joi (denying all messages)")
     if _is_hmac_available():
         logger.info("HMAC authentication enabled")
     else:
