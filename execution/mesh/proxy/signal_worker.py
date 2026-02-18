@@ -612,11 +612,7 @@ def delivery_status():
     """Query delivery status for a message by timestamp."""
     ts_str = request.args.get("timestamp")
     if not ts_str:
-        # Return all tracked messages (for debugging)
-        return jsonify({
-            "status": "ok",
-            "data": {str(k): v for k, v in _delivery_tracker.get_all_status().items()}
-        })
+        return jsonify({"status": "error", "error": "missing_timestamp"}), 400
 
     try:
         ts = int(ts_str)
