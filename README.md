@@ -150,7 +150,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 | Document | Description |
 |----------|-------------|
 | [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) | Quick overview |
-| [Joi-architecture-v2.md](Joi-architecture-v2.md) | Current architecture (security-hardened) |
+| [Joi-architecture-v3.md](Joi-architecture-v3.md) | Current architecture (stateless mesh) |
 | [Joi-threat-model.md](Joi-threat-model.md) | Threat analysis and mitigations |
 | [system-channel.md](system-channel.md) | System Channel & LLM Services specification |
 | [api-contracts.md](api-contracts.md) | API specifications |
