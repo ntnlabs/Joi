@@ -91,11 +91,10 @@
 ### On Mesh Restart
 1. All config is lost (by design - no traces)
 2. Messages are dropped until config received
-3. Recovery options:
-   - **Joi restart:** Pushes config on startup
-   - **Policy change:** Joi pushes on next tick when local hash changes
-   - **Manual:** `POST /admin/config/push` force push
-   - **Note:** Periodic sync only triggers on Joi-side changes, not mesh restart
+3. **Automatic recovery:** Joi polls mesh `/config/status` every tick (~60s)
+   - Mesh returns empty hash → Joi detects restart → pushes config
+   - Mesh returns wrong hash → Joi detects drift → pushes fresh config
+   - Mesh unreachable → Joi retries next tick
 
 ### Why Stateless?
 - **No traces:** Restart leaves no evidence of previous config

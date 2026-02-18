@@ -318,13 +318,35 @@ class Scheduler:
         if not config_push_client:
             return
         try:
+            # First check: did local config change?
             if config_push_client.needs_push():
-                logger.info("Scheduler: config changed, pushing to mesh")
+                logger.info("Scheduler: local config changed, pushing to mesh")
                 success, result = config_push_client.push_config()
                 if success:
                     logger.info("Scheduler: config push successful, hash=%s", result[:16])
                 else:
                     logger.warning("Scheduler: config push failed: %s", result)
+                return  # Done for this tick
+
+            # Second check: does mesh have what we expect?
+            in_sync, reason = config_push_client.check_mesh_sync()
+            if not in_sync:
+                if reason == "mesh_unreachable":
+                    logger.debug("Scheduler: mesh unreachable, will retry next tick")
+                elif reason == "mesh_empty":
+                    logger.info("Scheduler: mesh has no config (restart?), pushing...")
+                    success, result = config_push_client.push_config(force=True)
+                    if success:
+                        logger.info("Scheduler: config push successful, hash=%s", result[:16])
+                    else:
+                        logger.warning("Scheduler: config push failed: %s", result)
+                elif reason == "mesh_drift":
+                    logger.warning("Scheduler: mesh config drift detected, pushing fresh config...")
+                    success, result = config_push_client.push_config(force=True)
+                    if success:
+                        logger.info("Scheduler: config push successful, hash=%s", result[:16])
+                    else:
+                        logger.warning("Scheduler: config push failed: %s", result)
         except Exception as e:
             logger.warning("Scheduler: config sync check failed: %s", e)
 
@@ -558,6 +580,58 @@ class ConfigPushClient:
     def needs_push(self) -> bool:
         """Check if config has changed since last push."""
         return self._last_push_hash != self._policy.get_config_hash()
+
+    def get_mesh_status(self) -> tuple[bool, Optional[str]]:
+        """
+        Poll mesh for its current config hash.
+
+        Returns:
+            (success, mesh_hash or None)
+        """
+        url = f"{self._mesh_url}/config/status"
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+
+            if data.get("status") == "ok":
+                mesh_hash = data.get("data", {}).get("config_hash")
+                return True, mesh_hash
+            return False, None
+
+        except Exception as exc:
+            logger.debug("Failed to get mesh status: %s", exc)
+            return False, None
+
+    def check_mesh_sync(self) -> tuple[bool, str]:
+        """
+        Check if mesh has the expected config.
+
+        Returns:
+            (in_sync, reason)
+            - (True, "in_sync") - mesh has expected hash
+            - (False, "mesh_empty") - mesh has no config
+            - (False, "mesh_drift") - mesh has different hash
+            - (False, "mesh_unreachable") - couldn't contact mesh
+        """
+        success, mesh_hash = self.get_mesh_status()
+
+        if not success:
+            return False, "mesh_unreachable"
+
+        if not mesh_hash:
+            return False, "mesh_empty"
+
+        if mesh_hash != self._last_push_hash:
+            logger.info(
+                "Mesh config drift: expected=%s actual=%s",
+                self._last_push_hash[:16] if self._last_push_hash else "none",
+                mesh_hash[:16] if mesh_hash else "none",
+            )
+            return False, "mesh_drift"
+
+        return True, "in_sync"
 
     def get_status(self) -> dict:
         """Get sync status info."""
