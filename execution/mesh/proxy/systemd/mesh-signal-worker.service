@@ -17,7 +17,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/signal-cli
+ReadWritePaths=/var/lib/signal-cli /var/lib/mesh-proxy
 UMask=0077
 
 [Install]
