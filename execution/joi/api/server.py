@@ -175,6 +175,78 @@ class MessageQueue:
 message_queue = MessageQueue()
 
 
+# --- Outbound Rate Limiter ---
+
+class OutboundRateLimiter:
+    """
+    Rate limiter for outbound messages to mesh.
+
+    Uses sliding window to track messages per hour.
+    Critical messages bypass rate limiting.
+    """
+
+    DEFAULT_MAX_PER_HOUR = 120  # Configurable via env
+
+    def __init__(self, max_per_hour: Optional[int] = None):
+        self._max_per_hour = max_per_hour or int(os.getenv("JOI_OUTBOUND_MAX_PER_HOUR", str(self.DEFAULT_MAX_PER_HOUR)))
+        self._timestamps: List[float] = []
+        self._lock = threading.Lock()
+        self._blocked_count = 0
+
+    def _cleanup_old(self, now: float) -> None:
+        """Remove timestamps older than 1 hour."""
+        one_hour_ago = now - 3600
+        self._timestamps = [ts for ts in self._timestamps if ts > one_hour_ago]
+
+    def check_and_record(self, is_critical: bool = False) -> tuple[bool, str]:
+        """
+        Check if send is allowed and record it.
+
+        Args:
+            is_critical: If True, bypass rate limiting
+
+        Returns:
+            (allowed, reason)
+        """
+        now = time.time()
+
+        with self._lock:
+            self._cleanup_old(now)
+            current_count = len(self._timestamps)
+
+            # Critical messages always allowed
+            if is_critical:
+                self._timestamps.append(now)
+                return True, "critical_bypass"
+
+            # Check rate limit
+            if current_count >= self._max_per_hour:
+                self._blocked_count += 1
+                logger.warning(
+                    "Outbound rate limit: %d/%d per hour (blocked %d total)",
+                    current_count, self._max_per_hour, self._blocked_count
+                )
+                return False, "rate_limited"
+
+            self._timestamps.append(now)
+            return True, "allowed"
+
+    def get_stats(self) -> dict:
+        """Get rate limiter statistics."""
+        now = time.time()
+        with self._lock:
+            self._cleanup_old(now)
+            return {
+                "current_hour_count": len(self._timestamps),
+                "max_per_hour": self._max_per_hour,
+                "blocked_total": self._blocked_count,
+            }
+
+
+# Global outbound rate limiter
+outbound_limiter = OutboundRateLimiter()
+
+
 # --- Background Scheduler ---
 
 class Scheduler:
@@ -834,9 +906,13 @@ async def hmac_verification_middleware(request: Request, call_next):
             return await call_next(request)
         # Sensitive endpoints fall through to HMAC verification below
 
-    # Skip if HMAC not configured
+    # Fail-closed: reject if HMAC not configured
     if not HMAC_ENABLED:
-        return await call_next(request)
+        logger.error("HMAC auth failed: HMAC not configured (fail-closed)")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "error", "error": {"code": "hmac_not_configured", "message": "HMAC authentication not configured"}}
+        )
 
     # Extract headers
     nonce = request.headers.get("X-Nonce")
@@ -1069,8 +1145,9 @@ def health():
             "chunks": knowledge_chunks,
         },
         "queue": {
-            "size": message_queue.get_queue_size(),
+            "inbound": message_queue.get_queue_size(),
         },
+        "outbound": outbound_limiter.get_stats(),
         "scheduler": scheduler.get_status() if scheduler else {"running": False},
         "config_sync": config_sync,
     }
@@ -1650,9 +1727,16 @@ def _send_to_mesh(
     conversation: InboundConversation,
     text: str,
     reply_to: Optional[str] = None,
+    is_critical: bool = False,
 ) -> bool:
     """Send a message back to mesh for delivery via Signal."""
     import json
+
+    # Check outbound rate limit (critical messages bypass)
+    allowed, reason = outbound_limiter.check_and_record(is_critical=is_critical)
+    if not allowed:
+        logger.warning("Outbound blocked by rate limit: %s", reason)
+        return False
 
     # Enforce cooldown between sends to same conversation
     convo_id = conversation.id
