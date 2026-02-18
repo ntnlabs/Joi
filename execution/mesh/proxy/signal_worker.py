@@ -352,8 +352,18 @@ def _handle_receipt_message(raw: Dict[str, Any]) -> bool:
     if not receipt:
         return False
 
-    receipt_type = receipt.get("type", "").upper()
+    receipt_type = receipt.get("type", "")
+    # Signal-cli may use different field names or formats
+    if not receipt_type:
+        receipt_type = receipt.get("receiptType", "")
+    receipt_type = str(receipt_type).upper()
+
     timestamps = receipt.get("timestamps", [])
+    # Also try "when" field which some signal-cli versions use
+    if not timestamps:
+        timestamps = receipt.get("when", [])
+
+    logger.debug("Receipt: type=%s timestamps=%s raw=%s", receipt_type, timestamps, receipt)
 
     if not timestamps:
         return True  # It's a receipt but no timestamps to process
