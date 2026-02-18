@@ -50,8 +50,14 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Auto-ingestion via watched directory
 - ✅ SQLCipher database encryption (key file: `/etc/joi/memory.key`)
 
+### Config & Security
+- ✅ One-way config push (Joi → mesh, stateless mesh)
+- ✅ Weekly HMAC key rotation with grace period
+- ✅ Privacy mode (PII redaction in logs)
+- ✅ Kill switch (emergency message halt)
+- ✅ Tamper detection (config file monitoring)
+
 ### Pending
-- ⏳ Config push from Joi to mesh (centralized policy)
 - ⏳ Business mode (DM access to group knowledge)
 - ⏳ System Channel integration
 
