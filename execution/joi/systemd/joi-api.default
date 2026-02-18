@@ -5,7 +5,7 @@
 # --- Core ---
 JOI_BIND_HOST=0.0.0.0
 JOI_BIND_PORT=8443
-JOI_LOG_LEVEL=INFO
+#MESH_LOG_LEVEL=DEBUG
 
 # --- LLM ---
 JOI_OLLAMA_URL=http://localhost:11434
