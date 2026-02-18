@@ -539,8 +539,8 @@ def _is_hmac_available() -> bool:
 @flask_app.before_request
 def verify_hmac_auth():
     """Verify HMAC authentication for incoming requests from Joi."""
-    # Skip health and monitoring endpoints
-    if request.path in ("/health", "/api/v1/delivery/status", "/config/status"):
+    # Skip health and read-only status endpoints
+    if request.path in ("/health", "/config/status"):
         return None
 
     # Check if HMAC is available (dynamic check - not just startup state)
