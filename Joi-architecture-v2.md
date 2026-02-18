@@ -237,10 +237,13 @@ gpu_health:
 > The 1500 char Signal limit is the most restrictive and user-facing. Internal API
 > limits are higher to accommodate structured payloads with metadata/headers.
 
-```yaml
-# /etc/mesh-proxy/limits.yaml (AUTHORITATIVE for mesh limits)
-message:
-  max_length: 1500    # Signal messages, user-facing
+```json
+// Mesh limits (pushed from Joi via config sync, stored in memory only)
+{
+  "validation": {
+    "max_text_length": 1500  // Signal messages, user-facing
+  }
+}
 ```
 
 ```yaml
@@ -544,21 +547,24 @@ expected_processes:
 The HMAC shared secret proves mesh possesses a secret known only to joi and legitimate mesh.
 
 ```
-# Storage locations (both VMs):
+# Storage locations:
 
 # On joi VM:
-/etc/joi/secrets/mesh-hmac.key
+/etc/default/joi-api (MESH_HMAC_SECRET env var)
   - Owner: root:joi
   - Permissions: 0640
   - Format: 32 bytes, hex-encoded (64 chars)
-  - Immutable: chattr +i
+  - Updated by Joi on rotation
 
 # On mesh VM:
-/etc/mesh-proxy/secrets/hmac.key
-  - Owner: root:mesh-proxy
+/etc/default/mesh-signal-worker (MESH_HMAC_SECRET env var)
+  - Owner: root:signal
   - Permissions: 0640
   - Format: same as joi
-  - Protected by: LUKS disk encryption
+  - Initial seed only - rotated keys pushed from Joi, stored in memory
+
+Note: Mesh is stateless. Rotated keys live in memory only.
+On restart, mesh uses env var until Joi pushes current key.
 ```
 
 **Key Generation (initial setup):**
@@ -2113,98 +2119,25 @@ During each 30-second health check (joi-challenger), joi also verifies mesh has 
 
 ### Config Authoritative Sources
 
-> **Single source of truth for each config file:**
+> **Mesh is stateless. All config pushed from Joi, stored in memory only.**
 
-| Config File | Authoritative Source | Sync Direction | Notes |
-|-------------|---------------------|----------------|-------|
-| `identities.yaml` | **joi** | joi → mesh | User identities, pushed on change |
-| `recipients.yaml` | joi only | N/A | Per-user limits, joi-local |
-| `channel_users.yaml` | joi only | N/A | Channel mapping, joi-local |
-| `limits.yaml` | **mesh** | mesh-local | Message limits, mesh-local |
-| `uploads.yaml` | **mesh** | mesh-local | Upload security, mesh-local |
-| `mesh-baseline.yaml` | joi only | N/A | Known-good hashes, immutable |
-| `policy.yaml` | joi only | N/A | Content policy, joi-local |
-| `extraction.yaml` | joi only | N/A | Extraction limits, joi-local |
+| Config | Location | Notes |
+|--------|----------|-------|
+| Policy (identities, limits, etc.) | `/var/lib/joi/policy/mesh-policy.json` | Pushed to mesh via `/config/sync` |
+| HMAC secret (initial) | `/etc/default/mesh-signal-worker` | Seed only; rotated keys in memory |
+| HMAC secret (rotated) | Memory | Pushed from Joi, lost on restart |
 
-**Mesh-local configs (`limits.yaml`, `uploads.yaml`):**
-These are security enforcement configs that live only on mesh. Joi doesn't manage them.
-If these need updating, admin SSHs to mesh and edits directly. These rarely change.
+**On mesh restart:**
+1. Mesh starts with empty policy (denies all messages)
+2. Mesh uses `MESH_HMAC_SECRET` from env for initial auth
+3. Joi pushes current config + rotated key on next scheduler tick
+4. Mesh applies config in memory
 
-**Why not push all config from joi?**
-Mesh security configs (`uploads.yaml`, `limits.yaml`) are enforcement boundaries. They should
-be conservative defaults that rarely change. Pushing from joi would mean a compromised joi
-could weaken mesh security. Mesh-local = mesh enforces even if joi is compromised.
-
-### Config Rollback Mechanism
-
-Bad config can break mesh. Mesh implements automatic rollback on failure.
-
-**Mesh Config Apply with Rollback:**
-```bash
-# /usr/local/bin/mesh-apply-config
-#!/bin/bash
-set -e
-
-CONFIG_DIR="/etc/mesh-proxy"
-BACKUP_DIR="/var/lib/mesh-proxy/config-backup"
-NEW_CONFIG="$1"
-CONFIG_NAME=$(basename "$NEW_CONFIG")
-
-# 1. Backup current config
-mkdir -p "$BACKUP_DIR"
-BACKUP_FILE="$BACKUP_DIR/${CONFIG_NAME}.$(date +%Y%m%d_%H%M%S)"
-cp "$CONFIG_DIR/$CONFIG_NAME" "$BACKUP_FILE" 2>/dev/null || true
-
-# 2. Apply new config
-cp "$NEW_CONFIG" "$CONFIG_DIR/$CONFIG_NAME"
-
-# 3. Validate config (syntax check)
-if ! mesh-proxy --validate-config "$CONFIG_DIR/$CONFIG_NAME"; then
-    echo "ERROR: Config validation failed, rolling back"
-    cp "$BACKUP_FILE" "$CONFIG_DIR/$CONFIG_NAME"
-    exit 1
-fi
-
-# 4. Reload service
-if ! systemctl reload mesh-proxy; then
-    echo "ERROR: Service reload failed, rolling back"
-    cp "$BACKUP_FILE" "$CONFIG_DIR/$CONFIG_NAME"
-    systemctl restart mesh-proxy
-    exit 1
-fi
-
-# 5. Health check (give service 5s to stabilize)
-sleep 5
-if ! curl -sf http://localhost:8444/health > /dev/null; then
-    echo "ERROR: Health check failed, rolling back"
-    cp "$BACKUP_FILE" "$CONFIG_DIR/$CONFIG_NAME"
-    systemctl restart mesh-proxy
-    exit 1
-fi
-
-echo "Config applied successfully"
-
-# 6. Keep only last 10 backups
-ls -t "$BACKUP_DIR/${CONFIG_NAME}."* 2>/dev/null | tail -n +11 | xargs rm -f 2>/dev/null || true
-```
-
-**Rollback Triggers:**
-| Failure | Action |
-|---------|--------|
-| YAML syntax error | Immediate rollback, don't reload |
-| Service reload fails | Rollback + restart service |
-| Health check fails (5s) | Rollback + restart service |
-| Joi push rejected | Mesh keeps old config, logs error |
-
-**Manual Rollback:**
-```bash
-# List available backups
-ls -la /var/lib/mesh-proxy/config-backup/
-
-# Restore specific backup
-cp /var/lib/mesh-proxy/config-backup/identities.yaml.20240101_120000 /etc/mesh-proxy/identities.yaml
-systemctl reload mesh-proxy
-```
+**Why stateless mesh?**
+- No traces on restart - security by design
+- Single source of truth (Joi)
+- No config rollback needed - Joi just pushes again
+- Compromised mesh can't persist malicious config
 
 ### Audit Logging
 

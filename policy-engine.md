@@ -204,31 +204,13 @@ rate_limits:
 
   # Inbound rate limits (enforced at MESH, not Joi)
   # Reason: stop floods before they consume Nebula bandwidth
+  # Note: Mesh is stateless - rate limit config pushed from Joi
   inbound:
     # When rate limited, notify the sender (don't leave them confused)
     on_rate_limit:
       action: drop_and_notify
-      # Message loaded from file for easy translation
-      messages_dir: /etc/mesh-proxy/messages/
-      message_file: rate_limit.txt    # Uses {lang}/rate_limit.txt
-      # Fallback if file not found
-      message_fallback: "Message not delivered. Too many messages. Please wait."
+      message: "Rate limit exceeded. Please wait {minutes_remaining} minutes."
       # Note: This is mesh → sender, does NOT go through Joi or count toward limits
-
-# Example message files:
-# /etc/mesh-proxy/messages/en/rate_limit.txt:
-#   ⚠️ Message not delivered to Joi.
-#   You've sent too many messages. Please wait {minutes_remaining} minutes.
-#
-# /etc/mesh-proxy/messages/sk/rate_limit.txt:
-#   ⚠️ Správa nebola doručená Joi.
-#   Poslali ste príliš veľa správ. Počkajte {minutes_remaining} minút.
-#
-# Language selection:
-#   1. Look up sender's canonical ID
-#   2. Get language from identity config (e.g., owner.language = "en")
-#   3. Load message from {messages_dir}/{language}/rate_limit.txt
-#   4. If file not found, use message_fallback
 
     # DMs: per-user (prevent one person flooding)
     dm:

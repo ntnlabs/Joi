@@ -1,6 +1,6 @@
 # Joi - Project Summary
 
-> Quick reference for understanding this project. Last updated: 2026-02-14
+> Quick reference for understanding this project. Last updated: 2026-02-18
 
 ## What is Joi?
 
@@ -8,12 +8,18 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 
 ## Project Status
 
-**Phase: Implementation** - Core system operational.
+**Phase: Implementation** - Core system operational with defense-in-depth security.
 
 ### Milestones
 
 | Date | Milestone |
 |------|-----------|
+| 2026-02-18 | **Stateless mesh architecture** - Mesh stores nothing on disk; all config pushed from Joi |
+| 2026-02-17 | **Config push system** - One-way Joi → mesh config sync with hash verification |
+| 2026-02-17 | **HMAC key rotation** - Weekly automatic rotation with 60s grace period |
+| 2026-02-17 | **Privacy mode** - PII redaction in logs (phone numbers, group IDs) |
+| 2026-02-17 | **Kill switch** - Emergency message halt for incident response |
+| 2026-02-17 | **Tamper detection** - SHA256 fingerprinting of config files every 60s |
 | 2026-02-14 | **Per-group model & prompt configuration** - Groups can have custom Ollama models with baked-in personalities plus additional prompt overlays |
 | 2026-02-14 | **joi-admin purge tool** - Safe-by-default CLI for memory management (contexts, facts, keys) |
 | 2026-02-14 | **Per-user/group context sizes** - Different conversations can have different message history limits |
