@@ -31,7 +31,7 @@ Context size:
 import logging
 import os
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 logger = logging.getLogger("joi.config.prompts")
 
@@ -283,14 +283,41 @@ def get_group_knowledge_scopes(group_id: str) -> List[str]:
     return [group_id] + [s for s in extra_scopes if s != group_id]
 
 
-def get_knowledge_scopes_for_conversation(conversation_type: str, conversation_id: str, sender_id: str) -> List[str]:
+def get_knowledge_scopes_for_conversation(
+    conversation_type: str,
+    conversation_id: str,
+    sender_id: str,
+    is_business_mode: bool = False,
+    dm_group_knowledge_enabled: bool = False,
+    get_user_groups: Optional[Callable[[str], List[str]]] = None,
+) -> List[str]:
     """
     Get the allowed knowledge scopes for a conversation.
 
     Always includes the conversation's own scope, plus any additional
     scopes listed in the .knowledge file.
+
+    For DM conversations in business mode with dm_group_knowledge enabled,
+    also includes scopes for groups the sender is a member of.
+
+    Args:
+        conversation_type: 'direct' or 'group'
+        conversation_id: Group ID or user ID
+        sender_id: The sender's transport ID
+        is_business_mode: True if running in business mode
+        dm_group_knowledge_enabled: True if DM group knowledge is enabled
+        get_user_groups: Callback to get list of groups a user is member of
     """
     if conversation_type == "group":
         return get_group_knowledge_scopes(conversation_id)
-    else:
-        return get_user_knowledge_scopes(sender_id)
+
+    # DM conversation
+    scopes = get_user_knowledge_scopes(sender_id)
+
+    # Business mode: add user's group scopes
+    if is_business_mode and dm_group_knowledge_enabled and get_user_groups:
+        for group_id in get_user_groups(sender_id):
+            if group_id not in scopes:
+                scopes.append(group_id)
+
+    return scopes

@@ -350,6 +350,11 @@ class Scheduler:
         if self._tick_count % 1440 == 0 and self._tick_count > 0:
             self._check_hmac_rotation()
 
+        # Refresh membership cache (only runs if business mode + dm_group_knowledge)
+        # Check every 15 ticks (~15 min with 60s interval) but actual refresh is controlled by cache
+        if self._tick_count % 15 == 0:
+            self._refresh_membership()
+
         # Placeholder for future implementation:
         # - self._check_reminders()
         # - self._check_wind_impulse()
@@ -436,6 +441,15 @@ class Scheduler:
                     logger.warning("Scheduler: HMAC rotation failed: %s", result)
         except Exception as e:
             logger.warning("Scheduler: HMAC rotation check failed: %s", e)
+
+    def _refresh_membership(self):
+        """Refresh group membership cache (only if feature is active)."""
+        try:
+            # membership_cache.refresh() internally checks if it should be active
+            if membership_cache.refresh():
+                logger.debug("Scheduler: membership cache refreshed")
+        except Exception as e:
+            logger.warning("Scheduler: membership refresh failed: %s", e)
 
     def _startup_config_push(self):
         """Push config to mesh on startup to ensure sync."""
@@ -531,12 +545,27 @@ if HMAC_ENABLED:
     nonce_store = NonceStore(nonce_db_path)
 
 # Number of recent messages to include in context
-CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "40"))
+CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "50"))
 
-# Memory consolidation settings
-CONSOLIDATION_SILENCE_HOURS = float(os.getenv("JOI_CONSOLIDATION_SILENCE_HOURS", "1"))
-CONSOLIDATION_MAX_MESSAGES = int(os.getenv("JOI_CONSOLIDATION_MAX_MESSAGES", "200"))
+# Memory consolidation settings (count-based compaction)
+# When message_count > CONTEXT_MESSAGE_COUNT, compact oldest COMPACT_BATCH_SIZE messages
+COMPACT_BATCH_SIZE = int(os.getenv("JOI_COMPACT_BATCH_SIZE", "20"))
 CONSOLIDATION_ARCHIVE = os.getenv("JOI_CONSOLIDATION_ARCHIVE", "0") == "1"  # Default: delete
+CONSOLIDATION_MODEL = os.getenv("JOI_CONSOLIDATION_MODEL")  # Optional: separate model for compaction
+
+# Validate compaction constraints: 10 <= batch_size < context_size // 2
+def _validate_compaction_settings():
+    if COMPACT_BATCH_SIZE < 10:
+        raise ValueError(f"JOI_COMPACT_BATCH_SIZE must be >= 10, got {COMPACT_BATCH_SIZE}")
+    if CONTEXT_MESSAGE_COUNT < 22:
+        raise ValueError(f"JOI_CONTEXT_MESSAGES must be >= 22 to allow compaction, got {CONTEXT_MESSAGE_COUNT}")
+    max_batch = CONTEXT_MESSAGE_COUNT // 2
+    if COMPACT_BATCH_SIZE >= max_batch:
+        raise ValueError(
+            f"JOI_COMPACT_BATCH_SIZE ({COMPACT_BATCH_SIZE}) must be < context_size // 2 ({max_batch})"
+        )
+
+_validate_compaction_settings()
 
 # RAG settings
 RAG_ENABLED = os.getenv("JOI_RAG_ENABLED", "1") == "1"  # Default: enabled
@@ -553,10 +582,102 @@ _last_send_times: Dict[str, float] = {}  # conversation_id -> timestamp
 _send_lock = threading.Lock()
 
 # Initialize memory consolidator
-consolidator = MemoryConsolidator(memory=memory, llm_client=llm)
+consolidator = MemoryConsolidator(
+    memory=memory,
+    llm_client=llm,
+    consolidation_model=CONSOLIDATION_MODEL,
+)
 
 # Initialize policy manager for mesh config sync
 policy_manager = PolicyManager()
+
+
+# --- Group Membership Cache ---
+
+class GroupMembershipCache:
+    """Cache of group memberships from signal-cli.
+
+    Only active when business mode + dm_group_knowledge enabled.
+    Queries mesh /groups/members endpoint to get real group membership.
+    """
+
+    def __init__(self):
+        self._cache: Dict[str, List[str]] = {}  # group_id -> [member_ids]
+        self._last_refresh: float = 0
+        self._lock = threading.Lock()
+        # Configurable via env (default 15 min)
+        self._refresh_minutes = int(os.getenv("JOI_MEMBERSHIP_REFRESH_MINUTES", "15"))
+
+    def _should_be_active(self) -> bool:
+        """Only run when the attack vector exists (business mode + dm_group_knowledge)."""
+        return (policy_manager.is_business_mode() and
+                policy_manager.is_dm_group_knowledge_enabled())
+
+    def refresh(self) -> bool:
+        """Fetch fresh membership from mesh (only if active)."""
+        if not self._should_be_active():
+            return False  # Skip - not needed
+
+        try:
+            url = f"{settings.mesh_url}/groups/members"
+            headers = {"Content-Type": "application/json"}
+            current_secret = _get_current_hmac_secret()
+            if current_secret:
+                hmac_headers = create_request_headers(b"", current_secret)
+                headers.update(hmac_headers)
+
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(url, headers=headers)
+                resp.raise_for_status()
+                data = resp.json().get("data", {})
+
+            with self._lock:
+                self._cache = data
+                self._last_refresh = time.time()
+            logger.debug("Refreshed group membership: %d groups", len(data))
+            return True
+        except Exception as e:
+            logger.warning("Failed to refresh group membership: %s", e)
+            return False
+
+    def get_user_groups(self, user_id: str) -> List[str]:
+        """Get list of groups where user is a member."""
+        if not self._should_be_active():
+            return []  # Feature disabled
+
+        # Auto-refresh if stale
+        refresh_seconds = self._refresh_minutes * 60
+        with self._lock:
+            time_since_refresh = time.time() - self._last_refresh
+            has_cache = len(self._cache) > 0
+
+        if time_since_refresh > refresh_seconds:
+            if not self.refresh():
+                # Refresh failed - use stale cache if available, else fail closed
+                if has_cache:
+                    logger.warning("Using stale membership cache (refresh failed)")
+                else:
+                    logger.warning("No membership cache and refresh failed - denying group access")
+                    return []
+
+        with self._lock:
+            return [gid for gid, members in self._cache.items() if user_id in members]
+
+    def get_cache_age_seconds(self) -> float:
+        """Get age of cache in seconds."""
+        with self._lock:
+            if self._last_refresh == 0:
+                return -1  # Never refreshed
+            return time.time() - self._last_refresh
+
+    def get_cache_size(self) -> int:
+        """Get number of groups in cache."""
+        with self._lock:
+            return len(self._cache)
+
+
+# Global membership cache instance
+membership_cache = GroupMembershipCache()
 
 
 class ConfigPushClient:
@@ -1133,6 +1254,14 @@ def health():
         "status": "ok",
         "model": settings.ollama_model,
         "num_ctx": settings.ollama_num_ctx if settings.ollama_num_ctx > 0 else "default",
+        "mode": {
+            "type": policy_manager.get_mode(),
+            "dm_group_knowledge": policy_manager.is_dm_group_knowledge_enabled(),
+            "membership_checks_active": membership_cache._should_be_active(),
+            "membership_cache_groups": membership_cache.get_cache_size(),
+            "membership_cache_age_seconds": membership_cache.get_cache_age_seconds(),
+            "membership_refresh_minutes": membership_cache._refresh_minutes,
+        },
         "memory": {
             "messages": msg_count,
             "facts": len(facts),
@@ -1486,6 +1615,9 @@ def receive_message(msg: InboundMessage):
             conversation_type=msg.conversation.type,
             conversation_id=msg.conversation.id,
             sender_id=msg.sender.transport_id,
+            is_business_mode=policy_manager.is_business_mode(),
+            dm_group_knowledge_enabled=policy_manager.is_dm_group_knowledge_enabled(),
+            get_user_groups=membership_cache.get_user_groups,
         )
 
         # Get system prompt based on whether custom model is used
@@ -1700,18 +1832,17 @@ def _build_enriched_prompt(
 
 
 def _maybe_run_consolidation() -> None:
-    """Run memory consolidation if needed (after silence or message threshold)."""
+    """Run memory consolidation if context window exceeded."""
     try:
         result = consolidator.run_consolidation(
-            silence_threshold_ms=int(CONSOLIDATION_SILENCE_HOURS * 3600 * 1000),
-            max_messages_before_consolidation=CONSOLIDATION_MAX_MESSAGES,
             context_messages=CONTEXT_MESSAGE_COUNT,
+            compact_batch_size=COMPACT_BATCH_SIZE,
             archive_instead_of_delete=CONSOLIDATION_ARCHIVE,
         )
         if result["ran"]:
             action = "archived" if CONSOLIDATION_ARCHIVE else "deleted"
             logger.info(
-                "Memory consolidation: facts=%d, summarized=%d, %s=%d",
+                "Memory compaction: facts=%d, summarized=%d, %s=%d",
                 result["facts_extracted"],
                 result["messages_summarized"],
                 action,

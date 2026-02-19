@@ -18,20 +18,20 @@ from .store import MemoryStore, Message
 logger = logging.getLogger("joi.memory.consolidation")
 
 # Prompt for extracting facts from conversation
-FACT_EXTRACTION_PROMPT = """Extract facts about the user from this conversation.
+FACT_EXTRACTION_PROMPT = """Extract ALL facts about the user from this conversation.
 
 IMPORTANT: Return ONLY a valid JSON array. No explanations, no markdown, no text before or after.
 
 Each fact must have exactly these 4 fields:
-- "category": one of: "personal", "preference", "relationship", "work", "routine", "interest"
-- "key": short identifier like "name", "job", "hobby", "partner_name"
+- "category": descriptive category (e.g., personal, preference, work, health, skill, goal, routine)
+- "key": short identifier like "name", "job", "allergy", "hobby"
 - "value": the actual fact as a string
 - "confidence": number between 0.0 and 1.0
 
 If no facts found, return exactly: []
 
-Example of correct output format:
-[{{"category": "personal", "key": "name", "value": "Peter", "confidence": 1.0}}, {{"category": "preference", "key": "coffee", "value": "likes black coffee", "confidence": 0.8}}]
+Example:
+[{{"category": "personal", "key": "name", "value": "Peter", "confidence": 1.0}}, {{"category": "preference", "key": "meetings", "value": "prefers morning meetings", "confidence": 0.9}}]
 
 Conversation:
 {conversation}
@@ -109,8 +109,8 @@ def validate_fact(fact: Any) -> bool:
     if fact.get("value") is None:
         return False
 
-    valid_categories = ["personal", "preference", "relationship", "work", "routine", "interest"]
-    if fact.get("category") not in valid_categories:
+    # Category is free-form - just ensure it's a non-empty string
+    if not fact.get("category"):
         return False
 
     # Confidence should be 0-1
@@ -159,16 +159,24 @@ def validate_summary(summary: str) -> tuple[bool, str]:
 class MemoryConsolidator:
     """Handles memory consolidation tasks."""
 
-    def __init__(self, memory: MemoryStore, llm_client: Any):
+    def __init__(
+        self,
+        memory: MemoryStore,
+        llm_client: Any,
+        consolidation_model: Optional[str] = None,
+    ):
         """
         Initialize consolidator.
 
         Args:
             memory: MemoryStore instance
             llm_client: LLM client with generate() method
+            consolidation_model: Optional model name for consolidation tasks
+                                (uses low temperature for precise extraction)
         """
         self.memory = memory
         self.llm = llm_client
+        self.consolidation_model = consolidation_model
 
     def extract_facts_from_messages(
         self,
@@ -192,7 +200,7 @@ class MemoryConsolidator:
         prompt = FACT_EXTRACTION_PROMPT.format(conversation=conversation_text)
 
         try:
-            response = self.llm.generate(prompt=prompt)
+            response = self.llm.generate(prompt=prompt, model=self.consolidation_model)
         except Exception as e:
             logger.error("LLM generate failed: %s", e)
             return []
@@ -226,7 +234,7 @@ Previous response that failed:
 
 Corrected JSON:"""
             try:
-                retry_response = self.llm.generate(prompt=retry_prompt)
+                retry_response = self.llm.generate(prompt=retry_prompt, model=self.consolidation_model)
                 if retry_response.text and not retry_response.error:
                     facts = parse_facts_json(retry_response.text)
                     if facts:
@@ -304,7 +312,7 @@ Corrected JSON:"""
         conversation_text = format_messages_for_llm(messages)
         prompt = SUMMARIZATION_PROMPT.format(conversation=conversation_text)
 
-        response = self.llm.generate(prompt=prompt)
+        response = self.llm.generate(prompt=prompt, model=self.consolidation_model)
         if response.error:
             logger.error("LLM error during summarization: %s", response.error)
             return None
@@ -332,29 +340,28 @@ Corrected JSON:"""
 
     def run_consolidation(
         self,
-        silence_threshold_ms: int = 3600000,  # 1 hour
-        max_messages_before_consolidation: int = 200,
-        context_messages: int = 40,
+        context_messages: int = 50,
+        compact_batch_size: int = 20,
         archive_instead_of_delete: bool = False,
     ) -> Dict[str, Any]:
         """
-        Run full memory consolidation per conversation.
+        Run count-based memory consolidation per conversation.
 
-        Triggers per conversation when:
-        - Silence for more than threshold, OR
-        - More than max_messages in that conversation
+        Triggers per conversation when message_count > context_messages.
+        Compacts the oldest `compact_batch_size` messages.
+
+        This approach ensures messages are compacted while still fresh
+        (just exited context window), avoiding "memory drift" where
+        messages are forgotten then suddenly remembered via summary.
 
         Args:
-            silence_threshold_ms: Consider conversation ended after this much silence
-            max_messages_before_consolidation: Force consolidation at this count
-            context_messages: Always preserve the most recent N messages per conversation
+            context_messages: Context window size (trigger when exceeded)
+            compact_batch_size: Number of oldest messages to compact
             archive_instead_of_delete: If True, archive messages; if False, delete them
 
         Returns:
             Dict with consolidation results (totals across all conversations)
         """
-        now_ms = int(time.time() * 1000)
-
         results = {
             "ran": False,
             "reason": None,
@@ -370,16 +377,14 @@ Corrected JSON:"""
         for convo_id in conversation_ids:
             convo_results = self._consolidate_conversation(
                 conversation_id=convo_id,
-                now_ms=now_ms,
-                silence_threshold_ms=silence_threshold_ms,
-                max_messages=max_messages_before_consolidation,
                 context_messages=context_messages,
+                compact_batch_size=compact_batch_size,
                 archive_instead_of_delete=archive_instead_of_delete,
             )
 
             if convo_results["ran"]:
                 results["ran"] = True
-                results["reason"] = convo_results["reason"]
+                results["reason"] = "context_overflow"
                 results["facts_extracted"] += convo_results["facts_extracted"]
                 results["messages_summarized"] += convo_results["messages_summarized"]
                 results["messages_removed"] += convo_results["messages_removed"]
@@ -392,13 +397,15 @@ Corrected JSON:"""
     def _consolidate_conversation(
         self,
         conversation_id: str,
-        now_ms: int,
-        silence_threshold_ms: int,
-        max_messages: int,
         context_messages: int,
+        compact_batch_size: int,
         archive_instead_of_delete: bool,
     ) -> Dict[str, Any]:
-        """Consolidate a single conversation."""
+        """
+        Consolidate a single conversation using count-based trigger.
+
+        Compacts oldest messages when total exceeds context window.
+        """
         results = {
             "ran": False,
             "reason": None,
@@ -407,37 +414,33 @@ Corrected JSON:"""
             "messages_removed": 0,
         }
 
-        # Check message count and last interaction for this conversation
+        # Check message count for this conversation
         message_count = self.memory.get_message_count_for_conversation(conversation_id)
-        last_interaction = self.memory.get_last_interaction_for_conversation(conversation_id)
 
-        silence_ms = now_ms - last_interaction if last_interaction else 0
-        needs_consolidation = (
-            (silence_ms > silence_threshold_ms and message_count > context_messages) or
-            message_count > max_messages
-        )
-
-        if not needs_consolidation:
+        # Trigger: message count exceeds context window
+        if message_count <= context_messages:
             return results
 
         results["ran"] = True
-        results["reason"] = "silence" if silence_ms > silence_threshold_ms else "message_count"
+        results["reason"] = "context_overflow"
 
-        # Get messages for this conversation, preserving context window
-        old_messages = self.memory.get_messages_for_summarization(
-            exclude_recent=context_messages,
-            limit=200,
+        # Get the oldest `compact_batch_size` messages for compaction
+        oldest_messages = self.memory.get_oldest_messages(
+            limit=compact_batch_size,
             conversation_id=conversation_id,
         )
 
-        if not old_messages:
+        if not oldest_messages:
             return results
 
-        logger.info("Consolidating %d messages for conversation %s", len(old_messages), conversation_id)
+        logger.info(
+            "Compacting %d oldest messages for conversation %s (total: %d, context: %d)",
+            len(oldest_messages), conversation_id, message_count, context_messages
+        )
 
         # Extract facts (with error handling)
         try:
-            facts = self.extract_facts_from_messages(old_messages, store=True)
+            facts = self.extract_facts_from_messages(oldest_messages, store=True)
             results["facts_extracted"] = len(facts)
         except Exception as e:
             logger.error("Fact extraction failed for %s: %s", conversation_id, e, exc_info=True)
@@ -445,20 +448,20 @@ Corrected JSON:"""
 
         # Summarize (with error handling)
         try:
-            summary = self.summarize_messages(old_messages, store=True)
+            summary = self.summarize_messages(oldest_messages, store=True)
         except Exception as e:
             logger.error("Summarization failed for %s: %s", conversation_id, e, exc_info=True)
             summary = None
 
         if summary:
-            results["messages_summarized"] = len(old_messages)
+            results["messages_summarized"] = len(oldest_messages)
 
-            # Remove old messages for this conversation
-            newest_timestamp = max(m.timestamp for m in old_messages)
+            # Remove compacted messages by ID (not timestamp, to avoid boundary issues)
+            message_ids = [m.message_id for m in oldest_messages]
             if archive_instead_of_delete:
-                removed = self.memory.archive_messages_before(newest_timestamp + 1, conversation_id)
+                removed = self.memory.archive_messages_by_ids(message_ids, conversation_id)
             else:
-                removed = self.memory.delete_messages_before(newest_timestamp + 1, conversation_id)
+                removed = self.memory.delete_messages_by_ids(message_ids, conversation_id)
             results["messages_removed"] = removed
 
         return results

@@ -14,6 +14,9 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 
 | Date | Milestone |
 |------|-----------|
+| 2026-02-19 | **Count-based memory compaction** - Fixed memory drift bug: compact oldest N messages when context exceeded (no more "forgotten then remembered" summaries) |
+| 2026-02-19 | **Business mode DM group knowledge** - Configurable mode (companion/business) with optional DM access to group knowledge based on real Signal memberships |
+| 2026-02-19 | **Security gaps closed** - Joi HMAC fail-closed, bounded thread pool, outbound rate limiting, mesh status polling |
 | 2026-02-18 | **Stateless mesh architecture** - Mesh stores nothing on disk; all config pushed from Joi |
 | 2026-02-17 | **Config push system** - One-way Joi → mesh config sync with hash verification |
 | 2026-02-17 | **HMAC key rotation** - Weekly automatic rotation with 60s grace period |
@@ -39,6 +42,7 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 | **System Channel** | Machine-to-machine communication (type-agnostic, read/write/both per source) |
 | **LLM Services** | Isolated VMs for image generation, web search, TTS, code execution |
 | **Behavior Modes** | `companion` (proactive, organic) or `assistant` (request-response only) |
+| **Operating Modes** | `companion` (default, DM group knowledge off) or `business` (configurable DM group access) |
 
 ## Technology Stack
 
@@ -148,3 +152,19 @@ See `hardware-budget-analysis.md` for detailed budget and sourcing options.
 3. ~~Protect Signal credentials~~ ✓ RESOLVED (LUKS + file permissions, documented in Joi-architecture-v2.md)
 4. ~~Enforce read-only constraints at all layers~~ ✓ RESOLVED (policy-engine.md)
 5. ~~Add rate limiting on agent actions~~ ✓ RESOLVED (policy-engine.md, 60/hr direct, unlimited critical)
+
+## Future Improvements
+
+### Selective Summary Injection
+Currently all summaries (last 7 days) are injected into every prompt. This can cause style/belief drift from persistent priming. Instead, score and select only relevant summaries per turn:
+
+**Scoring formula:** `importance = 0.55*relevance + 0.25*recency + 0.20*intent_boost - novelty_penalty`
+
+| Factor | Description |
+|--------|-------------|
+| **Relevance** | Keyword/entity overlap with current message (optional: embedding similarity) |
+| **Recency** | Newer summaries score higher, older decay |
+| **Intent boost** | If user asks memory-style questions ("remember", "last time", "what did we decide") |
+| **Novelty penalty** | Down-rank if content already in context window or structured facts |
+
+Select top 1-3 summaries under token budget. Summaries stay core memory, but only relevant ones enter each turn.

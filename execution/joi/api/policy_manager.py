@@ -20,6 +20,8 @@ DEFAULT_POLICY_PATH = "/var/lib/joi/policy/mesh-policy.json"
 
 DEFAULT_POLICY = {
     "version": 1,
+    "mode": "companion",  # "companion" (default) or "business"
+    "dm_group_knowledge": False,  # Only applies in business mode
     "identity": {
         "bot_name": "Joi",
         "allowed_senders": [],
@@ -327,3 +329,45 @@ class PolicyManager:
         """Reload config from disk."""
         self._load()
         logger.info("Reloaded policy from disk, hash=%s", self._config_hash[:16])
+
+    # --- Mode Configuration ---
+
+    def get_mode(self) -> str:
+        """Get current mode ('companion' or 'business')."""
+        with self._lock:
+            return self._config.get("mode", "companion")
+
+    def is_business_mode(self) -> bool:
+        """Check if running in business mode."""
+        return self.get_mode() == "business"
+
+    def is_dm_group_knowledge_enabled(self) -> bool:
+        """
+        Check if DM group knowledge access is enabled.
+
+        Companion mode: always returns False (hardcoded security)
+        Business mode: returns the dm_group_knowledge config value
+        """
+        with self._lock:
+            mode = self._config.get("mode", "companion")
+            if mode != "business":
+                return False  # Companion mode = hardcoded OFF
+            return bool(self._config.get("dm_group_knowledge", False))
+
+    def set_mode(self, mode: str) -> None:
+        """Set operating mode ('companion' or 'business')."""
+        if mode not in ("companion", "business"):
+            raise ValueError(f"Invalid mode: {mode}. Must be 'companion' or 'business'")
+        with self._lock:
+            self._config["mode"] = mode
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("Mode set to: %s", mode)
+
+    def set_dm_group_knowledge(self, enabled: bool) -> None:
+        """Enable or disable DM group knowledge access (only effective in business mode)."""
+        with self._lock:
+            self._config["dm_group_knowledge"] = enabled
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("DM group knowledge %s", "enabled" if enabled else "disabled")

@@ -538,6 +538,73 @@ class MemoryStore:
 
         return list(reversed(messages))
 
+    def get_oldest_messages(
+        self,
+        limit: int = 20,
+        conversation_id: Optional[str] = None,
+        content_type: str = "text",
+    ) -> List[Message]:
+        """
+        Get oldest messages for compaction.
+
+        Args:
+            limit: Maximum number of messages to return
+            conversation_id: Filter by conversation (required for compaction)
+            content_type: Filter by content type (default: text)
+
+        Returns:
+            List of Message objects, oldest first
+        """
+        conn = self._connect()
+
+        if conversation_id:
+            cursor = conn.execute(
+                """
+                SELECT id, message_id, direction, channel, content_type,
+                       content_text, conversation_id, reply_to_id, timestamp, created_at,
+                       archived, sender_id, sender_name
+                FROM messages
+                WHERE content_type = ? AND conversation_id = ? AND archived = 0
+                ORDER BY timestamp ASC
+                LIMIT ?
+                """,
+                (content_type, conversation_id, limit)
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT id, message_id, direction, channel, content_type,
+                       content_text, conversation_id, reply_to_id, timestamp, created_at,
+                       archived, sender_id, sender_name
+                FROM messages
+                WHERE content_type = ? AND archived = 0
+                ORDER BY timestamp ASC
+                LIMIT ?
+                """,
+                (content_type, limit)
+            )
+
+        rows = cursor.fetchall()
+
+        return [
+            Message(
+                id=row["id"],
+                message_id=row["message_id"],
+                direction=row["direction"],
+                channel=row["channel"],
+                content_type=row["content_type"],
+                content_text=row["content_text"],
+                conversation_id=row["conversation_id"],
+                reply_to_id=row["reply_to_id"],
+                timestamp=row["timestamp"],
+                created_at=row["created_at"],
+                archived=bool(row["archived"]),
+                sender_id=row["sender_id"],
+                sender_name=row["sender_name"],
+            )
+            for row in rows
+        ]
+
     def get_message_count(self, direction: Optional[str] = None, since_ms: Optional[int] = None, include_archived: bool = False) -> int:
         """Count messages, optionally filtered by direction and time."""
         conn = self._connect()
@@ -837,7 +904,7 @@ class MemoryStore:
         if not summaries:
             return ""
 
-        lines = ["Recent conversation history:"]
+        lines = ["Earlier in this conversation (already discussed):"]
         for summary in reversed(summaries):  # Oldest first
             # Format timestamp as date
             from datetime import datetime
@@ -985,6 +1052,71 @@ class MemoryStore:
         if deleted > 0:
             logger.info("Deleted %d messages before %d", deleted, before_ms)
         return deleted
+
+    def delete_messages_by_ids(self, message_ids: List[str], conversation_id: Optional[str] = None) -> int:
+        """Delete specific messages by their message_id (not row id)."""
+        if not message_ids:
+            return 0
+
+        conn = self._connect()
+        placeholders = ",".join("?" * len(message_ids))
+
+        # First, clear reply_to_id references
+        if conversation_id:
+            conn.execute(
+                f"""
+                UPDATE messages SET reply_to_id = NULL
+                WHERE reply_to_id IN ({placeholders}) AND conversation_id = ?
+                """,
+                (*message_ids, conversation_id)
+            )
+            cursor = conn.execute(
+                f"DELETE FROM messages WHERE message_id IN ({placeholders}) AND conversation_id = ?",
+                (*message_ids, conversation_id)
+            )
+        else:
+            conn.execute(
+                f"""
+                UPDATE messages SET reply_to_id = NULL
+                WHERE reply_to_id IN ({placeholders})
+                """,
+                message_ids
+            )
+            cursor = conn.execute(
+                f"DELETE FROM messages WHERE message_id IN ({placeholders})",
+                message_ids
+            )
+        conn.commit()
+
+        deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info("Deleted %d messages by ID", deleted)
+        return deleted
+
+    def archive_messages_by_ids(self, message_ids: List[str], conversation_id: Optional[str] = None) -> int:
+        """Archive specific messages by their message_id (soft delete)."""
+        if not message_ids:
+            return 0
+
+        conn = self._connect()
+        placeholders = ",".join("?" * len(message_ids))
+
+        if conversation_id:
+            cursor = conn.execute(
+                f"UPDATE messages SET archived = 1 WHERE message_id IN ({placeholders}) AND conversation_id = ?",
+                (*message_ids, conversation_id)
+            )
+        else:
+            cursor = conn.execute(
+                f"UPDATE messages SET archived = 1 WHERE message_id IN ({placeholders})",
+                message_ids
+            )
+        conn.commit()
+
+        archived = cursor.rowcount
+        if archived > 0:
+            logger.info("Archived %d messages by ID", archived)
+        return archived
 
     # --- Knowledge Operations (RAG) ---
 

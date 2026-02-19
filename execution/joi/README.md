@@ -67,15 +67,15 @@ See [ENV-REFERENCE.md](../../ENV-REFERENCE.md) for complete documentation.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_MEMORY_DB` | /var/lib/joi/memory.db | SQLite database path |
-| `JOI_CONTEXT_MESSAGES` | 40 | Recent messages in LLM context |
+| `JOI_CONTEXT_MESSAGES` | 50 | Recent messages in LLM context (min 22) |
 | `JOI_REQUIRE_ENCRYPTED_DB` | 1 | Require encrypted DB (fail if not available) |
 
-### Consolidation
+### Compaction
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JOI_CONSOLIDATION_SILENCE_HOURS` | 1 | Hours of silence before consolidation |
-| `JOI_CONSOLIDATION_MAX_MESSAGES` | 200 | Force consolidation at message count |
+| `JOI_COMPACT_BATCH_SIZE` | 20 | Messages to compact when context exceeded (10 <= x < context/2) |
 | `JOI_CONSOLIDATION_ARCHIVE` | 0 | Set to 1 to archive instead of delete |
+| `JOI_CONSOLIDATION_MODEL` | (none) | Optional model for fact extraction (low temp recommended) |
 
 ### RAG
 | Variable | Default | Description |
