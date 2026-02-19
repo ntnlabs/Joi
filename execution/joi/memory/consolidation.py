@@ -60,7 +60,11 @@ def format_messages_for_llm(messages: List[Message]) -> str:
     """Format messages as conversation text for LLM."""
     lines = []
     for msg in messages:
-        role = "User" if msg.direction == "inbound" else "Joi"
+        if msg.direction == "outbound":
+            role = "Joi"
+        else:
+            # Use actual name/ID so LLM can attribute facts correctly
+            role = msg.sender_name or msg.sender_id or "Someone"
         text = msg.content_text or "(no text)"
         lines.append(f"{role}: {text}")
     return "\n".join(lines)
