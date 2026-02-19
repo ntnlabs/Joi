@@ -1,6 +1,6 @@
 # Joi - Project Summary
 
-> Quick reference for understanding this project. Last updated: 2026-02-18
+> Quick reference for understanding this project. Last updated: 2026-02-20
 
 ## What is Joi?
 
@@ -14,6 +14,7 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 
 | Date | Milestone |
 |------|-----------|
+| 2026-02-20 | **Self-describing facts** - Facts include person names in values ("Peter is a developer"), unified conversation_id storage, fixed input label and retrieval key mismatches |
 | 2026-02-19 | **Count-based memory compaction** - Fixed memory drift bug: compact oldest N messages when context exceeded (no more "forgotten then remembered" summaries) |
 | 2026-02-19 | **Business mode DM group knowledge** - Configurable mode (companion/business) with optional DM access to group knowledge based on real Signal memberships |
 | 2026-02-19 | **Security gaps closed** - Joi HMAC fail-closed, bounded thread pool, outbound rate limiting, mesh status polling |
