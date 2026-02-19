@@ -24,21 +24,28 @@ class OllamaClient:
         self.timeout = timeout
         self.num_ctx = num_ctx  # 0 = use model default
 
-    def generate(self, prompt: str, system: Optional[str] = None) -> LLMResponse:
+    def generate(
+        self,
+        prompt: str,
+        system: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> LLMResponse:
         """
         Generate a response from the LLM.
 
         Args:
             prompt: The user's message
             system: Optional system prompt
+            model: Optional model override (None = use client's default model)
 
         Returns:
             LLMResponse with the generated text
         """
         url = f"{self.base_url}/api/generate"
+        use_model = model or self.model
 
         payload = {
-            "model": self.model,
+            "model": use_model,
             "prompt": prompt,
             "stream": False,
         }
@@ -57,7 +64,7 @@ class OllamaClient:
 
             return LLMResponse(
                 text=data.get("response", ""),
-                model=data.get("model", self.model),
+                model=data.get("model", use_model),
                 done=data.get("done", True),
             )
 
@@ -65,7 +72,7 @@ class OllamaClient:
             logger.error("Ollama request timed out")
             return LLMResponse(
                 text="",
-                model=self.model,
+                model=use_model,
                 done=False,
                 error="timeout",
             )
@@ -73,7 +80,7 @@ class OllamaClient:
             logger.error("Ollama HTTP error: %s", exc)
             return LLMResponse(
                 text="",
-                model=self.model,
+                model=use_model,
                 done=False,
                 error=f"http_error: {exc.response.status_code}",
             )
@@ -81,7 +88,7 @@ class OllamaClient:
             logger.error("Ollama error: %s", exc)
             return LLMResponse(
                 text="",
-                model=self.model,
+                model=use_model,
                 done=False,
                 error=str(exc),
             )
