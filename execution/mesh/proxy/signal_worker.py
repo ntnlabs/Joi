@@ -500,6 +500,48 @@ def config_status():
     })
 
 
+def _list_groups() -> List[Dict]:
+    """Query signal-cli for all groups and their members."""
+    global _rpc
+    with _rpc_lock:
+        if _rpc is None:
+            logger.warning("Cannot list groups: RPC not ready")
+            return []
+        try:
+            result = _rpc.call("listGroups", {}, timeout=30.0)
+            if "error" in result:
+                logger.warning("listGroups error: %s", result["error"])
+                return []
+            return result.get("result", [])
+        except Exception as exc:
+            logger.error("listGroups failed: %s", exc)
+            return []
+
+
+@flask_app.route("/groups/members", methods=["GET"])
+def get_group_members():
+    """Return all groups with their member lists."""
+    groups = _list_groups()
+    result = {}
+    for g in groups:
+        group_id = g.get("id")
+        members = g.get("members", [])
+        if group_id and members:
+            # Extract member phone numbers/UUIDs from member objects
+            member_ids = []
+            for m in members:
+                if isinstance(m, dict):
+                    # Prefer number over uuid
+                    member_id = m.get("number") or m.get("uuid")
+                    if member_id:
+                        member_ids.append(member_id)
+                elif isinstance(m, str):
+                    member_ids.append(m)
+            if member_ids:
+                result[group_id] = member_ids
+    return jsonify({"status": "ok", "data": result})
+
+
 @flask_app.route("/api/v1/message/outbound", methods=["POST"])
 def send_outbound():
     """Handle outbound messages from Joi."""
