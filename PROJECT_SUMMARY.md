@@ -168,3 +168,29 @@ Currently all summaries (last 7 days) are injected into every prompt. This can c
 | **Novelty penalty** | Down-rank if content already in context window or structured facts |
 
 Select top 1-3 summaries under token budget. Summaries stay core memory, but only relevant ones enter each turn.
+
+### Joi Identity Registry
+Transport-agnostic user identity system for pinpoint-accurate fact attribution.
+
+**Problem:** Signal only provides phone numbers for contacts; non-contacts in groups only have UUIDs. Other transports have different ID schemes.
+
+**Solution:** Joi-internal identity registry:
+```
+joi_users table:
+  joi_id: UUID (Joi-generated, canonical)
+  display_name: str
+  identities: [
+    {transport: "signal", type: "phone", value: "+123456"},
+    {transport: "signal", type: "uuid", value: "abc-def-123"},
+  ]
+```
+
+**Behavior:**
+- First encounter → create Joi identity, link available transport IDs
+- Subsequent encounters → lookup by transport ID, resolve to Joi identity
+- Facts stored under Joi identity (cross-transport, cross-conversation)
+
+**Scoping rules (unchanged):**
+- Group facts → scoped to group_id (privacy boundary)
+- DM facts → scoped to user's Joi identity
+- Business mode → explicit opt-in to bridge scopes
