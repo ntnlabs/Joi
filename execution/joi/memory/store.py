@@ -87,6 +87,7 @@ class Message:
 class UserFact:
     """A fact about the user."""
     id: int
+    conversation_id: str  # Which conversation this fact belongs to
     category: str  # 'personal', 'preference', 'relationship', etc.
     key: str
     value: str
@@ -774,7 +775,7 @@ class MemoryStore:
 
         cursor = conn.execute(
             f"""
-            SELECT id, category, key, value, confidence, source,
+            SELECT id, conversation_id, category, key, value, confidence, source,
                    learned_at, last_verified_at
             FROM user_facts
             WHERE {where_clause}
@@ -787,6 +788,7 @@ class MemoryStore:
         return [
             UserFact(
                 id=row["id"],
+                conversation_id=row["conversation_id"] or "",
                 category=row["category"],
                 key=row["key"],
                 value=row["value"],
