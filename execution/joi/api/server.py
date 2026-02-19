@@ -1540,15 +1540,10 @@ def receive_message(msg: InboundMessage):
         sender_name=msg.sender.display_name,
     )
 
-    # Build fact key for explicit "remember this" requests - per-user in groups
-    if msg.conversation.type == "group":
-        fact_key = f"{msg.conversation.id}:{msg.sender.transport_id}"
-    else:
-        fact_key = msg.conversation.id
-
-    # Retrieval key for facts/summaries - use conversation_id (group-scoped)
-    # Inferred facts from consolidation are stored per-conversation, not per-user
-    retrieval_key = msg.conversation.id
+    # All facts (explicit and inferred) use conversation_id as key
+    # - DMs: phone number (per-user scope)
+    # - Groups: group_id (group scope, facts include person names)
+    fact_key = msg.conversation.id
 
     # Check for "remember this" requests (only from allowed senders)
     saved_fact = None
@@ -1633,10 +1628,10 @@ def receive_message(msg: InboundMessage):
                 sender_id=msg.sender.transport_id,
             )
             if base_prompt:
-                enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=retrieval_key, knowledge_scopes=knowledge_scopes)
+                enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
             else:
                 # No prompt file - only add facts/summaries/RAG if available
-                enriched_prompt = _build_enriched_prompt("", user_text, conversation_id=retrieval_key, knowledge_scopes=knowledge_scopes)
+                enriched_prompt = _build_enriched_prompt("", user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
                 enriched_prompt = enriched_prompt.strip() or None  # None if empty
         else:
             # No custom model: use prompt with fallback to default
@@ -1645,7 +1640,7 @@ def receive_message(msg: InboundMessage):
                 conversation_id=msg.conversation.id,
                 sender_id=msg.sender.transport_id,
             )
-            enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=retrieval_key, knowledge_scopes=knowledge_scopes)
+            enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
 
         # Add hint if we just saved a fact
         if saved_fact and enriched_prompt:
