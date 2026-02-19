@@ -18,20 +18,22 @@ from .store import MemoryStore, Message
 logger = logging.getLogger("joi.memory.consolidation")
 
 # Prompt for extracting facts from conversation
-FACT_EXTRACTION_PROMPT = """Extract ALL facts about the user from this conversation.
+FACT_EXTRACTION_PROMPT = """Extract ALL facts about people from this conversation.
 
 IMPORTANT: Return ONLY a valid JSON array. No explanations, no markdown, no text before or after.
 
 Each fact must have exactly these 4 fields:
 - "category": descriptive category (e.g., personal, preference, work, health, skill, goal, routine)
-- "key": short identifier like "name", "job", "allergy", "hobby"
-- "value": the actual fact as a string
+- "key": short identifier like "name", "profession", "preference", "hobby"
+- "value": the fact AS A COMPLETE SENTENCE including the person's name
 - "confidence": number between 0.0 and 1.0
+
+ALWAYS include the person's name in the value. Never use "User" or "the user".
 
 If no facts found, return exactly: []
 
 Example:
-[{{"category": "personal", "key": "name", "value": "Peter", "confidence": 1.0}}, {{"category": "preference", "key": "meetings", "value": "prefers morning meetings", "confidence": 0.9}}]
+[{{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0}}, {{"category": "preference", "key": "meetings", "value": "Peter prefers morning meetings", "confidence": 0.9}}]
 
 Conversation:
 {conversation}
@@ -251,43 +253,26 @@ Corrected JSON:"""
                 logger.warning("validate_fact error for %s: %s", f, e)
 
         if store and valid_facts:
-            # Get conversation_id and sender from first message
+            # Store facts under conversation_id (works for both DMs and groups)
+            # Facts include person's name in the value, so no need to separate by sender
             convo_id = messages[0].conversation_id if messages else ""
-            # For groups (messages from multiple senders), we can't reliably attribute facts
-            # Only store if single sender or DM (all messages from same person)
-            sender_ids = set(m.sender_id for m in messages if m.sender_id and m.direction == "inbound")
 
-            if len(sender_ids) == 1:
-                # Single sender - safe to store facts
-                sender_id = sender_ids.pop()
-                # Determine if this is a group or DM based on channel
-                is_group = any(m.channel == "group" for m in messages)
-                # Use composite key for groups: conversation_id:sender_id
-                # For DMs, use just conversation_id (matches live server behavior)
-                if is_group:
-                    fact_key = f"{convo_id}:{sender_id}" if sender_id and convo_id else convo_id or ""
-                else:
-                    fact_key = convo_id or ""
-
-                stored_count = 0
-                for fact in valid_facts:
-                    try:
-                        self.memory.store_fact(
-                            category=fact["category"],
-                            key=fact["key"],
-                            value=str(fact["value"]),
-                            confidence=float(fact.get("confidence", 0.8)),
-                            source="inferred",
-                            conversation_id=fact_key,
-                        )
-                        stored_count += 1
-                    except (KeyError, TypeError, ValueError) as e:
-                        logger.warning("Skipping malformed fact %s: %s", fact, e)
-                if stored_count:
-                    logger.info("Extracted and stored %d facts for %s", stored_count, fact_key)
-            else:
-                # Multiple senders - skip storing to avoid mixing facts
-                logger.info("Skipping fact storage for mixed-sender batch (%d senders)", len(sender_ids))
+            stored_count = 0
+            for fact in valid_facts:
+                try:
+                    self.memory.store_fact(
+                        category=fact["category"],
+                        key=fact["key"],
+                        value=str(fact["value"]),
+                        confidence=float(fact.get("confidence", 0.8)),
+                        source="inferred",
+                        conversation_id=convo_id,
+                    )
+                    stored_count += 1
+                except (KeyError, TypeError, ValueError) as e:
+                    logger.warning("Skipping malformed fact %s: %s", fact, e)
+            if stored_count:
+                logger.info("Extracted and stored %d facts for %s", stored_count, convo_id)
 
         return valid_facts
 
