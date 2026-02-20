@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from flask import Flask, jsonify, request
 
 from config import load_settings
-from forwarder import forward_to_joi, set_config_state
+from forwarder import forward_to_joi, forward_document_to_joi, set_config_state
 from hmac_auth import (
     InMemoryNonceStore,
     get_shared_secret,
@@ -29,6 +29,15 @@ logger = logging.getLogger("mesh.signal_worker")
 _hmac_secret = get_shared_secret()  # Initial secret from env (fallback)
 _nonce_store = InMemoryNonceStore()  # Always create - needed when HMAC becomes available
 _hmac_timestamp_tolerance = int(os.getenv("MESH_HMAC_TIMESTAMP_TOLERANCE_MS", str(DEFAULT_TIMESTAMP_TOLERANCE_MS)))
+
+# Document handling configuration
+# Note: Only extensions supported by ingestion.py (txt, md)
+# Extension-based filtering (MIME types from Signal are unreliable)
+# UTF-8 validation provides the real security check
+ALLOWED_DOCUMENT_EXTENSIONS = {".txt", ".md"}
+EXTENSION_TO_MIME = {".txt": "text/plain", ".md": "text/markdown"}
+MAX_DOCUMENT_SIZE_BYTES = int(os.getenv("MESH_MAX_DOCUMENT_SIZE", str(1 * 1024 * 1024)))  # 1MB default
+SIGNAL_ATTACHMENTS_DIR = Path(os.getenv("SIGNAL_ATTACHMENTS_DIR", "/var/lib/signal-cli/attachments"))
 
 
 def _redact_pii(value: str, pii_type: str = "phone") -> str:
@@ -721,6 +730,116 @@ def _check_bot_mentioned(data_message: Dict[str, Any], bot_account: str) -> bool
     return False
 
 
+def _process_attachments(
+    data_message: Dict[str, Any],
+    sender_id: str,
+    conversation_type: str,
+    conversation_id: str,
+) -> None:
+    """
+    Process document attachments from a Signal message.
+
+    Validates type/size, reads content, forwards to Joi for ingestion,
+    then deletes the attachment file.
+    """
+    attachments = data_message.get("attachments")
+    if not isinstance(attachments, list) or not attachments:
+        return
+
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+
+        filename = attachment.get("filename", "")
+        file_size = attachment.get("size", 0)
+        attachment_id = attachment.get("id")
+
+        # Check if filename has allowed extension
+        # Extension-based filtering is more reliable than MIME type from Signal
+        if not filename:
+            logger.debug("Skipping attachment without filename")
+            continue
+
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in ALLOWED_DOCUMENT_EXTENSIONS:
+            logger.debug("Skipping attachment with unsupported extension: %s", ext)
+            continue
+
+        # Check file size
+        if file_size > MAX_DOCUMENT_SIZE_BYTES:
+            logger.warning(
+                "Attachment too large: %d bytes (max %d)",
+                file_size, MAX_DOCUMENT_SIZE_BYTES
+            )
+            continue
+
+        # Find the attachment file
+        if not attachment_id:
+            logger.warning("Attachment missing ID, cannot locate file")
+            continue
+
+        attachment_path = SIGNAL_ATTACHMENTS_DIR / attachment_id
+        if not attachment_path.exists():
+            logger.warning("Attachment file not found: %s", attachment_path)
+            continue
+
+        # Read file content
+        try:
+            with open(attachment_path, "rb") as f:
+                content = f.read()
+        except Exception as e:
+            logger.error("Failed to read attachment %s: %s", attachment_path, e)
+            continue
+
+        # Validate content is valid UTF-8 text (security: extension alone isn't enough)
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError:
+            logger.warning(
+                "Attachment rejected: not valid UTF-8 text (filename=%s)",
+                filename
+            )
+            # Delete the invalid file
+            try:
+                attachment_path.unlink()
+            except Exception:
+                pass
+            continue
+
+        # Determine scope (same logic as fact_key)
+        scope = conversation_id  # group_id for groups, sender phone for DMs
+
+        logger.info(
+            "Processing document: %s (%d bytes) for scope %s",
+            filename, len(content), _redact_pii(scope, "group" if conversation_type == "group" else "phone")
+        )
+
+        # Forward to Joi for ingestion
+        content_type = EXTENSION_TO_MIME.get(ext, "text/plain")
+        try:
+            success = forward_document_to_joi(
+                filename=filename,
+                content=content,
+                content_type=content_type,
+                scope=scope,
+                sender_id=sender_id,
+            )
+            if not success:
+                logger.warning("Document forward to Joi returned failure: %s", filename)
+                continue
+            logger.info("Document forwarded to Joi: %s", filename)
+        except Exception as e:
+            logger.error("Failed to forward document to Joi: %s", e)
+            continue
+
+        # Delete attachment after successful forward
+        try:
+            attachment_path.unlink()
+            logger.debug("Deleted attachment file: %s", attachment_path)
+        except Exception as e:
+            logger.warning("Failed to delete attachment %s: %s", attachment_path, e)
+
+
 def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Optional[Dict[str, Any]]:
     envelope = _as_dict(raw.get("envelope"))
     if not envelope:
@@ -743,7 +862,13 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Opt
         if isinstance(emoji, str):
             content_reaction = emoji
     elif message_text is None:
-        return None
+        # Check if there are attachments - pass through for document processing
+        attachments = data_message.get("attachments")
+        if isinstance(attachments, list) and attachments:
+            content_type = "attachment"
+            message_text = ""  # Empty text, but we'll process attachments
+        else:
+            return None
 
     # Prefer phone number over UUID for sender identification
     # signal-cli may use "source" (phone), "sourceNumber" (phone), or "sourceUuid" (UUID)
@@ -978,6 +1103,25 @@ def main() -> None:
                     # Check kill switch before forwarding
                     if _config_state.is_kill_switch_active():
                         logger.warning("Kill switch active - dropping message (not forwarding to Joi)")
+                        continue
+
+                    # Process document attachments (only for allowed senders, not store_only)
+                    content_type = payload.get("content", {}).get("type", "")
+                    if not decision.store_only:
+                        raw_native = payload.get("content", {}).get("transport_native", {})
+                        envelope = _as_dict(raw_native.get("envelope"))
+                        data_message = _as_dict(envelope.get("dataMessage")) if envelope else {}
+                        if data_message:
+                            _process_attachments(
+                                data_message=data_message,
+                                sender_id=payload.get("sender", {}).get("transport_id", ""),
+                                conversation_type=convo.get("type", "direct"),
+                                conversation_id=convo.get("id", ""),
+                            )
+
+                    # Skip Joi forwarding for attachment-only messages (nothing to respond to)
+                    if content_type == "attachment":
+                        logger.info("Attachment-only message processed, skipping Joi forward")
                         continue
 
                     forward_to_joi(payload)

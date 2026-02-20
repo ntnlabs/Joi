@@ -14,6 +14,7 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 
 | Date | Milestone |
 |------|-----------|
+| 2026-02-20 | **Document receiving via Signal** - Users can send .txt/.md files via Signal for RAG ingestion; type/size validation, auto-forwarding to Joi, scoped knowledge storage |
 | 2026-02-20 | **Self-describing facts** - Facts include person names in values ("Peter is a developer"), unified conversation_id storage, fixed input label and retrieval key mismatches |
 | 2026-02-19 | **Count-based memory compaction** - Fixed memory drift bug: compact oldest N messages when context exceeded (no more "forgotten then remembered" summaries) |
 | 2026-02-19 | **Business mode DM group knowledge** - Configurable mode (companion/business) with optional DM access to group knowledge based on real Signal memberships |

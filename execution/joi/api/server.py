@@ -1,3 +1,4 @@
+import base64
 import glob
 import hashlib
 import logging
@@ -41,8 +42,9 @@ from config import (
     get_context_for_conversation,
     get_knowledge_scopes_for_conversation,
     ensure_prompts_dir,
+    sanitize_scope,
 )
-from ingestion import run_auto_ingestion
+from ingestion import run_auto_ingestion, INGESTION_DIR
 from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
 
@@ -1004,6 +1006,21 @@ class InboundResponse(BaseModel):
     error: Optional[str] = None
 
 
+class DocumentIngestRequest(BaseModel):
+    filename: str
+    content_base64: str
+    content_type: str
+    scope: str
+    sender_id: str
+
+
+class DocumentIngestResponse(BaseModel):
+    status: str
+    filename: Optional[str] = None
+    scope: Optional[str] = None
+    error: Optional[str] = None
+
+
 # --- HMAC Middleware ---
 
 @app.middleware("http")
@@ -1452,6 +1469,82 @@ def admin_set_kill_switch(request: Request):
         "status": "ok",
         "kill_switch": active,
     }
+
+
+# --- Document Ingestion Endpoint ---
+
+@app.post("/api/v1/document/ingest", response_model=DocumentIngestResponse)
+def ingest_document(req: DocumentIngestRequest):
+    """
+    Receive a document from mesh for RAG ingestion.
+
+    Documents are saved to the ingestion input directory for processing
+    by the scheduler tick. The scope determines which conversations
+    can access the knowledge.
+    """
+    logger.info(
+        "Received document: filename=%s content_type=%s scope=%s sender=%s",
+        req.filename,
+        req.content_type,
+        req.scope,
+        req.sender_id,
+    )
+
+    # Validate filename (basic security check)
+    if "/" in req.filename or "\\" in req.filename or ".." in req.filename:
+        logger.warning("Invalid filename rejected: %s", req.filename)
+        return DocumentIngestResponse(
+            status="error",
+            error="invalid_filename",
+        )
+
+    # Sanitize scope for use as directory name (consistent with RAG lookup)
+    safe_scope = sanitize_scope(req.scope)
+    if not safe_scope or safe_scope.startswith(".") or ".." in safe_scope:
+        logger.warning("Invalid scope rejected: %s", req.scope)
+        return DocumentIngestResponse(
+            status="error",
+            error="invalid_scope",
+        )
+
+    # Decode base64 content
+    try:
+        content = base64.b64decode(req.content_base64)
+    except Exception as e:
+        logger.warning("Failed to decode base64 content: %s", e)
+        return DocumentIngestResponse(
+            status="error",
+            error="invalid_base64",
+        )
+
+    # Create scope directory if needed
+    scope_dir = INGESTION_DIR / "input" / safe_scope
+    try:
+        scope_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        logger.error("Failed to create scope directory %s: %s", scope_dir, e)
+        return DocumentIngestResponse(
+            status="error",
+            error="directory_error",
+        )
+
+    # Save file
+    filepath = scope_dir / req.filename
+    try:
+        filepath.write_bytes(content)
+        logger.info("Saved document to %s (%d bytes)", filepath, len(content))
+    except Exception as e:
+        logger.error("Failed to save document %s: %s", filepath, e)
+        return DocumentIngestResponse(
+            status="error",
+            error="save_failed",
+        )
+
+    return DocumentIngestResponse(
+        status="ok",
+        filename=req.filename,
+        scope=safe_scope,
+    )
 
 
 @app.post("/api/v1/message/inbound", response_model=InboundResponse)
