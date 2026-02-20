@@ -1530,8 +1530,9 @@ def ingest_document(req: DocumentIngestRequest):
 
     # Save file atomically (write to temp, then rename)
     # Prevents race condition where scheduler sees partially-written file
+    # UUID in temp name prevents collision on concurrent uploads of same file
     filepath = scope_dir / req.filename
-    temp_path = scope_dir / f".{req.filename}.tmp"
+    temp_path = scope_dir / f".{uuid.uuid4().hex[:8]}_{req.filename}.tmp"
     try:
         temp_path.write_bytes(content)
         temp_path.rename(filepath)  # Atomic on POSIX
