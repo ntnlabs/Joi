@@ -82,6 +82,20 @@ def chunk_text(
     return chunks
 
 
+def parse_original_filename(stored_name: str) -> str:
+    """
+    Extract original filename from stored name.
+
+    Stored format: {timestamp}_{original_filename}
+    Example: 1708444800_notes.txt -> notes.txt
+    """
+    if "_" in stored_name:
+        prefix = stored_name.split("_")[0]
+        if prefix.isdigit():
+            return "_".join(stored_name.split("_")[1:])
+    return stored_name
+
+
 def extract_title(text: str, source: str) -> str:
     """Extract title from document text or use filename."""
     lines = text.strip().split("\n")
@@ -96,8 +110,9 @@ def extract_title(text: str, source: str) -> str:
         if line and len(line) < 100:
             return line
 
-    # Fall back to filename
-    return Path(source).stem.replace("-", " ").replace("_", " ").title()
+    # Fall back to filename (use original name, not stored name with timestamp)
+    original_name = parse_original_filename(Path(source).name)
+    return Path(original_name).stem.replace("-", " ").replace("_", " ").title()
 
 
 def ingest_file(

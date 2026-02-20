@@ -1016,7 +1016,8 @@ class DocumentIngestRequest(BaseModel):
 
 class DocumentIngestResponse(BaseModel):
     status: str
-    filename: Optional[str] = None
+    filename: Optional[str] = None  # Original filename
+    stored_filename: Optional[str] = None  # Actual stored name (with timestamp)
     scope: Optional[str] = None
     error: Optional[str] = None
 
@@ -1528,11 +1529,13 @@ def ingest_document(req: DocumentIngestRequest):
             error="directory_error",
         )
 
-    # Save file atomically (write to temp, then rename)
-    # Prevents race condition where scheduler sees partially-written file
-    # UUID in temp name prevents collision on concurrent uploads of same file
-    filepath = scope_dir / req.filename
-    temp_path = scope_dir / f".{uuid.uuid4().hex[:8]}_{req.filename}.tmp"
+    # Save file with timestamp prefix for uniqueness (preserves all uploads)
+    # Format: {timestamp}_{original_filename}
+    stored_filename = f"{int(time.time())}_{req.filename}"
+    filepath = scope_dir / stored_filename
+
+    # Atomic write: temp file with UUID, then rename
+    temp_path = scope_dir / f".{uuid.uuid4().hex[:8]}.tmp"
     try:
         temp_path.write_bytes(content)
         temp_path.rename(filepath)  # Atomic on POSIX
@@ -1547,6 +1550,7 @@ def ingest_document(req: DocumentIngestRequest):
     return DocumentIngestResponse(
         status="ok",
         filename=req.filename,
+        stored_filename=stored_filename,
         scope=safe_scope,
     )
 
