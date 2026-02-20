@@ -33,6 +33,15 @@ All network flows between components. Use this for firewall rules and security a
 | gateway | mesh | vmbr1 | TCP | 22 | SSH admin | |
 | gateway | joi | vmbr1 | TCP | 22 | SSH admin | |
 | gateway | ntp | vmbr1 | TCP | 22 | SSH admin | |
+| gateway | Internet | WAN | TCP | 80,443 | Forward updates for internal VMs | TEMP |
+| gateway | Internet | WAN | UDP | 53 | Forward DNS for internal VMs | TEMP |
+| **Update Routing (via Gateway)** |
+| mesh | gateway | vmbr1 | TCP | 80,443 | APT updates | TEMP |
+| mesh | gateway | vmbr1 | UDP | 53 | DNS for updates | TEMP |
+| joi | gateway | vmbr1 | TCP | 80,443 | APT updates | TEMP |
+| joi | gateway | vmbr1 | UDP | 53 | DNS for updates | TEMP |
+| ntp | gateway | vmbr1 | TCP | 80,443 | APK updates | TEMP |
+| ntp | gateway | vmbr1 | UDP | 53 | DNS for updates | TEMP |
 
 ## Nebula Overlay
 
@@ -45,12 +54,16 @@ Nebula itself uses UDP 4242 on vmbr1 between mesh and joi.
 
 ## Temporary Flows
 
-Flows marked **TEMP** should be removed after initial setup:
+Flows marked **TEMP** are disabled by default and enabled only during maintenance:
 
-- **joi WAN access**: Currently allowed for git pull, apt, pip. Remove once deployment is stable and use gateway as bastion for updates.
+- **Gateway update routing**: All internal VMs (mesh, joi, ntp) use gateway as default route. Gateway firewall blocks HTTP/HTTPS/DNS forwarding by default. Use `gateway-update.sh --enable` to temporarily allow updates, then `--disable` when done.
+
+- **joi WAN access**: Legacy direct WAN access - should be removed. Use gateway routing instead.
 
 ## Notes
 
-- Joi has NO direct WAN interface - all internet access is temporary via vmbr1 routing
+- Joi has NO direct WAN interface - updates go through gateway
 - All mesh<->joi traffic goes through Nebula tunnel (encrypted)
 - NTP VM bridges internal time sync to upstream NTP servers
+- Gateway is default route for all internal VMs - acts as update router when enabled
+- mesh/ntp have dedicated WAN paths for Signal/NTP, but general traffic (updates) goes via gateway
