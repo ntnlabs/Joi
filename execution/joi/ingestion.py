@@ -86,12 +86,13 @@ def parse_original_filename(stored_name: str) -> str:
     """
     Extract original filename from stored name.
 
-    Stored format: {timestamp}_{original_filename}
-    Example: 1708444800_notes.txt -> notes.txt
+    Stored format: {uuid8}_{original_filename}
+    Example: a1b2c3d4_notes.txt -> notes.txt
     """
     if "_" in stored_name:
         prefix = stored_name.split("_")[0]
-        if prefix.isdigit():
+        # UUID prefix is 8 hex characters
+        if len(prefix) == 8 and all(c in "0123456789abcdef" for c in prefix.lower()):
             return "_".join(stored_name.split("_")[1:])
     return stored_name
 
