@@ -1528,10 +1528,13 @@ def ingest_document(req: DocumentIngestRequest):
             error="directory_error",
         )
 
-    # Save file
+    # Save file atomically (write to temp, then rename)
+    # Prevents race condition where scheduler sees partially-written file
     filepath = scope_dir / req.filename
+    temp_path = scope_dir / f".{req.filename}.tmp"
     try:
-        filepath.write_bytes(content)
+        temp_path.write_bytes(content)
+        temp_path.rename(filepath)  # Atomic on POSIX
         logger.info("Saved document to %s (%d bytes)", filepath, len(content))
     except Exception as e:
         logger.error("Failed to save document %s: %s", filepath, e)
