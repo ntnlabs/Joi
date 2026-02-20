@@ -142,7 +142,7 @@ class MeshPolicy:
             return PolicyDecision(False, "invalid_content")
 
         content_type = content.get("type")
-        if content_type not in {"text", "reaction"}:
+        if content_type not in {"text", "reaction", "attachment"}:
             return PolicyDecision(False, "unsupported_content_type")
 
         if content_type == "text":
