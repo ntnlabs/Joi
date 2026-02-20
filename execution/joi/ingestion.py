@@ -222,6 +222,10 @@ def process_pending(memory: MemoryStore) -> Tuple[int, int]:
             if not filepath.is_file():
                 continue
 
+            # Skip hidden/temp files (e.g., .filename.tmp from atomic writes)
+            if filepath.name.startswith("."):
+                continue
+
             if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
                 logger.debug("Skipping unsupported file: %s", filepath)
                 continue
