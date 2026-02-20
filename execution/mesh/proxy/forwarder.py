@@ -1,6 +1,7 @@
 from typing import Any, Dict, Optional
 from concurrent.futures import ThreadPoolExecutor
 import atexit
+import base64
 import json
 import logging
 import os
@@ -126,3 +127,77 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
     except RuntimeError:
         # Executor shutdown - log but don't crash
         logger.warning("Forwarder executor shutdown, dropping message")
+
+
+def _forward_document_sync(
+    url: str,
+    filename: str,
+    content: bytes,
+    content_type: str,
+    scope: str,
+    sender_id: str,
+) -> bool:
+    """Forward document to Joi synchronously. Returns True on success."""
+    try:
+        client = _get_client()
+
+        # Build payload with base64-encoded content
+        payload = {
+            "filename": filename,
+            "content_base64": base64.b64encode(content).decode("ascii"),
+            "content_type": content_type,
+            "scope": scope,
+            "sender_id": sender_id,
+        }
+        body = json.dumps(payload).encode("utf-8")
+
+        # Build headers with HMAC if secret is configured
+        headers = {"Content-Type": "application/json"}
+        secret = _get_hmac_secret()
+        if secret:
+            hmac_headers = create_request_headers(body, secret)
+            headers.update(hmac_headers)
+
+        # Add config hash for sync verification
+        config_hash = _get_config_hash()
+        if config_hash:
+            headers["X-Config-Hash"] = config_hash
+
+        resp = client.post(url, content=body, headers=headers)
+        resp.raise_for_status()
+        logger.info("Forwarded document %s to Joi", filename)
+        return True
+    except Exception as e:
+        logger.error("Forward document to Joi failed: %s", e)
+        return False
+
+
+def forward_document_to_joi(
+    filename: str,
+    content: bytes,
+    content_type: str,
+    scope: str,
+    sender_id: str,
+) -> bool:
+    """
+    Forward document to Joi for ingestion.
+
+    Unlike message forwarding, this is synchronous so we know if it succeeded
+    before deleting the attachment file.
+
+    Args:
+        filename: Original filename
+        content: File content as bytes
+        content_type: MIME type
+        scope: Ingestion scope (conversation_id)
+        sender_id: Sender's transport ID
+
+    Returns:
+        True if successfully forwarded, False otherwise
+    """
+    if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
+        return False
+
+    url = os.getenv("MESH_JOI_DOCUMENT_URL", "http://joi:8443/api/v1/document/ingest")
+
+    return _forward_document_sync(url, filename, content, content_type, scope, sender_id)
