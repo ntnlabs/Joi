@@ -1529,9 +1529,9 @@ def ingest_document(req: DocumentIngestRequest):
             error="directory_error",
         )
 
-    # Save file with timestamp prefix for uniqueness (preserves all uploads)
-    # Format: {timestamp}_{original_filename}
-    stored_filename = f"{int(time.time())}_{req.filename}"
+    # Save file with UUID prefix for uniqueness (preserves all uploads)
+    # Format: {uuid8}_{original_filename}
+    stored_filename = f"{uuid.uuid4().hex[:8]}_{req.filename}"
     filepath = scope_dir / stored_filename
 
     # Atomic write: temp file with UUID, then rename
