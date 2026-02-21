@@ -238,7 +238,8 @@ class MemoryConsolidator:
         elif response.text and response.text.strip() == "[]":
             logger.info("Fact extraction: LLM returned empty array (no facts found in conversation)")
         else:
-            logger.info("Fact extraction: LLM response didn't parse as facts: %s", response.text[:100] if response.text else "(empty)")
+            preview = (response.text[:30] + "...") if response.text and len(response.text) > 30 else (response.text or "(empty)")
+            logger.info("Fact extraction: LLM response didn't parse: %s", preview.replace("\n", " "))
 
         # Retry once if parsing failed but we got a response
         if not facts and response.text and len(response.text.strip()) > 10:
