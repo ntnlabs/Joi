@@ -156,7 +156,12 @@ EOF
 
 db_scalar() {
     local sql="$1"
-    db_exec "$sql" | head -n 1
+    local output
+    output=$(db_exec "$sql")
+
+    # SQLCipher can emit a standalone "ok" line from PRAGMA key.
+    # Return first real scalar value, skipping "ok".
+    printf "%s\n" "$output" | awk 'NF && $0 != "ok" { print; exit }'
 }
 
 confirm_or_abort() {
