@@ -103,7 +103,8 @@ def parse_facts_json(response: str) -> List[Dict[str, Any]]:
         except json.JSONDecodeError:
             pass
 
-    logger.warning("Could not parse facts from LLM response: %s", response[:200])
+    clean = response.replace("\r", "").replace("\n", " ")[:30] if response else "(empty)"
+    logger.warning("Could not parse facts from LLM response: %s...", clean)
     return []
 
 

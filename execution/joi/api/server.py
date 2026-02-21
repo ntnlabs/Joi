@@ -1825,7 +1825,8 @@ def receive_message(msg: InboundMessage):
             logger.warning("LLM returned empty response")
             response_text = "I'm not sure how to respond to that."
 
-        logger.info("LLM response: %s", response_text[:50])
+        clean_response = response_text.replace("\r", "").replace("\n", " ")[:50]
+        logger.info("LLM response: %s", clean_response)
 
         # Send response back via mesh
         outbound_message_id = str(uuid.uuid4())
