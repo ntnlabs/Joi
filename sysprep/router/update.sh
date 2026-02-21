@@ -1,6 +1,8 @@
 #!/bin/sh
 # Router/Gateway update routing control
-# Enable/disable HTTP/HTTPS/DNS forwarding for internal VM updates.
+# Enable/disable:
+# - HTTP/HTTPS/DNS forwarding for internal VM updates
+# - HTTP/HTTPS egress for router self-updates (OUTPUT policy is DROP by default)
 #
 # Usage: update.sh --enable | --disable | --status
 #
@@ -30,6 +32,9 @@ enable_updates() {
     # Forward DNS from internal to WAN
     iptables -A FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p udp --dport $UPDATE_PORTS_UDP -j ACCEPT
 
+    # Allow router itself to reach HTTP/HTTPS on WAN (apk update/upgrade)
+    iptables -A OUTPUT -o $WAN_IF -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT
+
     # NAT masquerade (if not already present)
     iptables -t nat -C POSTROUTING -s $INTERNAL_NET -o $WAN_IF -j MASQUERADE 2>/dev/null || \
         iptables -t nat -A POSTROUTING -s $INTERNAL_NET -o $WAN_IF -j MASQUERADE
@@ -48,6 +53,7 @@ disable_updates() {
     # Remove forward rules (ignore errors if not present)
     iptables -D FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT 2>/dev/null
     iptables -D FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p udp --dport $UPDATE_PORTS_UDP -j ACCEPT 2>/dev/null
+    iptables -D OUTPUT -o $WAN_IF -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT 2>/dev/null
 
     echo "Update routing DISABLED."
 }
@@ -57,6 +63,9 @@ show_status() {
     echo ""
     echo "FORWARD chain:"
     iptables -L FORWARD -n -v --line-numbers
+    echo ""
+    echo "OUTPUT chain:"
+    iptables -L OUTPUT -n -v --line-numbers
     echo ""
     echo "NAT POSTROUTING:"
     iptables -t nat -L POSTROUTING -n -v
