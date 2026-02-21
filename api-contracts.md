@@ -400,47 +400,37 @@ Returns all Signal groups with their member lists. Used by Joi in business mode 
 
 ---
 
-## Joi Admin Endpoints
+## Joi Endpoints (port 8443)
 
-These endpoints are on Joi (port 8443), accessed locally only (127.0.0.1).
+### Health & Admin
 
-### Config & Sync
+Local-only endpoints (127.0.0.1) for administration.
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Health check with memory/RAG/queue stats |
-| `/admin/config/status` | GET | Show config sync status |
-| `/admin/config/push` | POST | Force push config to mesh |
-
-### Security
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/admin/hmac/status` | GET | Show HMAC key status |
-| `/admin/hmac/rotate` | POST | Manual HMAC key rotation |
-| `/admin/security/status` | GET | Show security settings status |
-| `/admin/security/privacy-mode` | POST | Enable/disable privacy mode (`?active=true/false`) |
-| `/admin/security/kill-switch` | POST | Enable/disable kill switch (`?active=true/false`) |
-
-### RAG / Knowledge Base
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/admin/rag/scopes` | GET | List all knowledge scopes with chunk counts |
-| `/admin/rag/search` | GET | Test RAG search (`?q=query&scope=optional`) |
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/health` | GET | None | Health check with memory/RAG/queue stats |
+| `/admin/config/status` | GET | Local | Show config sync status |
+| `/admin/config/push` | POST | Local | Force push config to mesh |
+| `/admin/hmac/status` | GET | Local | Show HMAC key status |
+| `/admin/hmac/rotate` | POST | Local | Manual HMAC key rotation |
+| `/admin/security/status` | GET | Local | Show security settings status |
+| `/admin/security/privacy-mode` | POST | Local | Enable/disable privacy mode (`?active=true/false`) |
+| `/admin/security/kill-switch` | POST | Local | Enable/disable kill switch (`?active=true/false`) |
+| `/admin/rag/scopes` | GET | Local | List all knowledge scopes with chunk counts |
+| `/admin/rag/search` | GET | Local | Test RAG search (`?q=query&scope=optional`) |
 
 ### API Endpoints
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/api/v1/message/inbound` | POST | Receive message from mesh |
-| `/api/v1/document/ingest` | POST | Receive document for RAG ingestion |
+Called by mesh over Nebula tunnel.
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/api/v1/message/inbound` | POST | HMAC | Receive message from mesh |
+| `/api/v1/document/ingest` | POST | HMAC | Receive document for RAG ingestion |
 
 ---
 
-## Mesh Endpoints
-
-These endpoints are on mesh (port 8444).
+## Mesh Endpoints (port 8444)
 
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
