@@ -86,7 +86,8 @@ def get_user_prompt(user_id: str) -> str:
 
     Falls back to default if no user-specific prompt exists.
     """
-    user_file = PROMPTS_DIR / "users" / f"{user_id}.txt"
+    safe_user_id = sanitize_scope(user_id)
+    user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.txt"
     prompt = _read_prompt_file(user_file)
     if prompt:
         logger.debug("Using user-specific prompt for %s", user_id)
@@ -100,8 +101,7 @@ def get_group_prompt(group_id: str) -> str:
 
     Falls back to default if no group-specific prompt exists.
     """
-    # Sanitize group_id for filename (base64 can have / and +)
-    safe_group_id = group_id.replace("/", "_").replace("+", "-")
+    safe_group_id = sanitize_scope(group_id)
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.txt"
     prompt = _read_prompt_file(group_file)
     if prompt:
@@ -160,7 +160,8 @@ def get_default_model() -> Optional[str]:
 
 def get_user_model(user_id: str) -> Optional[str]:
     """Get model for a specific user."""
-    user_file = PROMPTS_DIR / "users" / f"{user_id}.model"
+    safe_user_id = sanitize_scope(user_id)
+    user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.model"
     model = _read_model_file(user_file)
     if model:
         logger.debug("Using user-specific model for %s: %s", user_id, model)
@@ -170,7 +171,7 @@ def get_user_model(user_id: str) -> Optional[str]:
 
 def get_group_model(group_id: str) -> Optional[str]:
     """Get model for a specific group."""
-    safe_group_id = group_id.replace("/", "_").replace("+", "-")
+    safe_group_id = sanitize_scope(group_id)
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.model"
     model = _read_model_file(group_file)
     if model:
@@ -204,11 +205,12 @@ def get_prompt_for_conversation_optional(conversation_type: str, conversation_id
     Used when a custom model is configured (Modelfile handles base prompt).
     """
     if conversation_type == "group":
-        safe_group_id = conversation_id.replace("/", "_").replace("+", "-")
+        safe_group_id = sanitize_scope(conversation_id)
         group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.txt"
         return _read_prompt_file(group_file)
     else:
-        user_file = PROMPTS_DIR / "users" / f"{sender_id}.txt"
+        safe_user_id = sanitize_scope(sender_id)
+        user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.txt"
         return _read_prompt_file(user_file)
 
 
@@ -236,7 +238,8 @@ def get_default_context() -> Optional[int]:
 
 def get_user_context(user_id: str) -> Optional[int]:
     """Get context size for a specific user."""
-    user_file = PROMPTS_DIR / "users" / f"{user_id}.context"
+    safe_user_id = sanitize_scope(user_id)
+    user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.context"
     context = _read_context_file(user_file)
     if context is not None:
         logger.debug("Using user-specific context for %s: %d", user_id, context)
@@ -246,7 +249,7 @@ def get_user_context(user_id: str) -> Optional[int]:
 
 def get_group_context(group_id: str) -> Optional[int]:
     """Get context size for a specific group."""
-    safe_group_id = group_id.replace("/", "_").replace("+", "-")
+    safe_group_id = sanitize_scope(group_id)
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.context"
     context = _read_context_file(group_file)
     if context is not None:
