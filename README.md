@@ -75,6 +75,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - **Two-layer security**: Protection Layer (automation) + LLM Agent Layer (decisions)
 - **Behavior modes**: Companion (proactive) or Assistant (request-response only)
 - **GPU accelerated**: AI accelerator card via Thunderbolt eGPU
+- **International text**: Full UTF-8 support for all languages (Slovak, Cyrillic, CJK, emoji)
 
 ## Architecture
 
