@@ -5,6 +5,7 @@ Manages the canonical mesh policy that gets pushed to the mesh service.
 Joi is the single source of truth for policy configuration.
 """
 
+import copy
 import hashlib
 import json
 import logging
@@ -69,10 +70,10 @@ class PolicyManager:
                     logger.info("Loaded policy from %s", self._path)
                 except (json.JSONDecodeError, IOError) as e:
                     logger.error("Failed to load policy from %s: %s", self._path, e)
-                    self._config = DEFAULT_POLICY.copy()
+                    self._config = copy.deepcopy(DEFAULT_POLICY)
             else:
                 logger.warning("Policy file not found at %s, using defaults", self._path)
-                self._config = DEFAULT_POLICY.copy()
+                self._config = copy.deepcopy(DEFAULT_POLICY)
                 self._save_unlocked()
 
             self._update_hash_unlocked()

@@ -1157,8 +1157,8 @@ def _get_config_files() -> List[str]:
         if os.path.exists(path):
             files.append(path)
 
-    # Policy file
-    policy_file = os.getenv("JOI_POLICY_FILE", "/var/lib/joi/policy/mesh-policy.json")
+    # Policy file (must match JOI_MESH_POLICY_PATH used by PolicyManager)
+    policy_file = os.getenv("JOI_MESH_POLICY_PATH", "/var/lib/joi/policy/mesh-policy.json")
     if os.path.exists(policy_file):
         files.append(policy_file)
 
