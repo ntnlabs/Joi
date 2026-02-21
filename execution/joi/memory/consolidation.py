@@ -215,7 +215,7 @@ class MemoryConsolidator:
             logger.error("LLM error during fact extraction: %s", response.error)
             return []
 
-        logger.debug("LLM response for facts: %s", response.text[:500] if response.text else "(empty)")
+        logger.info("LLM response for facts (len=%d): %s", len(response.text) if response.text else 0, response.text[:300] if response.text else "(empty)")
 
         try:
             facts = parse_facts_json(response.text)
@@ -308,7 +308,7 @@ Corrected JSON:"""
 
         is_valid, summary = validate_summary(response.text)
         if not is_valid:
-            logger.warning("Summary validation failed")
+            logger.warning("Summary validation failed, raw response: %s", response.text[:200] if response.text else "(empty)")
             return None
 
         if store:
