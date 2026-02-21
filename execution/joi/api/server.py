@@ -910,6 +910,8 @@ def _detect_and_extract_fact(text: str, conversation_id: str = "") -> Optional[s
     if not _has_remember_keywords(text):
         return None
 
+    logger.info("Checking for remember request (LLM)")
+
     # Ask LLM to detect and extract in one call
     prompt = f"""Analyze this message: "{text}"
 
