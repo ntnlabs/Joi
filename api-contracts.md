@@ -1,8 +1,8 @@
 # Joi API Contracts
 
 > API specification for communication between mesh, joi, and external systems.
-> Version: 1.2
-> Last updated: 2026-02-18
+> Version: 1.3
+> Last updated: 2026-02-21
 
 ## Overview
 
@@ -379,18 +379,77 @@ Query delivery/read status for a sent message. Requires HMAC auth.
 }
 ```
 
-### 3.4 Admin Endpoints (Joi only)
+### 3.4 Group Membership (Business Mode)
 
-These endpoints are on Joi, accessed locally or via Nebula.
+```
+GET https://mesh:8444/groups/members
+```
+
+Returns all Signal groups with their member lists. Used by Joi in business mode to determine DM access to group knowledge.
+
+**Response:**
+```json
+{
+  "status": "ok",
+  "data": {
+    "groupId1": ["+1234567890", "+0987654321"],
+    "groupId2": ["+1234567890"]
+  }
+}
+```
+
+---
+
+## Joi Admin Endpoints
+
+These endpoints are on Joi (port 8443), accessed locally only (127.0.0.1).
+
+### Config & Sync
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/health` | GET | Health check with memory/RAG/queue stats |
+| `/admin/config/status` | GET | Show config sync status |
+| `/admin/config/push` | POST | Force push config to mesh |
+
+### Security
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/admin/hmac/status` | GET | Show HMAC key status |
+| `/admin/hmac/rotate` | POST | Manual HMAC key rotation |
+| `/admin/security/status` | GET | Show security settings status |
+| `/admin/security/privacy-mode` | POST | Enable/disable privacy mode (`?active=true/false`) |
+| `/admin/security/kill-switch` | POST | Enable/disable kill switch (`?active=true/false`) |
+
+### RAG / Knowledge Base
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/admin/rag/scopes` | GET | List all knowledge scopes with chunk counts |
+| `/admin/rag/search` | GET | Test RAG search (`?q=query&scope=optional`) |
+
+### API Endpoints
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/api/v1/message/inbound` | POST | Receive message from mesh |
+| `/api/v1/document/ingest` | POST | Receive document for RAG ingestion |
+
+---
+
+## Mesh Endpoints
+
+These endpoints are on mesh (port 8444).
 
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
-| `/admin/config/push` | POST | HMAC | Force push config to mesh |
-| `/admin/config/status` | GET | IP | Show sync status |
-| `/admin/hmac/rotate` | POST | HMAC | Manual HMAC key rotation |
-| `/admin/security/kill-switch` | POST | HMAC | Enable/disable kill switch |
-| `/admin/security/privacy-mode` | POST | HMAC | Enable/disable privacy mode |
 | `/health` | GET | None | Health check |
+| `/api/v1/message/outbound` | POST | HMAC | Send message via Signal |
+| `/api/v1/delivery/status` | GET | HMAC | Query delivery/read status |
+| `/config/sync` | POST | HMAC | Receive config push from Joi |
+| `/config/status` | GET | HMAC | Return current config hash |
+| `/groups/members` | GET | HMAC | List groups with members |
 
 ---
 
