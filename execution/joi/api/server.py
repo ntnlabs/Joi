@@ -1,6 +1,7 @@
 import base64
 import glob
 import hashlib
+import json
 import logging
 import os
 import queue
@@ -711,8 +712,6 @@ class ConfigPushClient:
         Returns:
             (success, mesh_reported_hash or error message)
         """
-        import json
-
         with self._lock:
             current_hash = self._policy.get_config_hash()
 
@@ -881,73 +880,84 @@ def _build_address_regex(names: list) -> re.Pattern:
 _address_regex_cache: Dict[tuple, re.Pattern] = {}
 
 
-# Patterns for "remember this" requests (English only for now)
-# Must be explicit fact statements about the user, not general statements
-REMEMBER_PATTERNS = [
-    r"remember\s+that\s+(?:i|my)\s+(.+)",  # "remember that I..." or "remember that my..."
-    r"don'?t\s+forget\s+that\s+(?:i|my)\s+(.+)",  # "don't forget that I/my..."
-    r"keep\s+in\s+mind\s+that\s+(?:i|my)\s+(.+)",  # "keep in mind that I/my..."
-    r"^my\s+name\s+is\s+(\w+)",  # "my name is X" at start
-    r"^i'?m\s+called\s+(\w+)",  # "I'm called X" at start
-    r"^my\s+(\w+)\s+is\s+(.+)",  # "my birthday is March 5th" at start
-    r"^i\s+(?:really\s+)?(?:like|love|hate|prefer)\s+(.+)",  # "I like X" at start
+# Keywords that suggest user might want something remembered (hybrid approach)
+# If any keyword is present, we ask the LLM to confirm and extract
+REMEMBER_KEYWORDS = [
+    "remember", "forget", "call me", "my name", "i am", "i'm",
+    "i like", "i love", "i hate", "i prefer", "my favorite",
+    "i work", "i live", "my birthday", "my age", "my job",
+    "keep in mind", "note that", "fyi", "btw", "by the way",
 ]
-REMEMBER_REGEX = re.compile("|".join(REMEMBER_PATTERNS), re.IGNORECASE)
 
 
-def _detect_remember_request(text: str) -> Optional[str]:
-    """Check if user is asking Joi to remember something. Returns the thing to remember."""
-    match = REMEMBER_REGEX.search(text)
-    if match:
-        # Return the first non-None group
-        for group in match.groups():
-            if group:
-                return group.strip()
-    return None
+def _has_remember_keywords(text: str) -> bool:
+    """Quick check if message might contain a remember request."""
+    text_lower = text.lower()
+    return any(kw in text_lower for kw in REMEMBER_KEYWORDS)
 
 
-def _extract_and_save_fact(text: str, remember_what: str, conversation_id: str = "") -> Optional[str]:
-    """Use LLM to extract a structured fact and save it. Returns confirmation message."""
-    prompt = f"""The user said: "{text}"
-They want me to remember: "{remember_what}"
+def _detect_and_extract_fact(text: str, conversation_id: str = "") -> Optional[str]:
+    """
+    Use LLM to detect if user wants something remembered, and extract it.
 
-Extract this as a fact with these exact fields:
-- category: one of "personal", "preference", "relationship", "work", "routine", "interest"
-- key: short identifier (2-3 words max)
-- value: the fact itself
+    Hybrid approach:
+    1. Quick keyword check (cheap)
+    2. LLM detection and extraction (accurate)
 
-Return ONLY valid JSON, no explanation:
-{{"category": "...", "key": "...", "value": "..."}}
+    Returns the saved fact value, or None if nothing to remember.
+    """
+    # Quick filter - skip LLM if no relevant keywords
+    if not _has_remember_keywords(text):
+        return None
 
-JSON:"""
+    # Ask LLM to detect and extract in one call
+    prompt = f"""Analyze this message: "{text}"
+
+Is the user telling me something about themselves that I should remember?
+This includes: their name, preferences, facts about them, things they like/dislike,
+personal info, work info, or explicitly asking me to remember something.
+
+If YES, extract the fact as JSON:
+{{"remember": true, "category": "personal|preference|work|routine|interest|relationship", "key": "short_id", "value": "the fact"}}
+
+If NO (just casual chat, questions, or commands), return:
+{{"remember": false}}
+
+Return ONLY valid JSON, nothing else:"""
 
     try:
         response = llm.generate(prompt=prompt)
         if response.error:
-            logger.warning("LLM error extracting fact: %s", response.error)
+            logger.debug("LLM error in remember detection: %s", response.error)
             return None
 
         # Parse JSON
-        import json
         text_resp = response.text.strip()
-        # Try to find JSON object
         start = text_resp.find("{")
         end = text_resp.rfind("}") + 1
         if start >= 0 and end > start:
-            fact = json.loads(text_resp[start:end])
-            if all(k in fact for k in ["category", "key", "value"]):
+            result = json.loads(text_resp[start:end])
+
+            if not result.get("remember", False):
+                logger.debug("LLM: nothing to remember in message")
+                return None
+
+            if all(k in result for k in ["category", "key", "value"]):
                 memory.store_fact(
-                    category=fact["category"],
-                    key=fact["key"],
-                    value=str(fact["value"]),
+                    category=result["category"],
+                    key=result["key"],
+                    value=str(result["value"]),
                     confidence=0.95,  # High confidence - user explicitly stated
                     source="stated",
                     conversation_id=conversation_id,
                 )
-                logger.info("Saved stated fact for %s: %s.%s = %s", conversation_id or "global", fact["category"], fact["key"], fact["value"])
-                return fact["value"]
+                logger.info("Saved stated fact for %s: %s.%s = %s",
+                           conversation_id or "global", result["category"], result["key"], result["value"])
+                return result["value"]
+    except json.JSONDecodeError as e:
+        logger.debug("Failed to parse remember response: %s", e)
     except Exception as e:
-        logger.warning("Failed to extract/save fact: %s", e)
+        logger.warning("Failed to detect/extract fact: %s", e)
 
     return None
 
@@ -1696,12 +1706,10 @@ def receive_message(msg: InboundMessage):
     fact_key = msg.conversation.id
 
     # Check for "remember this" requests (only from allowed senders)
+    # Uses hybrid approach: keyword filter + LLM detection/extraction
     saved_fact = None
     if not msg.store_only:
-        remember_what = _detect_remember_request(user_text)
-        if remember_what:
-            logger.info("Detected remember request: %s", remember_what[:50])
-            saved_fact = _extract_and_save_fact(user_text, remember_what, conversation_id=fact_key)
+        saved_fact = _detect_and_extract_fact(user_text, conversation_id=fact_key)
 
     # Determine if we should respond
     should_respond = True
@@ -2013,8 +2021,6 @@ def _send_to_mesh(
     is_critical: bool = False,
 ) -> bool:
     """Send a message back to mesh for delivery via Signal."""
-    import json
-
     # Check outbound rate limit (critical messages bypass)
     allowed, reason = outbound_limiter.check_and_record(is_critical=is_critical)
     if not allowed:
