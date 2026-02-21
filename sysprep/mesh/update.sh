@@ -1,44 +1,29 @@
 #!/bin/bash
-# Mesh VM update control
-# Enable/disable HTTP/HTTPS/DNS outbound to gateway for updates.
+# Mesh VM update control (Ubuntu - uses UFW)
+# Enable/disable HTTP outbound for apt updates.
 #
 # Usage: update.sh --enable | --disable | --run
 #
-# CONFIGURATION - Edit these values for your environment:
-INT_IF="<INTERNAL_INTERFACE>"  # e.g., eth0
-
-###########################################
-
-# Validate configuration
-if echo "$INT_IF" | grep -q "^<"; then
-    echo "ERROR: Edit this script and set INT_IF"
-    exit 1
-fi
-
-RULE_HTTPS="-o $INT_IF -p tcp --dport 443 -j ACCEPT"
-RULE_HTTP="-o $INT_IF -p tcp --dport 80 -j ACCEPT"
-RULE_DNS="-o $INT_IF -p udp --dport 53 -j ACCEPT"
+# NOTE: mesh already has 443/tcp and 53/udp permanently allowed for Signal.
+#       This script only controls 80/tcp for apt repositories.
 
 enable_rules() {
-    iptables -A OUTPUT $RULE_HTTPS
-    iptables -A OUTPUT $RULE_HTTP
-    iptables -A OUTPUT $RULE_DNS
+    echo "Enabling HTTP outbound for apt..."
+    ufw allow out 80/tcp
 }
 
 disable_rules() {
-    iptables -D OUTPUT $RULE_HTTPS 2>/dev/null
-    iptables -D OUTPUT $RULE_HTTP 2>/dev/null
-    iptables -D OUTPUT $RULE_DNS 2>/dev/null
+    echo "Disabling HTTP outbound..."
+    ufw delete allow out 80/tcp 2>/dev/null
 }
 
 case "$1" in
     --enable)
-        echo "Enabling HTTP/HTTPS/DNS outbound via gateway..."
         enable_rules
+        ufw status | grep "80/tcp"
         echo "Done. Also enable on gateway, then run 'apt update && apt upgrade'"
         ;;
     --disable)
-        echo "Disabling HTTP/HTTPS/DNS outbound via gateway..."
         disable_rules
         echo "Done."
         ;;
@@ -49,13 +34,19 @@ case "$1" in
         disable_rules
         echo "Done. Remember to --disable on gateway too."
         ;;
+    --status)
+        echo "UFW status:"
+        ufw status verbose
+        ;;
     *)
-        echo "Usage: $0 --enable | --disable | --run"
+        echo "Usage: $0 --enable | --disable | --run | --status"
         echo ""
-        echo "  --enable   Open HTTP/HTTPS/DNS to gateway for updates"
-        echo "  --disable  Close after done"
-        echo "  --run      Open, update, upgrade, close (all-in-one)"
+        echo "  --enable   Allow HTTP (80) outbound for apt"
+        echo "  --disable  Remove HTTP outbound rule"
+        echo "  --run      Enable, update, upgrade, disable (all-in-one)"
+        echo "  --status   Show UFW status"
         echo ""
+        echo "NOTE: 443/tcp and 53/udp are permanently allowed for Signal."
         echo "NOTE: Gateway must also have updates enabled!"
         exit 1
         ;;
