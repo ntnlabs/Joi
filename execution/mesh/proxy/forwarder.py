@@ -13,6 +13,10 @@ from hmac_auth import create_request_headers, get_shared_secret
 
 logger = logging.getLogger("mesh.forwarder")
 
+# Joi API base URL - single config point for all Joi endpoints
+# Set MESH_JOI_URL to your Joi VM's address (e.g., http://10.42.0.2:8443)
+MESH_JOI_URL = os.getenv("MESH_JOI_URL", "http://joi:8443")
+
 # Reference to ConfigState - set by worker at startup to avoid module import issues
 _config_state_ref: Optional[Any] = None
 
@@ -119,7 +123,7 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
     if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
         return
 
-    url = os.getenv("MESH_JOI_INBOUND_URL", "http://joi:8443/api/v1/message/inbound")
+    url = f"{MESH_JOI_URL}/api/v1/message/inbound"
 
     # Submit to bounded thread pool (max 4 concurrent forwards)
     try:
@@ -198,6 +202,6 @@ def forward_document_to_joi(
     if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
         return False
 
-    url = os.getenv("MESH_JOI_DOCUMENT_URL", "http://joi:8443/api/v1/document/ingest")
+    url = f"{MESH_JOI_URL}/api/v1/document/ingest"
 
     return _forward_document_sync(url, filename, content, content_type, scope, sender_id)
