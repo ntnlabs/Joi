@@ -1472,6 +1472,55 @@ def admin_set_kill_switch(request: Request):
     }
 
 
+@app.get("/admin/rag/scopes")
+def admin_rag_scopes(request: Request):
+    """List all RAG scopes and their chunk counts (debug endpoint)."""
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    sources = memory.get_knowledge_sources()
+    # Group by scope
+    scopes = {}
+    for s in sources:
+        scope = s["scope"]
+        if scope not in scopes:
+            scopes[scope] = {"sources": 0, "chunks": 0}
+        scopes[scope]["sources"] += 1
+        scopes[scope]["chunks"] += s["chunk_count"]
+
+    return {
+        "status": "ok",
+        "scopes": scopes,
+        "total_sources": len(sources),
+        "total_chunks": sum(s["chunks"] for s in scopes.values()),
+    }
+
+
+@app.get("/admin/rag/search")
+def admin_rag_search(request: Request, q: str, scope: Optional[str] = None):
+    """Test RAG search with optional scope filter (debug endpoint)."""
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    scopes = [scope] if scope else None
+    chunks = memory.search_knowledge(q, limit=10, scopes=scopes)
+
+    return {
+        "status": "ok",
+        "query": q,
+        "scope_filter": scope,
+        "results": [
+            {
+                "source": c.source,
+                "title": c.title,
+                "scope": c.scope,
+                "content_preview": c.content[:200] if c.content else "",
+            }
+            for c in chunks
+        ],
+    }
+
+
 # --- Document Ingestion Endpoint ---
 
 @app.post("/api/v1/document/ingest", response_model=DocumentIngestResponse)
@@ -1906,6 +1955,7 @@ def _build_enriched_prompt(
 
     # Add RAG context if enabled and user message provided
     if RAG_ENABLED and user_message:
+        logger.debug("RAG lookup: query=%s scopes=%s", user_message[:50], knowledge_scopes)
         rag_context = memory.get_knowledge_as_context(
             user_message,
             max_tokens=RAG_MAX_TOKENS,
@@ -1914,6 +1964,8 @@ def _build_enriched_prompt(
         if rag_context:
             parts.append("\n\n" + rag_context)
             logger.debug("Added RAG context for query: %s (scopes: %s)", user_message[:50], knowledge_scopes)
+        else:
+            logger.debug("No RAG results for query: %s (scopes: %s)", user_message[:50], knowledge_scopes)
 
     # Add current datetime if time awareness is enabled
     if TIME_AWARENESS_ENABLED:

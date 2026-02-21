@@ -1208,6 +1208,7 @@ class MemoryStore:
                 params = [fts_query] + allowed + [limit]
 
             # Use FTS5 MATCH for full-text search
+            logger.debug("FTS query: %s, scopes: %s", fts_query[:100], scopes)
             cursor = conn.execute(
                 f"""
                 SELECT k.id, k.scope, k.source, k.title, k.content, k.chunk_index, k.created_at,
@@ -1221,6 +1222,8 @@ class MemoryStore:
                 """,
                 params
             )
+            rows = cursor.fetchall()
+            logger.debug("FTS results: %d matches", len(rows))
         except sqlite3.OperationalError as e:
             logger.warning("FTS5 search failed: %s (query: %s)", e, fts_query[:100])
             return []
@@ -1235,7 +1238,7 @@ class MemoryStore:
                 created_at=row["created_at"],
                 scope=row["scope"],
             )
-            for row in cursor.fetchall()
+            for row in rows
         ]
 
     def get_knowledge_by_source(self, source: str, scope: Optional[str] = None) -> List[KnowledgeChunk]:
