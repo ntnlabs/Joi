@@ -154,7 +154,7 @@ def ingest_file(
     title = extract_title(text, filepath.name)
 
     # Delete existing chunks for this source (re-ingest)
-    memory.delete_knowledge_source(source)
+    memory.delete_knowledge_source(source, scope=scope)
 
     # Split into chunks
     chunks = chunk_text(text, chunk_size, overlap)

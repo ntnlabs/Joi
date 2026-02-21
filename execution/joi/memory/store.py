@@ -1242,22 +1242,34 @@ class MemoryStore:
         ]
 
     def get_knowledge_by_source(self, source: str, scope: Optional[str] = None) -> List[KnowledgeChunk]:
-        """Get all chunks from a specific source."""
+        """Get all chunks from a specific source, optionally filtered by scope."""
         conn = self._connect()
 
-        cursor = conn.execute(
-            """
-            SELECT id, source, title, content, chunk_index, created_at
-            FROM knowledge_chunks
-            WHERE source = ?
-            ORDER BY chunk_index
-            """,
-            (source,)
-        )
+        if scope is not None:
+            cursor = conn.execute(
+                """
+                SELECT id, scope, source, title, content, chunk_index, created_at
+                FROM knowledge_chunks
+                WHERE source = ? AND scope = ?
+                ORDER BY chunk_index
+                """,
+                (source, scope)
+            )
+        else:
+            cursor = conn.execute(
+                """
+                SELECT id, scope, source, title, content, chunk_index, created_at
+                FROM knowledge_chunks
+                WHERE source = ?
+                ORDER BY chunk_index
+                """,
+                (source,)
+            )
 
         return [
             KnowledgeChunk(
                 id=row["id"],
+                scope=row["scope"],
                 source=row["source"],
                 title=row["title"],
                 content=row["content"],
@@ -1267,19 +1279,26 @@ class MemoryStore:
             for row in cursor.fetchall()
         ]
 
-    def delete_knowledge_source(self, source: str) -> int:
-        """Delete all chunks from a source."""
+    def delete_knowledge_source(self, source: str, scope: Optional[str] = None) -> int:
+        """Delete all chunks from a source, optionally filtered by scope."""
         conn = self._connect()
 
-        cursor = conn.execute(
-            "DELETE FROM knowledge_chunks WHERE source = ?",
-            (source,)
-        )
+        if scope is not None:
+            cursor = conn.execute(
+                "DELETE FROM knowledge_chunks WHERE source = ? AND scope = ?",
+                (source, scope)
+            )
+        else:
+            cursor = conn.execute(
+                "DELETE FROM knowledge_chunks WHERE source = ?",
+                (source,)
+            )
         conn.commit()
 
         deleted = cursor.rowcount
         if deleted > 0:
-            logger.info("Deleted %d chunks from source: %s", deleted, source)
+            scope_info = f" (scope: {scope})" if scope else ""
+            logger.info("Deleted %d chunks from source: %s%s", deleted, source, scope_info)
         return deleted
 
     def rescope_knowledge(self, old_scope: str, new_scope: str) -> int:

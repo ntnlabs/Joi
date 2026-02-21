@@ -29,7 +29,11 @@ _client: httpx.Client = None
 _client_lock = threading.Lock()
 
 # Bounded thread pool for async forwarding (prevents unbounded thread spawning)
+# Max 4 concurrent + 16 queued = 20 total in-flight before dropping
 _executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="forward")
+_pending_tasks = 0
+_pending_lock = threading.Lock()
+_MAX_PENDING = 20  # Max tasks in flight (workers + queue)
 atexit.register(_executor.shutdown, wait=False)
 
 
@@ -93,6 +97,7 @@ def _get_config_hash() -> Optional[str]:
 
 def _forward_async(url: str, payload: Dict[str, Any]) -> None:
     """Forward message in background thread with HMAC signing."""
+    global _pending_tasks
     try:
         client = _get_client()
 
@@ -116,20 +121,33 @@ def _forward_async(url: str, payload: Dict[str, Any]) -> None:
         logger.debug("Forwarded message_id=%s to Joi", payload.get("message_id"))
     except Exception as e:
         logger.error("Forward to Joi failed: %s", e)
+    finally:
+        with _pending_lock:
+            _pending_tasks -= 1
 
 
 def forward_to_joi(payload: Dict[str, Any]) -> None:
     """Forward message to Joi asynchronously (fire-and-forget)."""
+    global _pending_tasks
     if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
         return
 
     url = f"{MESH_JOI_URL}/api/v1/message/inbound"
 
-    # Submit to bounded thread pool (max 4 concurrent forwards)
+    # Check queue capacity before submitting
+    with _pending_lock:
+        if _pending_tasks >= _MAX_PENDING:
+            logger.warning("Forward queue full (%d), dropping message", _pending_tasks)
+            return
+        _pending_tasks += 1
+
+    # Submit to bounded thread pool
     try:
         _executor.submit(_forward_async, url, payload)
     except RuntimeError:
         # Executor shutdown - log but don't crash
+        with _pending_lock:
+            _pending_tasks -= 1
         logger.warning("Forwarder executor shutdown, dropping message")
 
 

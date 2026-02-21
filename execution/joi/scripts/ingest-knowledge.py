@@ -158,7 +158,7 @@ def ingest_file(
     title = extract_title(text, source)
 
     # Delete existing chunks for this source (re-ingest)
-    memory.delete_knowledge_source(source)
+    memory.delete_knowledge_source(source, scope=scope)
 
     # Split into chunks
     chunks = chunk_text(text, chunk_size, overlap)
@@ -240,8 +240,10 @@ def main():
 
     # Handle delete command
     if args.delete:
-        deleted = memory.delete_knowledge_source(args.delete)
-        print(f"Deleted {deleted} chunks from '{args.delete}'")
+        scope = args.scope if args.scope else None
+        deleted = memory.delete_knowledge_source(args.delete, scope=scope)
+        scope_info = f" (scope: {args.scope})" if scope else " (all scopes)"
+        print(f"Deleted {deleted} chunks from '{args.delete}'{scope_info}")
         return
 
     # Handle rescope command
