@@ -18,22 +18,31 @@ from .store import MemoryStore, Message
 logger = logging.getLogger("joi.memory.consolidation")
 
 # Prompt for extracting facts from conversation
-FACT_EXTRACTION_PROMPT = """Extract ALL facts about people from this conversation.
+FACT_EXTRACTION_PROMPT = """Extract facts worth remembering from this conversation.
 
-IMPORTANT: Return ONLY a valid JSON array. No explanations, no markdown, no text before or after.
+Look for ANY of these:
+- Personal info (name, age, location, profession, family)
+- Preferences (likes, dislikes, favorites)
+- Plans, goals, or intentions mentioned
+- Skills, hobbies, or interests
+- Health, routines, or habits
+- Opinions or beliefs expressed
+- Events or experiences shared
+- Technical setups or configurations discussed
 
-Each fact must have exactly these 4 fields:
-- "category": descriptive category (e.g., personal, preference, work, health, skill, goal, routine)
-- "key": short identifier like "name", "profession", "preference", "hobby"
-- "value": the fact AS A COMPLETE SENTENCE including the person's name
-- "confidence": number between 0.0 and 1.0
+IMPORTANT: Return ONLY a valid JSON array. No explanations, no markdown.
 
-ALWAYS include the person's name in the value. Never use "User" or "the user".
+Each fact needs these fields:
+- "category": what type (personal, preference, work, health, skill, goal, routine, opinion, event, technical)
+- "key": short identifier
+- "value": the fact AS A COMPLETE SENTENCE with the person's name
+- "confidence": 0.0-1.0
 
-If no facts found, return exactly: []
+Include the person's name in value (never "User" or "the user").
+If truly no facts, return: []
 
 Example:
-[{{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0}}, {{"category": "preference", "key": "meetings", "value": "Peter prefers morning meetings", "confidence": 0.9}}]
+[{{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0}}, {{"category": "preference", "key": "coffee", "value": "Peter prefers black coffee", "confidence": 0.8}}]
 
 Conversation:
 {conversation}
@@ -222,6 +231,14 @@ class MemoryConsolidator:
         except Exception as e:
             logger.error("parse_facts_json failed: %s", e)
             return []
+
+        # Log what happened at INFO level for visibility
+        if facts:
+            logger.info("Fact extraction found %d facts", len(facts))
+        elif response.text and response.text.strip() == "[]":
+            logger.info("Fact extraction: LLM returned empty array (no facts found in conversation)")
+        else:
+            logger.info("Fact extraction: LLM response didn't parse as facts: %s", response.text[:100] if response.text else "(empty)")
 
         # Retry once if parsing failed but we got a response
         if not facts and response.text and len(response.text.strip()) > 10:
