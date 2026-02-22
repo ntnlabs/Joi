@@ -78,14 +78,31 @@ esac
 # HOSTNAME
 ###########################################
 echo ""
-echo "[1/4] Setting hostname..."
+echo "[1/5] Setting hostname..."
 hostnamectl set-hostname "$HOSTNAME"
+
+###########################################
+# JOI USER + DIRECTORIES
+###########################################
+echo ""
+echo "[2/5] Creating joi account and directories..."
+
+if ! id -u joi >/dev/null 2>&1; then
+    useradd -r -s /usr/sbin/nologin -d /var/lib/joi joi
+fi
+
+mkdir -p /var/lib/joi
+mkdir -p /opt/joi
+
+# Data dir must be writable by the joi service user.
+chown joi:joi /var/lib/joi
+chmod 750 /var/lib/joi
 
 ###########################################
 # FIREWALL (UFW)
 ###########################################
 echo ""
-echo "[2/4] Configuring firewall (UFW)..."
+echo "[3/5] Configuring firewall (UFW)..."
 
 ufw --force reset
 ufw default deny incoming
@@ -128,7 +145,7 @@ ufw --force enable
 # DNS
 ###########################################
 echo ""
-echo "[3/4] Configuring DNS..."
+echo "[4/5] Configuring DNS..."
 
 # Disable systemd-resolved if present
 if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
@@ -148,7 +165,7 @@ chattr +i /etc/resolv.conf 2>/dev/null || true
 # NTP (chrony)
 ###########################################
 echo ""
-echo "[4/4] Configuring NTP client (chrony)..."
+echo "[5/5] Configuring NTP client (chrony)..."
 
 apt-get update
 apt-get install -y chrony
