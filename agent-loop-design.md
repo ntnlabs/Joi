@@ -10,17 +10,19 @@ Joi supports two behavior modes, controlled by a single configuration flag:
 
 ```yaml
 behavior:
-  mode: "companion"   # "companion" or "assistant"
+  mode: "companion"   # "companion" or "business"
 ```
 
-| Mode | Description | Use Case |
+| Mode | Description | Typical Use |
 |------|-------------|----------|
 | **companion** | Full "Wind" behavior - proactive, organic, living presence | Personal use |
-| **assistant** | Request-response only - no proactive engagement | Professional/enterprise |
+| **business** | Request-response only - no proactive engagement | Professional/enterprise or testing |
+
+> In `business` mode, DM access to group knowledge is a separate policy-controlled setting (optional, default off).
 
 ### Mode Comparison
 
-| Feature | companion | assistant |
+| Feature | companion | business |
 |---------|-----------|-----------|
 | Responds to user messages | Yes | Yes |
 | Critical alerts (smoke, security) | Yes | Yes |
@@ -29,14 +31,17 @@ behavior:
 | "Things worth mentioning" queue | Yes | **No** |
 | Context awareness (home state) | Yes | Yes |
 | Time/quiet hours awareness | Yes | **No** (always available) |
-| Personality in responses | Yes | Yes (but more professional) |
+| Personality in responses | Yes | Yes (typically more professional) |
 
 ### Switching Modes
 
-Mode can be changed at runtime via:
-1. Configuration file reload
-2. Owner command: "Joi, switch to assistant mode"
-3. API call (for programmatic control)
+Mode changes are **not** allowed at runtime.
+
+Mode is set via environment configuration and applied only on service restart:
+1. Change environment configuration (`companion` or `business`)
+2. Restart the Joi service
+
+No owner command or API call should switch modes at runtime.
 
 ```python
 # Runtime mode check
@@ -44,7 +49,7 @@ def should_run_impulse_check():
     return config.behavior.mode == "companion"
 
 def should_queue_proactive_topic(event):
-    if config.behavior.mode == "assistant":
+    if config.behavior.mode == "business":
         return False  # Never queue proactive topics
     return is_significant_event(event)
 ```
@@ -52,9 +57,9 @@ def should_queue_proactive_topic(event):
 ### Why Support Both?
 
 - **Personal deployment**: Full companion experience with organic engagement
-- **Professional deployment**: Predictable, on-demand assistant behavior
-- **Development/testing**: Assistant mode for deterministic testing
-- **Gradual rollout**: Start with assistant mode, enable companion later
+- **Professional deployment**: Predictable, on-demand business-mode behavior
+- **Development/testing**: Business mode for deterministic testing
+- **Gradual rollout**: Start with business mode, enable companion later
 
 ---
 
@@ -62,7 +67,7 @@ def should_queue_proactive_topic(event):
 
 Joi is not a notification system. She is a companion with her own presence and rhythm.
 
-> **Note:** This philosophy applies to **companion mode**. In **assistant mode**, Joi is a responsive assistant only.
+> **Note:** This philosophy applies to **companion mode**. In **business mode**, Joi is request-response only.
 
 **The Wind Metaphor**: Like wind, Joi's engagement pattern should feel natural and somewhat unpredictable. There's underlying logic (context, time, accumulated thoughts), but to the user it feels organic - sometimes she's chatty for days, sometimes quiet for a week.
 
@@ -122,9 +127,9 @@ Joi is not a notification system. She is a companion with her own presence and r
             └─────────────┘
 ```
 
-### Assistant Mode (Simplified)
+### Business Mode (Simplified)
 
-In assistant mode, the IMPULSE_CHECK state is disabled. Only user messages and critical events trigger responses.
+In business mode, the `IMPULSE_CHECK` state is disabled. Only user messages and critical events trigger responses.
 
 ```
                     ┌──────────────────────────┐
@@ -634,27 +639,28 @@ allow_llm_escalation: true
 # agent-config.yaml
 
 # ============================================================
-# BEHAVIOR MODE - Master switch for companion vs assistant
+# BEHAVIOR MODE - Master switch for companion vs business
 # ============================================================
 behavior:
-  mode: "companion"              # "companion" or "assistant"
+  mode: "companion"              # "companion" or "business"
   #
   # companion: Full "Wind" behavior
   #   - Proactive messages, impulse checks, organic engagement
   #   - Quiet hours respected, natural rhythm
   #   - Best for personal use
   #
-  # assistant: Request-response only
+  # business: Request-response only
   #   - Only responds to user messages and critical alerts
   #   - No proactive outreach, no impulse system
   #   - Always available (no quiet hours for non-critical)
-  #   - Best for professional/enterprise deployment
+  #   - Best for professional/enterprise deployment or deterministic testing
+  #   - DM group knowledge remains separately policy-controlled (optional)
 
 # ============================================================
 # IMPULSE SYSTEM (companion mode only)
 # ============================================================
 impulse:
-  enabled: true                  # Redundant if mode=assistant (ignored)
+  enabled: true                  # Redundant if mode=business (ignored)
   base: 0.05
   threshold: 0.5
   check_interval_minutes: 12.5   # PoC tunable: 10-15 min range
@@ -671,7 +677,7 @@ silence:
 time_awareness:
   sleep_hours: [23, 7]
   weekend_morning_gentle_until: 10
-  # Note: In assistant mode, quiet hours don't apply
+  # Note: In business mode, quiet hours don't apply
   #       (user explicitly requested, so they're awake)
 
 # ============================================================
@@ -709,7 +715,7 @@ llm:
 class AgentLoop:
     def __init__(self, config):
         self.config = config
-        self.mode = config.behavior.mode  # "companion" or "assistant"
+        self.mode = config.behavior.mode  # "companion" or "business"
 
     def start(self):
         # Always start event listener (context awareness)
@@ -733,7 +739,7 @@ class AgentLoop:
             self.queue_topic(event)
 
     def on_impulse_check(self):
-        # Should never be called in assistant mode
+        # Should never be called in business mode
         if self.mode != "companion":
             return
 
