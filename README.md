@@ -44,7 +44,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Conversation context (configurable window, default 40 messages)
 - ✅ Long-term memory (facts extraction, summaries)
 - ✅ Real-time fact saving (hybrid: keyword trigger + LLM detection)
-- ✅ Memory consolidation (after silence or message threshold)
+- ✅ Memory consolidation (LLM extracts facts + summarizes on context overflow)
 - ✅ RAG knowledge retrieval (FTS5 full-text search)
 - ✅ Per-user/group RAG scopes with access control
 - ✅ Auto-ingestion via watched directory
