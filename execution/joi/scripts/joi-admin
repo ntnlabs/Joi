@@ -114,11 +114,13 @@ RAG EXAMPLES:
 
 SUMMARIES USAGE:
     joi-admin summaries list [--conversation ID] [--limit N]
+    joi-admin summaries show --id ID
 
 SUMMARIES EXAMPLES:
     joi-admin summaries list
     joi-admin summaries list --conversation +123456789
     joi-admin summaries list --conversation group_id_here --limit 20
+    joi-admin summaries show --id 42
 
 EOF
     exit 0
@@ -889,8 +891,73 @@ SQL
                     "$sid" "$convo" "$stype" "$mcount" "$created" "$period" "$preview"
             done <<< "$rows"
             ;;
+        show)
+            local summary_id=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --id)
+                        [[ -z "${2:-}" ]] && error "--id requires a value"
+                        [[ ! "$2" =~ ^[0-9]+$ ]] && error "--id must be a positive integer"
+                        summary_id="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin summaries show --id ID"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'summaries show': $1"
+                        ;;
+                esac
+            done
+            [[ -z "$summary_id" ]] && error "summaries show requires --id"
+
+            local meta_row
+            meta_row=$(db_exec "$(cat <<SQL
+SELECT
+    id,
+    COALESCE(conversation_id, ''),
+    COALESCE(summary_type, ''),
+    COALESCE(period_start, 0),
+    COALESCE(period_end, 0),
+    COALESCE(message_count, 0),
+    COALESCE(created_at, 0)
+FROM context_summaries
+WHERE id = $summary_id
+LIMIT 1;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${meta_row//[$'\t\r\n ']/}" ]]; then
+                echo "No context summary found with id=$summary_id."
+                exit 0
+            fi
+
+            local text_hex text
+            text_hex=$(db_exec "SELECT hex(COALESCE(summary_text, '')) FROM context_summaries WHERE id = $summary_id LIMIT 1;" | awk 'NF && $0 != "ok" { print; exit }')
+            if [[ -n "$text_hex" ]]; then
+                text=$(printf "%s" "$text_hex" | python3 -c 'import sys; h=sys.stdin.read().strip(); print(bytes.fromhex(h).decode("utf-8", errors="replace"), end="")')
+            else
+                text=""
+            fi
+
+            local sid convo stype pstart pend mcount created
+            IFS='|' read -r sid convo stype pstart pend mcount created <<< "$meta_row"
+            [[ -z "$convo" ]] && convo="(none)"
+
+            echo "=== SUMMARY $sid ==="
+            echo "conversation_id: $convo"
+            echo "summary_type:    $stype"
+            echo "message_count:   $mcount"
+            echo "period_start:    $pstart"
+            echo "period_end:      $pend"
+            echo "created_at:      $created"
+            echo ""
+            echo "summary_text:"
+            printf "%s\n" "$text"
+            ;;
         --help|-h)
-            echo "Usage: joi-admin summaries list [--conversation ID] [--limit N]"
+            echo "Usage: joi-admin summaries <list|show> [OPTIONS]"
             exit 0
             ;;
         *)
