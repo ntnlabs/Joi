@@ -675,7 +675,6 @@ SQL
         delete)
             local source=""
             local scope=""
-            local yes=false
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --source)
@@ -688,12 +687,8 @@ SQL
                         scope="$2"
                         shift 2
                         ;;
-                    --yes|-y)
-                        yes=true
-                        shift
-                        ;;
                     --help|-h)
-                        echo "Usage: joi-admin rag delete --source SOURCE [--scope SCOPE] [--yes]"
+                        echo "Usage: joi-admin rag delete --source SOURCE [--scope SCOPE]"
                         exit 0
                         ;;
                     *)
@@ -725,13 +720,11 @@ SQL
             echo "  Chunks: $count"
             echo ""
 
-            if ! $yes; then
-                read -p "Delete these RAG chunks? [y/N] " -n 1 -r
-                echo
-                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                    echo "Aborted."
-                    exit 1
-                fi
+            read -p "Delete these RAG chunks? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
             fi
 
             rag_delete_chunks "$source" "$scope"
@@ -741,7 +734,6 @@ SQL
         rescope)
             local from_scope=""
             local to_scope=""
-            local yes=false
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --from)
@@ -754,12 +746,8 @@ SQL
                         to_scope="$2"
                         shift 2
                         ;;
-                    --yes|-y)
-                        yes=true
-                        shift
-                        ;;
                     --help|-h)
-                        echo "Usage: joi-admin rag rescope --from OLD_SCOPE --to NEW_SCOPE [--yes]"
+                        echo "Usage: joi-admin rag rescope --from OLD_SCOPE --to NEW_SCOPE"
                         exit 0
                         ;;
                     *)
@@ -787,13 +775,11 @@ SQL
             echo "  Chunks:     $chunk_count"
             echo ""
 
-            if ! $yes; then
-                read -p "Rescope these RAG chunks? [y/N] " -n 1 -r
-                echo
-                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-                    echo "Aborted."
-                    exit 1
-                fi
+            read -p "Rescope these RAG chunks? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
             fi
 
             local from_sql to_sql
