@@ -318,6 +318,20 @@ Suggested merge inputs:
 - overlapping evidence message IDs
 - same `novelty_key` or related event source
 
+#### Dynamic Topic Merge (Lexical + Embedding-Driven)
+
+Explicit subsystem name: **Dynamic Topic Merge**
+
+Recommended evolution path:
+- **v1**: lexical similarity + evidence overlap + `novelty_key` dedupe
+- **v2+**: add embedding similarity for better semantic merge quality
+
+Embedding-driven merge notes:
+- only compare topics within the **same conversation**
+- use embedding similarity as an additional signal, not the only signal
+- keep a merge confidence score for auditability
+- never allow cross-conversation embedding merge
+
 ### User Topic Override / Topic Shift
 
 If the user stops engaging on topic A and clearly moves to topic B, topic A should cool down.
@@ -359,6 +373,19 @@ Effects:
 - lower autonomous bias for all topics in that conversation
 
 Topic rejection and Wind rejection must not be treated as the same signal.
+
+#### Rejection / Negative Feedback Memory
+
+Explicit subsystem name: **Negative Feedback Memory**
+
+This memory should persist rejection signals over time so Wind does not repeatedly retry rejected topics or autonomy behaviors.
+
+It includes:
+- topic-level rejection memory (topic-specific)
+- conversation-level autonomy rejection memory (`wind_snooze_until`, fatigue increases)
+- optional cooldown/forgiveness rules after long inactivity
+
+This is a memory subsystem, not just a one-tick penalty.
 
 ### Archive / Terminal States / Long Pause Reset
 
@@ -598,11 +625,47 @@ Use affinity in:
 - curiosity/discovery candidate filtering
 - dynamic priority and pursuit continuation decisions
 
+### Interest Trend Scoring / Long-Term Topic Modeling
+
+Explicit subsystem name: **Interest Trend Scoring / Long-Term Topic Modeling**
+
+Topic affinity should support trend-aware behavior, not only static weights.
+
+Recommended model (per conversation + topic family):
+- short-term interest signal (recent engagement)
+- long-term interest baseline
+- trend direction (rising / stable / falling)
+
+Practical implementation options:
+- EMA-based short-term score
+- EMA-based long-term score
+- derived trend slope or delta (`short_term - long_term`)
+
+Why it matters:
+- helps curiosity choose timely topics
+- prevents overcommitting to historically liked but currently cold topics
+- helps detect renewed interest in previously rejected or dormant topics
+
+This should remain scoped per conversation/topic family (never global).
+
 ## Curiosity / Discovery Loop (Planned, Optional in v1 Rollout)
 
 Curiosity is a separate proactive mechanism for exploring **new** or weakly-developed topics.
 
 It should complement Wind continuation, not replace it.
+
+### Discovery / Curiosity Generator
+
+Explicit subsystem name: **Discovery / Curiosity Generator**
+
+This subsystem generates discovery candidates (or discovery prompts) from anchored signals:
+- facts (as context anchors)
+- weak tension topics
+- recent novel events
+- topic affinity + trend signals
+
+It should not directly send messages.
+It should produce candidates that enter the same proactive pipeline with stricter caps and decay.
 
 ### Core Concept
 
