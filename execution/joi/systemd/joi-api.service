@@ -7,6 +7,7 @@ Wants=network-online.target
 Type=simple
 User=joi
 Group=joi
+# Change this if the path to the Joi git checkout is different.
 WorkingDirectory=/opt/joi/execution/joi
 EnvironmentFile=-/etc/default/joi-api
 ExecStart=/usr/bin/python3 -m api.server
