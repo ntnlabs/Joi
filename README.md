@@ -57,9 +57,9 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Privacy mode (PII redaction in logs)
 - ✅ Kill switch (emergency message halt)
 - ✅ Tamper detection (config file monitoring)
+- ✅ Business mode (policy-controlled DM access to group knowledge)
 
 ### Pending
-- ⏳ Business mode (DM access to group knowledge)
 - ⏳ System Channel integration
 
 ### Nice to Have
@@ -124,12 +124,12 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 | **Protection** | Rate limits, circuit breakers, validation | None - cannot be bypassed |
 | **LLM Agent** | Decides reads, writes, notifications | Trusted within bounds |
 
-## Behavior Modes
+## Operating Modes
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | **companion** | Proactive, organic engagement ("Wind" behavior) | Personal use |
-| **assistant** | Request-response only, no proactive messages | Professional/enterprise |
+| **business** | Multi-user / shared deployment mode (policy-controlled DM group knowledge) | Professional/enterprise |
 
 ## Communication Channels
 
