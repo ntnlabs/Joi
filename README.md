@@ -47,6 +47,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Memory consolidation (LLM extracts facts + summarizes on context overflow)
 - ✅ RAG knowledge retrieval (FTS5 full-text search)
 - ✅ Per-user/group RAG scopes with access control
+- ✅ Document ingestion into scoped RAG (including attachments)
 - ✅ Auto-ingestion via watched directory
 - ✅ SQLCipher database encryption (key-file based)
 
@@ -165,7 +166,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 ## Tech Stack (minimum)
 
 - **LLM**: Llama 3.1 8B (uncensored variant)
-- **Runtime**: Ollama with OpenAI-compatible API
+- **Runtime**: Ollama (native API)
 - **Hardware**: Notebook with dedicated GFX card (like nVidia 1650)
 - **Virtualization**: Proxmox VE (optional)
 - **Messaging**: Signal via signal-cli
