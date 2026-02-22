@@ -59,6 +59,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Tamper detection (config file monitoring)
 
 ### Pending
+- ⏳ Wind behavior (proactive companion-mode behavior / impulse loop)
 - ⏳ System Channel integration
 
 ### Nice to Have
