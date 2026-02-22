@@ -1988,6 +1988,7 @@ def _build_enriched_prompt(
         parts.append(
             f"\n\nSYSTEM CONTEXT:\n"
             f"Current datetime: {now.isoformat()}\n"
+            f"Day of week: {now.strftime('%A')}\n"
             f"User timezone: {TIME_AWARENESS_TIMEZONE}"
         )
 
