@@ -70,6 +70,7 @@ Wind should share one outbound pipeline with other proactive-capable sources.
 ### Trigger Sources (same pipeline, different trigger logic)
 
 - `wind` (impulse-driven, probabilistic timing)
+- `curiosity_discovery` (novelty/relevance-driven, low-frequency probing)
 - `reminder` (scheduled/deterministic, time-driven)
 - `critical` (event-driven, highest priority, separate override rules)
 
@@ -86,6 +87,7 @@ All proactive sources should reuse:
 ### Trigger Logic Must Stay Separate
 
 - **Wind**: waits for impulse score + threshold
+- **Curiosity / Discovery**: novelty/relevance-driven probe with stricter caps and faster decay
 - **Reminder**: fires when `due_at` is reached (should not wait for impulse)
 - **Critical**: event-driven path, may bypass quiet-hour suppression depending on policy
 
@@ -215,6 +217,175 @@ Rules:
 - Prefer one topic per proactive message
 - Expire topics aggressively (stale proactive messages feel wrong)
 - Deduplicate near-identical topics
+
+## Topic State Evolution & Lifecycle Control (Required)
+
+Basic topic fields are not enough for stable Wind behavior.
+
+Without topic aging, merging, and feedback-aware reprioritization, Wind will either:
+- revive old topics too late
+- drop useful topics too early
+- spam near-duplicate topics
+- keep pushing topics the user is avoiding
+
+### Strict Scoping Rule (Must-Have)
+
+All Wind topic state is **per conversation (user/group)**.
+
+This includes:
+- topic queues
+- topic merging
+- decay/priority updates
+- feedback signals
+- suppressions and dampers
+
+Never merge, score, or promote topics across different conversations.
+
+### Topic State Fields (Recommended v1+)
+
+Add mutable lifecycle/state fields (in `pending_topics` or companion state table):
+
+- `base_priority` (stable seed priority)
+- `dynamic_priority` (current effective priority; optional stored cache)
+- `decay_rate`
+- `last_evaluated_at`
+- `last_user_mention_at`
+- `last_joi_mention_at`
+- `last_promoted_at`
+- `negative_feedback_score` (topic-specific)
+- `ignore_count`
+- `merge_count`
+- `merged_into_topic_id` (nullable, lineage)
+- `archive_reason` (nullable)
+
+These fields are distinct from extractor scores (`novelty_score`, `emotional_charge`, etc.).
+
+### Dynamic Priority (Required)
+
+Wind should evaluate an effective topic priority, not only a static priority.
+
+Recommended pattern:
+
+```text
+dynamic_priority =
+    base_priority
+  + recency_boost
+  + user_interest_boost
+  + novelty_boost
+  - decay_penalty
+  - fatigue_penalty
+  - negative_feedback_penalty
+  - topic_override_penalty
+```
+
+Notes:
+- `dynamic_priority` may be computed on read (preferred for transparency), or cached after evaluation.
+- Clamp to a known range to simplify tuning.
+
+### Decay / Aging Policy
+
+Topics need both soft decay and hard expiry.
+
+Recommended model:
+- `decay_rate` controls how fast topic priority fades
+- `last_evaluated_at` prevents repeated full penalties each tick
+- `expires_at` is the hard stop
+
+Refreshing signals (can slow/reset decay):
+- user mentions topic again
+- new evidence arrives for same topic
+- topic gets selected/promoted but not yet resolved
+
+Aging signals (increase decay pressure):
+- repeated evaluations with no selection
+- topic ignored after proactive mention
+- explicit user topic shift
+
+### Similar Topic Merge (Required)
+
+Near-duplicate topics should be merged to avoid queue pollution.
+
+Merge policy:
+- only compare unresolved topics in the **same conversation**
+- prefer a canonical topic (older or higher-confidence)
+- merge evidence and counts into canonical topic
+- increment `merge_count`
+- mark merged topic as terminal (`merged`) or archive it
+- preserve lineage via `merged_into_topic_id`
+
+Suggested merge inputs:
+- normalized title/content similarity
+- overlapping evidence message IDs
+- same `novelty_key` or related event source
+
+### User Topic Override / Topic Shift
+
+If the user stops engaging on topic A and clearly moves to topic B, topic A should cool down.
+
+This is not the same as explicit rejection.
+
+Recommended effect:
+- apply `topic_override_penalty` to previous active topic(s)
+- reduce `dynamic_priority`
+- keep topic pending (unless it also decays/expires)
+
+This prevents Wind from dragging the conversation back to stale threads too aggressively.
+
+### Feedback Model (Split Required)
+
+Separate **topic-specific** feedback from **autonomy-wide** feedback.
+
+#### A. Topic-Specific Negative Feedback
+
+Examples:
+- "I don't want to talk about that"
+- "Stop bringing that up"
+
+Effects:
+- increase `negative_feedback_score` for that topic
+- reduce `dynamic_priority` sharply
+- optionally mark topic `suppressed` or `dismissed`
+
+#### B. Autonomy-Wide Negative Feedback (Conversation-Level)
+
+Examples:
+- "Don't message me now"
+- "I don't want to talk at all"
+- "Leave me alone today"
+
+Effects:
+- set/extend `wind_snooze_until`
+- increase conversation-level fatigue damping
+- lower autonomous bias for all topics in that conversation
+
+Topic rejection and Wind rejection must not be treated as the same signal.
+
+### Archive / Terminal States / Long Pause Reset
+
+Wind needs long-term cleanup to avoid stale emotional residue.
+
+Recommended terminal/archive outcomes:
+- `resolved`
+- `expired`
+- `dismissed`
+- `merged`
+- `suppressed`
+- `stale_after_pause`
+
+Long-pause policy (per conversation; e.g., after prolonged inactivity):
+- archive stale low-priority pending topics
+- reduce/reset short-term Wind counters and dampers
+- preserve explicit user preferences and hard suppressions
+- keep archived topics available for audit, not active selection
+
+### Normalization (Required for Tuning)
+
+Keep scores in stable ranges:
+- extractor scores normalized (e.g., fixed numeric bounds)
+- `dynamic_priority` clamped to a known range
+- penalties/boosts normalized so one factor does not dominate unexpectedly
+
+Without normalization, Wind tuning becomes unstable and hard to reason about.
 
 ## Tension Topic Extractor (Planned, Recommended)
 
@@ -353,6 +524,148 @@ Safer rollout:
 - inspect mined tension topics manually
 - keep emotional contribution low until behavior feels right
 
+## Topic Affinity Model (Interest / Rejection Weights)
+
+Wind benefits from a lightweight topic preference memory per conversation.
+
+Goal:
+- learn which topic families the user/group tends to engage with
+- learn which topic families are often ignored/rejected
+- feed those signals into topic ranking and discovery filtering
+
+### Scope (Must-Have)
+
+Affinity is tracked **per conversation** (user/group), never globally.
+
+This prevents:
+- cross-user preference bleed
+- topic leaks
+- incorrect assumptions across groups/DMs
+
+### Affinity Keying (Recommended)
+
+Track affinity by normalized topic family / cluster (not only by individual topic instance).
+
+Examples:
+- `weather`
+- `sleep`
+- `fitness`
+- `work_project_x`
+- `home_maintenance`
+
+This allows Joi to learn preferences across similar topics without overfitting to one message.
+
+### Suggested Affinity Fields (per conversation + topic family)
+
+- `topic_family`
+- `interest_weight` (likeness / positive pull)
+- `rejection_weight` (topic-specific negative pull)
+- `engagement_count`
+- `ignore_count`
+- `positive_response_count`
+- `negative_response_count`
+- `last_positive_at`
+- `last_negative_at`
+- `last_seen_at`
+- `cooldown_until` (optional; blocks discovery/promotion temporarily)
+
+### Signal Updates
+
+#### Positive signals (increase `interest_weight`)
+- user voluntarily returns to the topic
+- user asks follow-up questions
+- meaningful response after proactive mention
+- explicit positive reaction to topic
+
+#### Negative signals (increase `rejection_weight`)
+- explicit topic refusal ("don't talk about that")
+- repeated ignores after proactive topic mention
+- abrupt subject shift after repeated prompting
+
+### Important Distinction
+
+Topic affinity is not the same as autonomy acceptance.
+
+- `rejection_weight` = "I dislike this topic"
+- conversation-level Wind fatigue/snooze = "I don't want proactive engagement right now"
+
+Both signals are required.
+
+### How Affinity Influences Wind
+
+Use affinity in:
+- topic ranking (`user_interest_boost`, `rejection_penalty`)
+- curiosity/discovery candidate filtering
+- dynamic priority and pursuit continuation decisions
+
+## Curiosity / Discovery Loop (Planned, Optional in v1 Rollout)
+
+Curiosity is a separate proactive mechanism for exploring **new** or weakly-developed topics.
+
+It should complement Wind continuation, not replace it.
+
+### Core Concept
+
+- **Continuation**: follow an existing open thread (tension/ongoing topic)
+- **Discovery**: gently probe for a new thread (novelty + relevance anchored)
+
+Both use the same outbound pipeline, but discovery must be more constrained.
+
+### Curiosity Constraints (Stricter Than Continuation)
+
+Recommended v1 constraints:
+- very low hard cap (per conversation/day)
+- minimum spacing between discovery attempts
+- disabled when strong continuation topics already exist
+- disabled when fatigue damper is elevated
+- disabled during/after recent autonomy-wide negative feedback
+- stricter quiet-hour behavior
+- shorter expiry / faster decay than continuation topics
+
+Practical rule:
+- **continuation has priority over discovery**
+
+### Discovery Candidate Requirements
+
+Discovery candidates should be anchored, not random.
+
+Good anchors:
+- fact-adjacent context (preferences, birthdays, routines) when timely
+- low-confidence but relevant latent threads
+- weak tension topics not yet strong enough for continuation
+- recent novelty in events/environment with clear relevance
+
+Bad anchors:
+- generic "check in" loops
+- repeated unanchored chit-chat prompts
+- topics with high `rejection_weight`
+
+### Discovery Scoring (Separate from Wind Impulse)
+
+Discovery should have its own candidate score before it even reaches Wind selection.
+
+Example factors:
+- `novelty_score`
+- `relevance_anchor_score`
+- `safety_score`
+- `timing_fit`
+- `interest_weight` boost
+- `rejection_weight` penalty
+- `fatigue_penalty`
+- small entropy
+
+Discovery topics should:
+- decay faster
+- have shorter TTL
+- tolerate fewer retries
+
+### Safety Rule: Discovery Cooldown on Rejection
+
+If a topic family crosses a rejection threshold:
+- mark it discovery-ineligible for a cooldown period (`cooldown_until`)
+
+This prevents "curious pest" behavior.
+
 ## Impulse Engine
 
 Impulse answers: "Is now a good time to speak?"
@@ -427,6 +740,85 @@ Selection rules:
 If no valid topic remains:
 - Abort proactive send
 - Log `skip_reason=no_viable_topic`
+
+## Topic Pursuit (Bounded Stubbornness)
+
+Wind should not re-decide every topic from scratch on every tick.
+
+Sometimes Joi should be allowed to persist on a relevant topic while rules still allow it.
+
+This is **bounded stubbornness** (topic pursuit), not spam.
+
+### Core Idea
+
+Not just:
+- tick -> maybe topic
+
+But:
+- topic selected -> topic enters pursuit state -> scheduler checks when retry is allowed
+
+The scheduler becomes a dispatcher for due pursuits, not only a fresh scorer.
+
+### Topic Pursuit States (Recommended)
+
+- `pending`
+- `armed` (selected as worthy of pursuit)
+- `active_pursuit`
+- `mentioned`
+- `snoozed`
+- `dismissed`
+- `expired`
+
+### Pursuit Fields (per topic)
+
+- `pursuit_strength`
+- `attempt_count`
+- `attempt_budget`
+- `next_attempt_at`
+- `last_attempt_at`
+- `pursuit_expires_at`
+- `failure_count`
+- `last_skip_reason`
+
+### When Pursuit Is Allowed
+
+Pursuit may continue if:
+- topic remains relevant
+- conversation is not in quiet/snooze state
+- proactive budget remains
+- minimum spacing is satisfied
+- no strong rejection signal exists
+
+This matches the intended behavior:
+- Joi can "pressure on" a bit when a topic matters and rules allow it
+
+### Bounded Stubbornness Rules (Required)
+
+- max attempts per topic
+- minimum spacing between attempts
+- shorter budgets for discovery topics
+- longer budgets for high-value continuation topics
+- hard stop on topic-specific rejection
+- hard stop / global pause on autonomy-wide rejection
+
+### Silence vs Rejection (Critical Distinction)
+
+Persistence is allowed only while **silence does not look like rejection**.
+
+If signals indicate rejection:
+- topic-specific rejection -> suppress/dismiss that topic
+- autonomy-wide rejection -> pause all pursuits (`wind_snooze_until`)
+
+### Pursuit and Dynamic Priority
+
+Pursued topics may receive a persistence boost, but must still degrade over time.
+
+Additions to dynamic priority:
+- `+ persistence_boost`
+- `- repeated_attempt_penalty`
+- `- rejection_penalty`
+
+This creates "try again a little" behavior without runaway prompting.
 
 ## Proactive Message Generation
 
@@ -570,6 +962,7 @@ Scheduled tasks should reuse the **same proactive outbound pipeline** but not th
 ### Recommended Model
 
 - **Wind** = impulse-driven trigger (`should I reach out now?`)
+- **Curiosity / Discovery** = novelty/relevance-driven trigger (stricter caps, faster decay)
 - **Reminder** = deterministic trigger (`this is due now`)
 
 They share:
@@ -688,6 +1081,8 @@ Success criteria:
 Wind v1 should be:
 - **topic-driven**
 - **pipeline-sharing (with reminders/critical paths)**
+- **curiosity-capable (but tightly constrained)**
+- **boundedly persistent (topic pursuit)**
 - **per-conversation**
 - **guardrail-first**
 - **explainable**
