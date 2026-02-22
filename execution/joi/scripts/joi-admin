@@ -47,6 +47,7 @@ USAGE:
 
 COMMANDS:
     purge       Purge memory data and/or regenerate keys
+    rag         Inspect and manage RAG knowledge sources/scopes
 
 PURGE USAGE:
     joi-admin purge [FLAGS]
@@ -90,6 +91,23 @@ EXAMPLES:
     joi-admin purge --all-data --reset-counters --vacuum
     joi-admin purge --all-data --all-keys              # Customer handoff
     joi-admin purge --everything --nebula-ca           # True factory reset
+
+RAG USAGE:
+    joi-admin rag <SUBCOMMAND> [OPTIONS]
+
+RAG SUBCOMMANDS:
+    list                List RAG knowledge sources
+    scopes              List unique RAG scopes with totals
+    stats               Show RAG totals
+    delete              Delete a RAG source (optionally within one scope)
+    rescope             Move RAG chunks from one scope to another
+
+RAG EXAMPLES:
+    joi-admin rag list
+    joi-admin rag scopes
+    joi-admin rag stats
+    joi-admin rag delete --source '+123456789/diary.txt' --scope -123456789
+    joi-admin rag rescope --from +123456789 --to -123456789
 
 EOF
     exit 0
@@ -431,6 +449,291 @@ vacuum_memory_db() {
     info "  Memory database compacted"
 }
 
+rag_delete_chunks() {
+    local source="$1"
+    local scope="${2:-}"
+    local delete_err=""
+
+    if [[ -n "$scope" ]]; then
+        local source_escaped scope_escaped
+        source_escaped=$(sql_escape_literal "$source")
+        scope_escaped=$(sql_escape_literal "$scope")
+        if ! delete_err=$(db_exec "DELETE FROM knowledge_chunks WHERE source = '$source_escaped' AND scope = '$scope_escaped';" 2>&1); then
+            if printf "%s" "$delete_err" | grep -qi "no such module: fts5"; then
+                warn "FTS5 module unavailable in current sqlcipher; dropping knowledge FTS triggers and retrying."
+                db_exec "DROP TRIGGER IF EXISTS knowledge_ai;"
+                db_exec "DROP TRIGGER IF EXISTS knowledge_ad;"
+                db_exec "DROP TRIGGER IF EXISTS knowledge_au;"
+                db_exec "DELETE FROM knowledge_chunks WHERE source = '$source_escaped' AND scope = '$scope_escaped';"
+            else
+                printf "%s\n" "$delete_err" >&2
+                error "Failed to delete RAG source"
+            fi
+        fi
+    else
+        local source_escaped
+        source_escaped=$(sql_escape_literal "$source")
+        if ! delete_err=$(db_exec "DELETE FROM knowledge_chunks WHERE source = '$source_escaped';" 2>&1); then
+            if printf "%s" "$delete_err" | grep -qi "no such module: fts5"; then
+                warn "FTS5 module unavailable in current sqlcipher; dropping knowledge FTS triggers and retrying."
+                db_exec "DROP TRIGGER IF EXISTS knowledge_ai;"
+                db_exec "DROP TRIGGER IF EXISTS knowledge_ad;"
+                db_exec "DROP TRIGGER IF EXISTS knowledge_au;"
+                db_exec "DELETE FROM knowledge_chunks WHERE source = '$source_escaped';"
+            else
+                printf "%s\n" "$delete_err" >&2
+                error "Failed to delete RAG source"
+            fi
+        fi
+    fi
+}
+
+cmd_rag() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    local subcommand="${1:-}"
+    [[ -z "$subcommand" ]] && usage
+    shift || true
+
+    case "$subcommand" in
+        list)
+            local scope_filter=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --scope)
+                        [[ -z "${2:-}" ]] && error "--scope requires a value"
+                        scope_filter="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin rag list [--scope SCOPE]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'rag list': $1"
+                        ;;
+                esac
+            done
+
+            local where_clause=""
+            if [[ -n "$scope_filter" ]]; then
+                local scope_escaped
+                scope_escaped=$(sql_escape_literal "$scope_filter")
+                where_clause="WHERE scope = '$scope_escaped'"
+            fi
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT COALESCE(scope, ''), source, COUNT(*), COALESCE(MAX(created_at), 0)
+FROM knowledge_chunks
+$where_clause
+GROUP BY scope, source
+ORDER BY scope, source;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No knowledge sources found."
+                exit 0
+            fi
+
+            printf "%-40s  %-60s  %8s  %s\n" "scope" "source" "chunks" "last_updated"
+            printf "%-40s  %-60s  %8s  %s\n" "-----" "------" "------" "-----------"
+            while IFS='|' read -r scope source chunks last_updated; do
+                [[ -z "${scope}${source}${chunks}${last_updated}" ]] && continue
+                [[ -z "$scope" ]] && scope="(no scope)"
+                printf "%-40s  %-60s  %8s  %s\n" "$scope" "$source" "$chunks" "$last_updated"
+            done <<< "$rows"
+            ;;
+
+        scopes)
+            [[ $# -gt 0 ]] && [[ "$1" != "--help" ]] && [[ "$1" != "-h" ]] && error "Usage: joi-admin rag scopes"
+            local rows
+            rows=$(db_exec "$(cat <<'SQL'
+SELECT COALESCE(scope, ''), COUNT(DISTINCT source), COUNT(*), COALESCE(MAX(created_at), 0)
+FROM knowledge_chunks
+GROUP BY scope
+ORDER BY scope;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No knowledge scopes found."
+                exit 0
+            fi
+
+            printf "%-40s  %8s  %8s  %s\n" "scope" "sources" "chunks" "last_updated"
+            printf "%-40s  %8s  %8s  %s\n" "-----" "-------" "------" "-----------"
+            while IFS='|' read -r scope source_count chunk_count last_updated; do
+                [[ -z "${scope}${source_count}${chunk_count}${last_updated}" ]] && continue
+                [[ -z "$scope" ]] && scope="(no scope)"
+                printf "%-40s  %8s  %8s  %s\n" "$scope" "$source_count" "$chunk_count" "$last_updated"
+            done <<< "$rows"
+            ;;
+
+        stats)
+            [[ $# -gt 0 ]] && [[ "$1" != "--help" ]] && [[ "$1" != "-h" ]] && error "Usage: joi-admin rag stats"
+            local stats
+            stats=$(db_exec "$(cat <<'SQL'
+SELECT
+  COUNT(DISTINCT COALESCE(scope, '')) AS scope_count,
+  COUNT(DISTINCT COALESCE(scope, '') || CHAR(31) || source) AS source_count,
+  COUNT(*) AS chunk_count
+FROM knowledge_chunks;
+SQL
+)" | awk 'NF && $0 != "ok" { print; exit }')
+
+            local scope_count source_count chunk_count
+            IFS='|' read -r scope_count source_count chunk_count <<< "$stats"
+            echo "RAG statistics"
+            echo "  Scopes:  ${scope_count:-0}"
+            echo "  Sources: ${source_count:-0}"
+            echo "  Chunks:  ${chunk_count:-0}"
+            ;;
+
+        delete)
+            local source=""
+            local scope=""
+            local yes=false
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --source)
+                        [[ -z "${2:-}" ]] && error "--source requires a value"
+                        source="$2"
+                        shift 2
+                        ;;
+                    --scope)
+                        [[ -z "${2:-}" ]] && error "--scope requires a value"
+                        scope="$2"
+                        shift 2
+                        ;;
+                    --yes|-y)
+                        yes=true
+                        shift
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin rag delete --source SOURCE [--scope SCOPE] [--yes]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'rag delete': $1"
+                        ;;
+                esac
+            done
+            [[ -z "$source" ]] && error "rag delete requires --source"
+
+            local source_escaped count
+            source_escaped=$(sql_escape_literal "$source")
+            if [[ -n "$scope" ]]; then
+                local scope_escaped
+                scope_escaped=$(sql_escape_literal "$scope")
+                count=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks WHERE source = '$source_escaped' AND scope = '$scope_escaped';")
+            else
+                count=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks WHERE source = '$source_escaped';")
+            fi
+
+            if [[ "${count:-0}" == "0" ]]; then
+                echo "No RAG chunks found for source '$source'${scope:+ (scope: $scope)}."
+                exit 0
+            fi
+
+            echo ""
+            echo "=== RAG DELETE SUMMARY ==="
+            echo "  Source: $source"
+            [[ -n "$scope" ]] && echo "  Scope:  $scope" || echo "  Scope:  ALL matching scopes"
+            echo "  Chunks: $count"
+            echo ""
+
+            if ! $yes; then
+                read -p "Delete these RAG chunks? [y/N] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    echo "Aborted."
+                    exit 1
+                fi
+            fi
+
+            rag_delete_chunks "$source" "$scope"
+            info "Deleted $count RAG chunks"
+            ;;
+
+        rescope)
+            local from_scope=""
+            local to_scope=""
+            local yes=false
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --from)
+                        [[ -z "${2:-}" ]] && error "--from requires a value"
+                        from_scope="$2"
+                        shift 2
+                        ;;
+                    --to)
+                        [[ -z "${2:-}" ]] && error "--to requires a value"
+                        to_scope="$2"
+                        shift 2
+                        ;;
+                    --yes|-y)
+                        yes=true
+                        shift
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin rag rescope --from OLD_SCOPE --to NEW_SCOPE [--yes]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'rag rescope': $1"
+                        ;;
+                esac
+            done
+            [[ -z "$from_scope" || -z "$to_scope" ]] && error "rag rescope requires --from and --to"
+
+            local from_escaped chunk_count source_count
+            from_escaped=$(sql_escape_literal "$from_scope")
+            chunk_count=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks WHERE scope = '$from_escaped';")
+            source_count=$(db_scalar "SELECT COUNT(DISTINCT source) FROM knowledge_chunks WHERE scope = '$from_escaped';")
+
+            if [[ "${chunk_count:-0}" == "0" ]]; then
+                echo "No RAG chunks found in scope '$from_scope'."
+                exit 0
+            fi
+
+            echo ""
+            echo "=== RAG RESCOPE SUMMARY ==="
+            echo "  From scope: $from_scope"
+            echo "  To scope:   $to_scope"
+            echo "  Sources:    $source_count"
+            echo "  Chunks:     $chunk_count"
+            echo ""
+
+            if ! $yes; then
+                read -p "Rescope these RAG chunks? [y/N] " -n 1 -r
+                echo
+                if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                    echo "Aborted."
+                    exit 1
+                fi
+            fi
+
+            local from_sql to_sql
+            from_sql=$(sql_escape_literal "$from_scope")
+            to_sql=$(sql_escape_literal "$to_scope")
+            db_exec "UPDATE knowledge_chunks SET scope = '$to_sql' WHERE scope = '$from_sql';"
+            info "Rescoped $chunk_count chunks: '$from_scope' -> '$to_scope'"
+            ;;
+
+        --help|-h)
+            usage
+            ;;
+
+        *)
+            error "Unknown rag subcommand: $subcommand"
+            ;;
+    esac
+}
+
 # Main purge command
 cmd_purge() {
     local do_contexts=false
@@ -634,6 +937,10 @@ main() {
         purge)
             check_root
             cmd_purge "$@"
+            ;;
+        rag)
+            check_root
+            cmd_rag "$@"
             ;;
         --help|-h)
             usage
