@@ -19,6 +19,8 @@ import shutil
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from config.prompts import sanitize_scope
+
 from memory import MemoryStore
 
 logger = logging.getLogger("joi.ingestion")
@@ -231,7 +233,8 @@ def process_pending(memory: MemoryStore) -> Tuple[int, int]:
         if not scope_dir.is_dir():
             continue
 
-        scope = scope_dir.name
+        # Sanitize scope to match RAG lookup (+ -> -, / -> _, etc.)
+        scope = sanitize_scope(scope_dir.name)
 
         # Process files in this scope directory
         for filepath in scope_dir.iterdir():
