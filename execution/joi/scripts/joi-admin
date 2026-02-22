@@ -50,6 +50,7 @@ USAGE:
 COMMANDS:
     purge       Purge memory data and/or regenerate keys
     rag         Inspect and manage RAG knowledge sources/scopes
+    summaries   Read-only context summary inspection
 
 PURGE USAGE:
     joi-admin purge [FLAGS]
@@ -110,6 +111,14 @@ RAG EXAMPLES:
     joi-admin rag stats
     joi-admin rag delete --source '+123456789/diary.txt' --scope -123456789
     joi-admin rag rescope --from +123456789 --to -123456789
+
+SUMMARIES USAGE:
+    joi-admin summaries list [--conversation ID] [--limit N]
+
+SUMMARIES EXAMPLES:
+    joi-admin summaries list
+    joi-admin summaries list --conversation +123456789
+    joi-admin summaries list --conversation group_id_here --limit 20
 
 EOF
     exit 0
@@ -800,6 +809,96 @@ SQL
     esac
 }
 
+cmd_summaries() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    local subcommand="${1:-}"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin summaries list [--conversation ID] [--limit N]"
+    shift || true
+
+    case "$subcommand" in
+        list)
+            local conversation=""
+            local limit="50"
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation)
+                        [[ -z "${2:-}" ]] && error "--conversation requires an ID"
+                        conversation="$2"
+                        shift 2
+                        ;;
+                    --limit)
+                        [[ -z "${2:-}" ]] && error "--limit requires a number"
+                        [[ ! "$2" =~ ^[0-9]+$ ]] && error "--limit must be a positive integer"
+                        limit="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin summaries list [--conversation ID] [--limit N]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'summaries list': $1"
+                        ;;
+                esac
+            done
+
+            local where_clause=""
+            if [[ -n "$conversation" ]]; then
+                local conversation_escaped
+                conversation_escaped=$(sql_escape_literal "$conversation")
+                where_clause="WHERE conversation_id = '$conversation_escaped'"
+            fi
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT
+    id,
+    COALESCE(conversation_id, ''),
+    COALESCE(summary_type, ''),
+    COALESCE(period_start, 0),
+    COALESCE(period_end, 0),
+    COALESCE(message_count, 0),
+    COALESCE(created_at, 0),
+    substr(replace(replace(COALESCE(summary_text, ''), char(10), ' '), char(13), ' '), 1, 100)
+FROM context_summaries
+$where_clause
+ORDER BY created_at DESC, id DESC
+LIMIT $limit;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No context summaries found${conversation:+ for conversation '$conversation'}."
+                exit 0
+            fi
+
+            printf "%6s  %-28s  %-12s  %8s  %13s  %13s  %-s\n" \
+                "id" "conversation_id" "type" "msgs" "created_at" "period" "preview"
+            printf "%6s  %-28s  %-12s  %8s  %13s  %13s  %-s\n" \
+                "--" "---------------" "----" "----" "----------" "------" "-------"
+
+            while IFS='|' read -r sid convo stype pstart pend mcount created preview; do
+                [[ -z "${sid}${convo}${stype}${pstart}${pend}${mcount}${created}${preview}" ]] && continue
+                [[ -z "$convo" ]] && convo="(none)"
+                local period="${pstart}-${pend}"
+                printf "%6s  %-28s  %-12s  %8s  %13s  %13s  %s\n" \
+                    "$sid" "$convo" "$stype" "$mcount" "$created" "$period" "$preview"
+            done <<< "$rows"
+            ;;
+        --help|-h)
+            echo "Usage: joi-admin summaries list [--conversation ID] [--limit N]"
+            exit 0
+            ;;
+        *)
+            error "Unknown summaries subcommand: $subcommand"
+            ;;
+    esac
+}
+
 # Main purge command
 cmd_purge() {
     local do_contexts=false
@@ -1007,6 +1106,10 @@ main() {
         rag)
             check_root
             cmd_rag "$@"
+            ;;
+        summaries)
+            check_root
+            cmd_summaries "$@"
             ;;
         --help|-h)
             usage
