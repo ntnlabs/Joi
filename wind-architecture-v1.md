@@ -57,6 +57,40 @@ Scheduler tick
   -> State/topic updates + structured log
 ```
 
+## Unified Proactive Outbound Pipeline (Recommended)
+
+Wind should share one outbound pipeline with other proactive-capable sources.
+
+### Why
+
+- Reuses the same safety checks and send path
+- Keeps behavior consistent across proactive message types
+- Avoids duplicate logic for message generation, validation, and logging
+
+### Trigger Sources (same pipeline, different trigger logic)
+
+- `wind` (impulse-driven, probabilistic timing)
+- `reminder` (scheduled/deterministic, time-driven)
+- `critical` (event-driven, highest priority, separate override rules)
+
+### Shared Pipeline Stages
+
+All proactive sources should reuse:
+- target selection / routing
+- guardrails and rate-awareness
+- message generation constraints
+- final send-worthiness check
+- `_send_to_mesh()`
+- structured decision/send logging
+
+### Trigger Logic Must Stay Separate
+
+- **Wind**: waits for impulse score + threshold
+- **Reminder**: fires when `due_at` is reached (should not wait for impulse)
+- **Critical**: event-driven path, may bypass quiet-hour suppression depending on policy
+
+This keeps the architecture unified without blurring behavior semantics.
+
 ## Components
 
 ### 1. Wind Scheduler Hook
@@ -141,6 +175,17 @@ Typical sources:
 - Follow-up opportunities ("you asked earlier...")
 - Lightweight observations (only if useful/relevant)
 - Time-based soft prompts (very limited)
+
+Facts can influence topics, but should usually not directly trigger proactive sends.
+
+Recommended use of facts:
+- enrich topic context (e.g., remembered preferences, birthdays)
+- boost/deprioritize topic priority
+- improve phrasing relevance
+
+Practical rule:
+- **facts are context**
+- **topics are triggers**
 
 ### Topic Fields (v1)
 
@@ -283,6 +328,83 @@ If it fails:
 - Keep topic pending (or downgrade/retry later depending on failure type)
 - Log reason
 
+## Context Window Handling (Multiple Joi Messages)
+
+Wind/reminders/critical messages can create short bursts of Joi-originated messages between user turns.
+
+If raw chronology is fed directly into the model, Joi may:
+- answer the wrong thread
+- over-focus on its own recent proactive/priority message
+- repeat itself because it sees multiple consecutive Joi messages
+
+This is a **context assembly problem**, not only a Wind problem.
+
+### v1 Recommendation: Special Internal Headers for Non-Regular Joi Messages
+
+To keep implementation simple, use **special headers** for non-regular Joi outbound messages and keep regular reply messages clean.
+
+Examples (internal storage/context representation):
+- `[JOI-WIND] ...`
+- `[JOI-REMINDER] ...`
+- `[JOI-CRITICAL] ...`
+
+Regular replies remain untagged.
+
+Notes:
+- These headers are for internal transcript/context handling (not user-facing transport text).
+- Header format should be stable and machine-readable.
+
+### Why Headers Work Well (v1)
+
+- Lower implementation complexity than introducing a large metadata model immediately
+- Context builder can detect special messages with simple parsing
+- Modelfile/system prompt can explicitly teach the model how to interpret them
+- Keeps normal conversation turns visually clean
+
+### Context Builder Rules (v1)
+
+When assembling context for a new inbound user message:
+
+1. Include recent user turns and normal Joi replies as usual
+2. Detect special Joi messages via headers (`[JOI-WIND]`, `[JOI-REMINDER]`, `[JOI-CRITICAL]`)
+3. Do **not** blindly include long bursts of consecutive Joi messages verbatim
+4. Collapse special messages into a compact block if needed
+5. Keep unresolved critical items visible until acknowledged/resolved
+6. Limit reminder/Wind carry-over (summarize or cap count)
+
+### Suggested Context Shape (v1)
+
+Instead of raw assistant bursts, provide:
+- recent transcript turns (user + direct replies)
+- compact pending special messages block (if any)
+
+Example (internal context shape):
+
+```text
+Recent conversation:
+- User: ...
+- Joi: ...
+- User: ...
+
+Pending special messages:
+- [JOI-CRITICAL] Smoke alert in kitchen (unacknowledged)
+- [JOI-REMINDER] Dentist appointment tomorrow 09:00
+```
+
+### Modelfile / Prompt Instruction (Required)
+
+The model should be explicitly taught:
+- special headers identify Joi-originated system-class messages
+- user's newest inbound message remains primary unless user references a special message
+- `[JOI-CRITICAL]` items have highest priority
+- reminder/Wind items may be acknowledged briefly, but should not hijack unrelated replies
+
+### Future Upgrade Path (optional)
+
+If needed later, this header approach can evolve into richer structured metadata.
+
+For v1, headers are a pragmatic and readable solution.
+
 ## Safety and Guardrails
 
 ### Mandatory Guardrails (v1)
@@ -303,6 +425,40 @@ If Wind fails at any stage:
 - Log structured error
 - Leave topic pending unless invalid/stale
 - Apply backoff to next Wind evaluation for that conversation
+
+## Scheduled Tasks / Reminders (Interaction with Wind)
+
+Scheduled tasks should reuse the **same proactive outbound pipeline** but not the same trigger mechanism.
+
+### Recommended Model
+
+- **Wind** = impulse-driven trigger (`should I reach out now?`)
+- **Reminder** = deterministic trigger (`this is due now`)
+
+They share:
+- topic/message preparation path
+- generation constraints
+- send-worthiness checks
+- send path (`_send_to_mesh()`)
+- logging and observability
+
+They differ in:
+- trigger conditions
+- priority/override semantics
+- retry policy
+
+### Important Data Modeling Rule
+
+Do not model scheduled reminders only as generic facts.
+
+Reminders need dedicated scheduling semantics (for example):
+- `due_at`
+- `timezone`
+- `recurrence`
+- `status`
+- `last_fired_at`
+
+Facts can support reminder context, but reminders require a proper task/reminder store.
 
 ## Observability (Required for Tuning)
 
@@ -394,6 +550,7 @@ Success criteria:
 
 Wind v1 should be:
 - **topic-driven**
+- **pipeline-sharing (with reminders/critical paths)**
 - **per-conversation**
 - **guardrail-first**
 - **explainable**
