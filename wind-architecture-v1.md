@@ -216,6 +216,143 @@ Rules:
 - Expire topics aggressively (stale proactive messages feel wrong)
 - Deduplicate near-identical topics
 
+## Tension Topic Extractor (Planned, Recommended)
+
+Wind can be improved by a dedicated LLM pass that mines "forward momentum" topics from recent conversation context.
+
+This is **not** fact extraction and **not** summarization.
+
+Purpose:
+- identify unfinished ideas
+- detect unresolved questions or latent directions
+- capture emotionally charged but still-open threads
+- produce candidate topics for future proactive continuation
+
+### Role in the Architecture
+
+The tension extractor is a **topic miner**, not a sender.
+
+It should:
+- produce candidate `tension` topics
+- score and annotate them
+- provide evidence for why they exist
+
+It should **not**:
+- send messages
+- bypass Wind guardrails
+- decide final timing
+
+Wind still controls if/when a mined tension topic becomes a proactive message.
+
+### Prompt Intent (Concept)
+
+The extractor prompt should ask for high-quality continuation candidates only.
+
+Desired behavior:
+- prioritize genuine forward momentum
+- reject trivial continuation
+- reject already-resolved topics
+- avoid generic "check in" style suggestions without evidence
+
+Example intent (paraphrased):
+- identify unfinished ideas, unresolved questions, emotional spikes, latent directions, or novel conceptual threads worth autonomous continuation
+- only mark a topic if it has real continuation potential
+
+### Input Window Strategy (v1)
+
+Use a recent context window for mining (for example, last N messages/turns), but avoid blindly scanning the full conversation every time.
+
+Recommendations:
+- start with a smaller recent window (e.g., recent slice, not the full context history)
+- debounce extractor runs (not every scheduler tick)
+- run primarily after new user inbound messages
+- dedupe against already-active tension topics before promoting new ones
+
+### Critical Guardrail: Prevent Self-Amplification
+
+The extractor must not over-learn from Joi's own proactive/reminder output.
+
+Because Joi may emit multiple non-user messages, the extractor can accidentally amplify its own prior suggestions.
+
+Use the special-header convention in context handling:
+- downweight or exclude `[JOI-WIND]` and `[JOI-REMINDER]` messages in tension mining
+- treat `[JOI-CRITICAL]` separately (high-value but different semantics)
+- focus primarily on user turns + direct reply context
+
+### Output Schema (Recommended v1)
+
+Each extracted candidate should include:
+
+- `title`
+- `topic_summary`
+- `resolved_status` (`open`, `partially_resolved`, `resolved`)
+- `evidence_message_ids` (required)
+- `intrinsic_interest_score`
+- `continuation_depth`
+- `emotional_charge`
+- `novelty_score`
+- `decay_rate`
+- `confidence`
+
+Optional:
+- `user_pull_score` (how strongly user indicated interest)
+- `resolution_confidence`
+- `suggested_followup_style`
+
+### Why Evidence Is Required
+
+Without evidence references (`evidence_message_ids`), the extractor will tend to hallucinate "latent threads."
+
+Evidence requirements make outputs:
+- auditable
+- easier to tune
+- safer to auto-promote into `pending_topics`
+
+### Integration Patterns
+
+#### Option A (simpler v1): Direct to `pending_topics`
+
+Extractor writes directly to `pending_topics` with:
+- `topic_type = tension`
+
+Pros:
+- simpler implementation
+
+Cons:
+- less separation between raw mined candidates and approved queue entries
+
+#### Option B (recommended evolution): Staging + Promotion
+
+1. Extractor writes to `tension_topics` (raw mined candidates)
+2. Topic builder/dedupe step promotes good candidates to `pending_topics`
+
+Pros:
+- better auditing and tuning
+- easier to compare extractor output vs actual promoted topics
+
+### How Wind Uses Tension Topics
+
+Tension topics should influence:
+- topic pressure (impulse contribution)
+- topic ranking during selection
+- follow-up phrasing relevance
+
+But Wind still decides timing via:
+- hard gates
+- impulse threshold
+- send-worthiness checks
+
+### Tuning Caution (High Importance)
+
+Do not overweight `emotional_charge` early.
+
+If over-weighted, Wind may become intrusive or overly intense.
+
+Safer rollout:
+- shadow mode first
+- inspect mined tension topics manually
+- keep emotional contribution low until behavior feels right
+
 ## Impulse Engine
 
 Impulse answers: "Is now a good time to speak?"
