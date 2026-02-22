@@ -1053,6 +1053,164 @@ Reminders need dedicated scheduling semantics (for example):
 
 Facts can support reminder context, but reminders require a proper task/reminder store.
 
+## LLM Role Architecture (Execution Plan)
+
+This chapter describes how Wind-related behavior is executed at inference time.
+
+It is not only conceptual behavior planning; it defines **runtime LLM role separation** and call responsibilities.
+
+### Primary Deployment Profile (Current Plan)
+
+Use **one base LLM model** with **four role-specific Modelfiles**:
+
+- `joi-brain`
+- `joi-consolidator`
+- `joi-tension`
+- `joi-curiosity`
+
+This is the primary design for now.
+
+### Why This Split Is Good
+
+- clear responsibility boundaries per role
+- easier prompt tuning without changing base model weights
+- consistent language/style characteristics across roles (same base model family)
+- simpler operations than mixing multiple model families early
+
+### Role Responsibilities (Hard Boundaries)
+
+#### `joi-brain`
+
+Purpose:
+- user-facing replies
+- proactive message drafting (Wind/reminder/critical content rendering)
+
+Output style:
+- natural language (user-visible)
+
+Should not be responsible for:
+- memory consolidation writes
+- tension mining
+- curiosity candidate generation
+
+#### `joi-consolidator`
+
+Purpose:
+- fact extraction
+- context summarization
+- memory maintenance outputs (structured)
+
+Output style:
+- strict structured output (JSON/schema-driven)
+
+Should not be responsible for:
+- user-facing chat replies
+- proactive topic discovery decisions
+
+#### `joi-tension`
+
+Purpose:
+- tension topic extraction (unfinished ideas, unresolved threads, momentum candidates)
+
+Output style:
+- structured candidate topics + evidence + scores
+
+Should not be responsible for:
+- sending messages
+- final timing decisions
+
+#### `joi-curiosity`
+
+Purpose:
+- discovery / curiosity candidate generation
+- propose new topic probes anchored in relevance/novelty
+
+Output style:
+- structured discovery candidates + scores/anchors
+
+Should not be responsible for:
+- user-facing replies
+- direct sends
+- overriding Wind guardrails
+
+### Shared Base Model Strategy
+
+All four roles use the same base model (current primary plan), but differ by:
+- Modelfile system prompt
+- role-specific constraints
+- output format expectations (natural language vs JSON)
+- temperature / generation parameters (role-specific tuning)
+
+This allows role specialization without introducing multi-model ops complexity too early.
+
+### Invocation Policy (Who Calls What)
+
+#### User inbound message path
+- `joi-brain` handles reply generation
+
+#### Memory maintenance path
+- `joi-consolidator` handles facts + summaries
+
+#### Tension mining path
+- `joi-tension` handles tension topic extraction
+
+#### Curiosity/discovery path
+- `joi-curiosity` handles discovery candidate generation
+
+Wind orchestration decides:
+- whether a topic is worth pursuing
+- when to send
+- which candidate to promote
+
+LLM roles do not replace Wind orchestration logic.
+
+### Call Priority / Budget Policy (Recommended)
+
+Highest priority:
+1. `joi-brain` (user-facing latency-sensitive calls)
+
+Medium priority:
+2. `joi-consolidator` (maintenance, deferrable)
+3. `joi-tension` (topic mining, deferrable)
+
+Lowest priority:
+4. `joi-curiosity` (discovery, most deferrable)
+
+Recommended behavior under load:
+- degrade/skip curiosity first
+- then defer tension/consolidation
+- preserve user-facing `joi-brain` calls whenever possible
+
+### Failure Behavior by Role
+
+- `joi-brain` failure:
+  - user-visible fallback/error path
+  - highest urgency to recover
+
+- `joi-consolidator` failure:
+  - defer maintenance
+  - no immediate user-facing impact
+
+- `joi-tension` failure:
+  - no new tension topics mined
+  - Wind can continue using existing topics
+
+- `joi-curiosity` failure:
+  - skip discovery cycle
+  - no direct user-facing impact
+
+### Future Upgrade Path (Non-Primary Profiles)
+
+The current plan is **same base model, multiple Modelfiles**.
+
+Possible future evolution:
+- different base models per role
+- dedicated inference node(s) for maintenance roles
+- stronger model for `joi-brain`, smaller model for maintenance roles
+- separate capacity pool for curiosity/tension jobs
+
+These are future options, not required for Wind v1.
+
 ## Observability (Required for Tuning)
 
 Wind must produce structured logs for every evaluation.
