@@ -115,12 +115,14 @@ RAG EXAMPLES:
 SUMMARIES USAGE:
     joi-admin summaries list [--conversation ID] [--limit N]
     joi-admin summaries show --id ID
+    joi-admin summaries delete --id ID
 
 SUMMARIES EXAMPLES:
     joi-admin summaries list
     joi-admin summaries list --conversation +123456789
     joi-admin summaries list --conversation group_id_here --limit 20
     joi-admin summaries show --id 42
+    joi-admin summaries delete --id 42
 
 EOF
     exit 0
@@ -956,8 +958,79 @@ SQL
             echo "summary_text:"
             printf "%s\n" "$text"
             ;;
+        delete)
+            local summary_id=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --id)
+                        [[ -z "${2:-}" ]] && error "--id requires a value"
+                        [[ ! "$2" =~ ^[0-9]+$ ]] && error "--id must be a positive integer"
+                        summary_id="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin summaries delete --id ID"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'summaries delete': $1"
+                        ;;
+                esac
+            done
+            [[ -z "$summary_id" ]] && error "summaries delete requires --id"
+
+            local meta_row preview
+            meta_row=$(db_exec "$(cat <<SQL
+SELECT
+    id,
+    COALESCE(conversation_id, ''),
+    COALESCE(summary_type, ''),
+    COALESCE(message_count, 0),
+    COALESCE(created_at, 0),
+    COALESCE(period_start, 0),
+    COALESCE(period_end, 0)
+FROM context_summaries
+WHERE id = $summary_id
+LIMIT 1;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${meta_row//[$'\t\r\n ']/}" ]]; then
+                echo "No context summary found with id=$summary_id."
+                exit 0
+            fi
+
+            preview=$(db_exec "SELECT substr(replace(replace(COALESCE(summary_text, ''), char(10), ' '), char(13), ' '), 1, 120) FROM context_summaries WHERE id = $summary_id LIMIT 1;" | awk 'NF && $0 != "ok" { print; exit }')
+
+            local sid convo stype mcount created pstart pend
+            IFS='|' read -r sid convo stype mcount created pstart pend <<< "$meta_row"
+            [[ -z "$convo" ]] && convo="(none)"
+
+            echo ""
+            echo "=== SUMMARY DELETE SUMMARY ==="
+            echo "  id:             $sid"
+            echo "  conversation_id:$convo"
+            echo "  summary_type:   $stype"
+            echo "  message_count:  $mcount"
+            echo "  created_at:     $created"
+            echo "  period:         $pstart-$pend"
+            if [[ -n "$preview" ]]; then
+                echo "  preview:        $preview"
+            fi
+            echo ""
+
+            read -p "Delete this summary? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            db_exec "DELETE FROM context_summaries WHERE id = $summary_id;"
+            info "Deleted summary id=$summary_id"
+            ;;
         --help|-h)
-            echo "Usage: joi-admin summaries <list|show> [OPTIONS]"
+            echo "Usage: joi-admin summaries <list|show|delete> [OPTIONS]"
             exit 0
             ;;
         *)
