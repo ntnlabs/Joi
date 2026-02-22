@@ -8,6 +8,8 @@
 set -Eeuo pipefail
 
 SCRIPT_NAME=$(basename "$0")
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+JOI_PY_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
 MEMORY_DB="${JOI_MEMORY_DB:-/var/lib/joi/memory.db}"
 NONCE_DB="${JOI_NONCE_DB:-/var/lib/joi/nonces.db}"
 HMAC_KEY_FILE="${JOI_HMAC_KEY_FILE:-/etc/joi/hmac.key}"
@@ -219,6 +221,57 @@ db_scalar() {
     printf "%s\n" "$output" | awk 'NF && $0 != "ok" { print; exit }'
 }
 
+restore_knowledge_fts_with_python() {
+    # Fallback recovery path for sqlcipher CLI builds without FTS5:
+    # use Joi's Python MemoryStore (which typically has working FTS5 support)
+    # to recreate missing triggers and rebuild the FTS index.
+    if ! command -v python3 >/dev/null 2>&1; then
+        warn "python3 not available; cannot restore knowledge FTS triggers automatically."
+        return 1
+    fi
+
+    local py_err=""
+    if ! py_err=$(PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+        JOI_MEMORY_DB="$MEMORY_DB" \
+        JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+        python3 <<'PY' 2>&1 >/dev/null
+import os
+import sys
+
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}")
+    sys.exit(1)
+
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    # _init_schema() runs in constructor and recreates missing triggers.
+    # Rebuild FTS index to resync after trigger-less deletes.
+    conn = store._connect()  # internal helper is acceptable in admin recovery path
+    try:
+        conn.execute("INSERT INTO knowledge_fts(knowledge_fts) VALUES('rebuild')")
+        conn.commit()
+    except Exception:
+        # If rebuild fails, triggers may still be restored; keep best-effort behavior.
+        pass
+except Exception as e:
+    print(f"restore_failed: {e}")
+    sys.exit(1)
+PY
+    ); then
+        warn "Could not auto-restore knowledge FTS triggers/index via Python fallback."
+        warn "Restart joi-api after installing an FTS5-capable sqlcipher to restore RAG indexing."
+        if [[ -n "${py_err//[$'\t\r\n ']/}" ]]; then
+            warn "Python restore error: $py_err"
+        fi
+        return 1
+    fi
+
+    info "  Restored knowledge FTS triggers/index via Python MemoryStore"
+    return 0
+}
+
 # Purge messages and summaries
 purge_contexts() {
     local conversation="$1"
@@ -280,6 +333,7 @@ purge_facts() {
 purge_knowledge() {
     local count=0
     local delete_err=""
+    local dropped_fts_triggers=false
 
     if [[ ! -f "$MEMORY_DB" ]]; then
         warn "Memory database not found: $MEMORY_DB"
@@ -297,6 +351,7 @@ purge_knowledge() {
             db_exec "DROP TRIGGER IF EXISTS knowledge_ai;"
             db_exec "DROP TRIGGER IF EXISTS knowledge_ad;"
             db_exec "DROP TRIGGER IF EXISTS knowledge_au;"
+            dropped_fts_triggers=true
             db_exec "DELETE FROM knowledge_chunks;"
         else
             printf "%s\n" "$delete_err" >&2
@@ -307,6 +362,10 @@ purge_knowledge() {
     # Also clear FTS index if available in this engine build.
     if ! db_exec "DELETE FROM knowledge_fts;" >/dev/null 2>&1; then
         warn "Skipping knowledge_fts clear (FTS5 module not available in this sqlcipher build)."
+    fi
+
+    if $dropped_fts_triggers; then
+        restore_knowledge_fts_with_python || true
     fi
 
     info "  Deleted $count knowledge chunks"
@@ -453,6 +512,7 @@ rag_delete_chunks() {
     local source="$1"
     local scope="${2:-}"
     local delete_err=""
+    local dropped_fts_triggers=false
 
     if [[ -n "$scope" ]]; then
         local source_escaped scope_escaped
@@ -464,6 +524,7 @@ rag_delete_chunks() {
                 db_exec "DROP TRIGGER IF EXISTS knowledge_ai;"
                 db_exec "DROP TRIGGER IF EXISTS knowledge_ad;"
                 db_exec "DROP TRIGGER IF EXISTS knowledge_au;"
+                dropped_fts_triggers=true
                 db_exec "DELETE FROM knowledge_chunks WHERE source = '$source_escaped' AND scope = '$scope_escaped';"
             else
                 printf "%s\n" "$delete_err" >&2
@@ -479,12 +540,17 @@ rag_delete_chunks() {
                 db_exec "DROP TRIGGER IF EXISTS knowledge_ai;"
                 db_exec "DROP TRIGGER IF EXISTS knowledge_ad;"
                 db_exec "DROP TRIGGER IF EXISTS knowledge_au;"
+                dropped_fts_triggers=true
                 db_exec "DELETE FROM knowledge_chunks WHERE source = '$source_escaped';"
             else
                 printf "%s\n" "$delete_err" >&2
                 error "Failed to delete RAG source"
             fi
         fi
+    fi
+
+    if $dropped_fts_triggers; then
+        restore_knowledge_fts_with_python || true
     fi
 }
 
