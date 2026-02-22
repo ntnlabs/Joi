@@ -1137,8 +1137,8 @@ def _redact_filename_pii(filename: str) -> str:
     """Redact phone numbers in filenames for privacy mode.
 
     Examples:
-        +123456789.txt -> +***7511.txt
-        +123456789.model -> +***7511.model
+        +123456789.txt -> +***6789.txt
+        +123456789.model -> +***6789.model
     """
     import re
     # Match phone number pattern at start of filename (with or without extension)
