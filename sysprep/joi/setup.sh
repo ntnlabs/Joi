@@ -25,7 +25,7 @@ printf "Internal interface [eth0]: "
 read INT_IF
 INT_IF="${INT_IF:-eth0}"
 
-printf "Gateway IP [172.22.22.4]: "
+printf "Gateway/hopper IP [172.22.22.4]: "
 read GATEWAY_IP
 GATEWAY_IP="${GATEWAY_IP:-172.22.22.4}"
 
@@ -61,7 +61,7 @@ echo ""
 echo "Configuration Summary:"
 echo "  Hostname:       $HOSTNAME"
 echo "  INT interface:  $INT_IF"
-echo "  Gateway:        $GATEWAY_IP"
+echo "  Gateway/hopper: $GATEWAY_IP"
 echo "  NTP server:     $NTP_IP"
 echo "  Mesh Nebula IP: $MESH_NEBULA_IP"
 echo "  Docker bridge:  $([ $ALLOW_DOCKER -eq 1 ] && echo 'yes' || echo 'no')"
@@ -118,7 +118,7 @@ if [ "$ALLOW_DOCKER" = "1" ]; then
     ufw allow out on docker0
 fi
 
-# SSH from gateway
+# SSH from gateway/hopper
 ufw allow from "$GATEWAY_IP" to any port 22 proto tcp
 
 # NTP to internal NTP server
@@ -134,7 +134,7 @@ ufw allow out to "$MESH_NEBULA_IP" port 8444 proto tcp
 
 # Temporary egress for setup
 if [ "$ALLOW_TMP" = "1" ]; then
-    ufw allow out 53
+    ufw allow out 53/udp
     ufw allow out 80/tcp
     ufw allow out 443/tcp
 fi
@@ -147,12 +147,15 @@ ufw --force enable
 echo ""
 echo "[4/5] Configuring DNS..."
 
-# Disable systemd-resolved if present
-if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-    systemctl stop systemd-resolved
-    systemctl disable systemd-resolved
-    rm -f /etc/resolv.conf
+# Rerun-safe: remove immutable flag if a previous run pinned resolv.conf.
+chattr -i /etc/resolv.conf 2>/dev/null || true
+
+# Disable systemd-resolved if present (joi uses pinned internal DNS).
+if systemctl list-unit-files 2>/dev/null | grep -q '^systemd-resolved\.service'; then
+    systemctl stop systemd-resolved >/dev/null 2>&1 || true
+    systemctl disable systemd-resolved >/dev/null 2>&1 || true
 fi
+rm -f /etc/resolv.conf
 
 cat > /etc/resolv.conf << EOF
 # Gateway DNS
@@ -202,7 +205,7 @@ echo "  cat /etc/resolv.conf"
 echo ""
 if [ "$ALLOW_TMP" = "1" ]; then
     echo "WARNING: Temporary egress (53/80/443) is ENABLED."
-    echo "After setup, run: ufw delete allow out 53"
+    echo "After setup, run: ufw delete allow out 53/udp"
     echo "                  ufw delete allow out 80/tcp"
     echo "                  ufw delete allow out 443/tcp"
     echo ""
