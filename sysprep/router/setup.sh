@@ -50,14 +50,10 @@ read VPN_SUBNET
 VPN_SUBNET="${VPN_SUBNET:-10.0.10.0/24}"
 
 echo ""
-echo "Upstream DNS servers (for forwarding)"
-printf "Primary DNS [1.1.1.1]: "
+echo "Upstream DNS server (for forwarding)"
+printf "DNS server [1.1.1.1]: "
 read DNS1
 DNS1="${DNS1:-1.1.1.1}"
-
-printf "Secondary DNS [8.8.8.8]: "
-read DNS2
-DNS2="${DNS2:-8.8.8.8}"
 
 echo ""
 echo "Configuration Summary:"
@@ -69,7 +65,7 @@ echo "  Internal net:  $INTERNAL_NET"
 echo "  NTP server:    $NTP_IP"
 echo "  Mgmt subnet:   $MGMT_SUBNET"
 echo "  VPN subnet:    $VPN_SUBNET"
-echo "  DNS upstream:  $DNS1, $DNS2"
+echo "  DNS upstream:  $DNS1"
 echo ""
 printf "Proceed? [y/N]: "
 read CONFIRM
@@ -82,15 +78,29 @@ esac
 # HOSTNAME
 ###########################################
 echo ""
-echo "[1/4] Setting hostname..."
+echo "[1/5] Setting hostname..."
 echo "$HOSTNAME" > /etc/hostname
 hostname "$HOSTNAME"
+
+###########################################
+# DISABLE IPV6 (sysctl)
+###########################################
+echo ""
+echo "[2/5] Disabling IPv6..."
+
+cat > /etc/sysctl.d/99-disable-ipv6.conf << 'EOF'
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
+
+sysctl -p /etc/sysctl.d/99-disable-ipv6.conf >/dev/null
 
 ###########################################
 # FIREWALL (iptables)
 ###########################################
 echo ""
-echo "[2/4] Configuring firewall..."
+echo "[3/5] Configuring firewall..."
 
 iptables -F
 iptables -X
@@ -128,6 +138,10 @@ iptables -A INPUT -i $INT_IF -p tcp -s $INTERNAL_NET --dport 53 -j ACCEPT
 iptables -A OUTPUT -o $WAN_IF -p udp --dport 53 -j ACCEPT
 iptables -A OUTPUT -o $WAN_IF -p tcp --dport 53 -j ACCEPT
 
+# WAN egress for package installs/updates (apk)
+iptables -A OUTPUT -o $WAN_IF -p tcp --dport 80 -j ACCEPT
+iptables -A OUTPUT -o $WAN_IF -p tcp --dport 443 -j ACCEPT
+
 # Persist
 rc-update add iptables 2>/dev/null || true
 /etc/init.d/iptables save
@@ -136,7 +150,7 @@ rc-update add iptables 2>/dev/null || true
 # DNS (dnsmasq)
 ###########################################
 echo ""
-echo "[3/4] Configuring DNS forwarding (dnsmasq)..."
+echo "[4/5] Configuring DNS forwarding (dnsmasq)..."
 
 apk add dnsmasq
 
@@ -148,9 +162,8 @@ bind-interfaces
 # Don't read /etc/resolv.conf
 no-resolv
 
-# Upstream DNS servers
+# Upstream DNS server
 server=$DNS1
-server=$DNS2
 
 # Local domain
 local=/internal/
@@ -172,7 +185,7 @@ service dnsmasq restart
 # NTP (chrony)
 ###########################################
 echo ""
-echo "[4/4] Configuring NTP client (chrony)..."
+echo "[5/5] Configuring NTP client (chrony)..."
 
 apk add chrony
 
