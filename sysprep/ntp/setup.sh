@@ -22,6 +22,7 @@ cleanup_temp_update_path() {
     # Remove temporary package egress rules (ignore if not present).
     iptables -D OUTPUT -o "$INT_IF" -p tcp --dport 80 -j ACCEPT 2>/dev/null || true
     iptables -D OUTPUT -o "$INT_IF" -p tcp --dport 443 -j ACCEPT 2>/dev/null || true
+    iptables -D OUTPUT -o "$INT_IF" -p udp --dport 53 -j ACCEPT 2>/dev/null || true
 
     # Restore routing preference by removing the temporary internal default.
     remove_temp_update_default
@@ -55,7 +56,7 @@ printf "Internal network CIDR [172.22.22.0/24]: "
 read INTERNAL_NET
 INTERNAL_NET="${INTERNAL_NET:-172.22.22.0/24}"
 
-printf "Gateway IP [172.22.22.4]: "
+printf "Gateway/hopper IP [172.22.22.4]: "
 read GATEWAY_IP
 GATEWAY_IP="${GATEWAY_IP:-172.22.22.4}"
 
@@ -66,7 +67,7 @@ echo "  WAN interface: $WAN_IF"
 echo "  INT interface: $INT_IF"
 echo "  This IP:       $MY_IP"
 echo "  Internal net:  $INTERNAL_NET"
-echo "  Gateway:       $GATEWAY_IP"
+echo "  Gateway/hopper:$GATEWAY_IP"
 echo ""
 printf "Proceed? [y/N]: "
 read CONFIRM
@@ -115,15 +116,14 @@ iptables -A OUTPUT -o lo -j ACCEPT
 iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
 
-# SSH from gateway
+# SSH from gateway/hopper
 iptables -A INPUT -i $INT_IF -p tcp -s $GATEWAY_IP --dport 22 -j ACCEPT
 
 # NTP from internal network
 iptables -A INPUT -i $INT_IF -p udp -s $INTERNAL_NET --dport 123 -j ACCEPT
 
-# DNS to internal gateway (used in /etc/resolv.conf)
-iptables -A OUTPUT -o $INT_IF -p udp -d $GATEWAY_IP --dport 53 -j ACCEPT
-iptables -A OUTPUT -o $INT_IF -p tcp -d $GATEWAY_IP --dport 53 -j ACCEPT
+# DNS direct via WAN (UDP only by design)
+iptables -A OUTPUT -o $WAN_IF -p udp --dport 53 -j ACCEPT
 # Upstream NTP direct via WAN
 iptables -A OUTPUT -o $WAN_IF -p udp --dport 123 -j ACCEPT
 
@@ -139,12 +139,9 @@ rc-update add iptables 2>/dev/null || true
 # DNS
 ###########################################
 echo ""
-echo "[4/5] Configuring DNS..."
-
-cat > /etc/resolv.conf << EOF
-# Gateway DNS
-nameserver $GATEWAY_IP
-EOF
+echo "[4/5] Configuring DNS (WAN DHCP)..."
+# Keep WAN DHCP-provided DNS (do not pin to internal gateway).
+# If /etc/resolv.conf was previously pinned manually, refresh it before rerun.
 
 ###########################################
 # NTP SERVER (chrony)
@@ -159,6 +156,9 @@ trap 'cleanup_temp_update_path' EXIT INT TERM HUP
 # Temporary package egress via internal gateway for initial chrony install.
 iptables -A OUTPUT -o $INT_IF -p tcp --dport 80 -j ACCEPT
 iptables -A OUTPUT -o $INT_IF -p tcp --dport 443 -j ACCEPT
+# DNS continues to use WAN resolvers; while internal route is preferred, allow UDP/53
+# via the internal path so the router can forward it.
+iptables -A OUTPUT -o $INT_IF -p udp --dport 53 -j ACCEPT
 
 remove_temp_update_default
 ip route add default via "$GATEWAY_IP" dev "$INT_IF" metric 1 2>/dev/null || \
