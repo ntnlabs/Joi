@@ -4,7 +4,7 @@
 #
 # Usage: update.sh --enable | --disable | --run
 #
-# NOTE: mesh already has 443/tcp and 53/udp permanently allowed for Signal.
+# NOTE: mesh already has 443/tcp (Signal) and 53/udp (DNS) permanently allowed.
 #       This script only controls 80/tcp for apt repositories.
 
 enable_rules() {
@@ -14,14 +14,14 @@ enable_rules() {
 
 disable_rules() {
     echo "Disabling HTTP outbound..."
-    ufw delete allow out 80/tcp 2>/dev/null
+    printf 'y\n' | ufw delete allow out 80/tcp >/dev/null 2>&1 || true
 }
 
 case "$1" in
     --enable)
         enable_rules
         ufw status | grep "80/tcp"
-        echo "Done. Also enable on gateway, then run 'apt update && apt upgrade'"
+        echo "Done. Run 'apt update && apt upgrade'"
         ;;
     --disable)
         disable_rules
@@ -46,8 +46,7 @@ case "$1" in
         echo "  --run      Enable, update, upgrade, disable (all-in-one)"
         echo "  --status   Show UFW status"
         echo ""
-        echo "NOTE: 443/tcp and 53/udp are permanently allowed for Signal."
-        echo "NOTE: Gateway must also have updates enabled!"
+        echo "NOTE: 443/tcp (Signal) and 53/udp (DNS) are permanently allowed."
         exit 1
         ;;
 esac

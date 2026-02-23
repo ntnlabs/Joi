@@ -1,8 +1,9 @@
 #!/bin/bash
 # Mesh VM Initial Setup
 # - Firewall (UFW)
-# - DNS (resolv.conf)
+# - DNS (via WAN DHCP / systemd-resolved)
 # - NTP client (chrony)
+# - Service user/data dir prep for mesh-signal-worker (signal-cli runtime)
 #
 # Interactive script - asks for all configuration values.
 # Run as root: bash setup.sh
@@ -29,7 +30,7 @@ printf "WAN interface [eth1]: "
 read WAN_IF
 WAN_IF="${WAN_IF:-eth1}"
 
-printf "Gateway IP [172.22.22.4]: "
+printf "Gateway/hopper IP [172.22.22.4]: "
 read GATEWAY_IP
 GATEWAY_IP="${GATEWAY_IP:-172.22.22.4}"
 
@@ -49,7 +50,7 @@ echo "Configuration Summary:"
 echo "  Hostname:      $HOSTNAME"
 echo "  INT interface: $INT_IF"
 echo "  WAN interface: $WAN_IF"
-echo "  Gateway:       $GATEWAY_IP"
+echo "  Gateway/hopper:$GATEWAY_IP"
 echo "  NTP server:    $NTP_IP"
 echo "  Joi Nebula IP: $JOI_NEBULA_IP"
 echo ""
@@ -64,14 +65,28 @@ esac
 # HOSTNAME
 ###########################################
 echo ""
-echo "[1/4] Setting hostname..."
+echo "[1/5] Setting hostname..."
 hostnamectl set-hostname "$HOSTNAME"
+
+###########################################
+# SIGNAL USER / DATA DIR
+###########################################
+echo ""
+echo "[2/5] Preparing signal service user and data dir..."
+
+if ! id -u signal >/dev/null 2>&1; then
+    useradd -r -s /usr/sbin/nologin signal
+fi
+
+mkdir -p /var/lib/signal-cli
+chown signal:signal /var/lib/signal-cli
+chmod 0700 /var/lib/signal-cli
 
 ###########################################
 # FIREWALL (UFW)
 ###########################################
 echo ""
-echo "[2/4] Configuring firewall (UFW)..."
+echo "[3/5] Configuring firewall (UFW)..."
 
 ufw --force reset
 ufw default deny incoming
@@ -81,11 +96,13 @@ ufw default deny outgoing
 ufw allow in on lo
 ufw allow out on lo
 
-# SSH from gateway
+# SSH from gateway/hopper
 ufw allow from "$GATEWAY_IP" to any port 22 proto tcp
 
 # NTP to internal NTP server
 ufw allow out to "$NTP_IP" port 123 proto udp
+# Allow replies / server packets from internal NTP server (matches lab profile)
+ufw allow from "$NTP_IP" to any port 123 proto udp
 
 # Nebula transport
 ufw allow 4242/udp
@@ -95,9 +112,9 @@ ufw allow out 4242/udp
 ufw allow from "$JOI_NEBULA_IP" to any port 8444 proto tcp
 ufw allow out to "$JOI_NEBULA_IP" port 8443 proto tcp
 
-# WAN egress for Signal and DNS
+# WAN egress for Signal and DNS (UDP only by design)
 ufw allow out 443/tcp
-ufw allow out 53
+ufw allow out 53/udp
 
 ufw --force enable
 
@@ -105,30 +122,37 @@ ufw --force enable
 # DNS
 ###########################################
 echo ""
-echo "[3/4] Configuring DNS..."
+echo "[4/5] Configuring DNS (WAN DHCP)..."
 
-# Disable systemd-resolved if present
-if systemctl is-active --quiet systemd-resolved 2>/dev/null; then
-    systemctl stop systemd-resolved
-    systemctl disable systemd-resolved
-    rm -f /etc/resolv.conf
+# Mesh uses WAN DHCP-provided DNS. On reruns, undo older script behavior that
+# pinned /etc/resolv.conf to the internal gateway and restore systemd-resolved.
+chattr -i /etc/resolv.conf 2>/dev/null || true
+if systemctl list-unit-files 2>/dev/null | grep -q '^systemd-resolved\.service'; then
+    systemctl enable systemd-resolved >/dev/null 2>&1 || true
+    systemctl restart systemd-resolved >/dev/null 2>&1 || true
+    if [ -e /run/systemd/resolve/stub-resolv.conf ]; then
+        ln -sf /run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+    elif [ -e /run/systemd/resolve/resolv.conf ]; then
+        ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
+    fi
+else
+    echo "WARNING: systemd-resolved not available; ensure WAN DHCP DNS is configured."
 fi
-
-cat > /etc/resolv.conf << EOF
-# Gateway DNS
-nameserver $GATEWAY_IP
-EOF
-
-chattr +i /etc/resolv.conf 2>/dev/null || true
 
 ###########################################
 # NTP (chrony)
 ###########################################
 echo ""
-echo "[4/4] Configuring NTP client (chrony)..."
+echo "[5/5] Configuring NTP client (chrony)..."
+
+# Temporary HTTP egress for Ubuntu apt repositories during initial setup.
+ufw allow out 80/tcp
 
 apt-get update
 apt-get install -y chrony
+
+# Close HTTP egress again; later updates are controlled via update.sh.
+printf 'y\n' | ufw delete allow out 80/tcp >/dev/null 2>&1 || true
 
 cat > /etc/chrony/chrony.conf << EOF
 # Use internal NTP server
