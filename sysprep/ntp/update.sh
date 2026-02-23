@@ -1,46 +1,64 @@
 #!/bin/sh
 # NTP VM update control
-# Enable/disable HTTP/HTTPS/DNS outbound to gateway for updates.
+# Enable/disable package update egress via internal gateway.
 #
 # Usage: update.sh --enable | --disable | --run
 #
 # CONFIGURATION - Edit these values for your environment:
 INT_IF="<INTERNAL_INTERFACE>"  # e.g., eth1
+GATEWAY_IP="<GATEWAY_IP>"      # e.g., 172.22.22.4
 
 ###########################################
 
 # Validate configuration
-if echo "$INT_IF" | grep -q "^<"; then
-    echo "ERROR: Edit this script and set INT_IF"
+if echo "$INT_IF" | grep -q "^<" || echo "$GATEWAY_IP" | grep -q "^<"; then
+    echo "ERROR: Edit this script and set INT_IF, GATEWAY_IP"
     exit 1
 fi
 
 RULE_HTTPS="-o $INT_IF -p tcp --dport 443 -j ACCEPT"
 RULE_HTTP="-o $INT_IF -p tcp --dport 80 -j ACCEPT"
-RULE_DNS="-o $INT_IF -p udp --dport 53 -j ACCEPT"
+# DNS is actually destined to the router/gateway on the internal interface.
+# Use a comment marker so --disable removes only this update rule (not baseline DNS).
+RULE_DNS_UDP="-o $INT_IF -p udp -d $GATEWAY_IP --dport 53 -m comment --comment ntp-update-dns -j ACCEPT"
+RULE_DNS_TCP="-o $INT_IF -p tcp -d $GATEWAY_IP --dport 53 -m comment --comment ntp-update-dns -j ACCEPT"
+
+remove_temp_update_default() {
+    while ip route show default | grep -q "via $GATEWAY_IP dev $INT_IF"; do
+        ip route del default via "$GATEWAY_IP" dev "$INT_IF" 2>/dev/null || break
+    done
+    ip route del default via "$GATEWAY_IP" dev "$INT_IF" metric 1 2>/dev/null || true
+}
 
 enable_rules() {
     iptables -A OUTPUT $RULE_HTTPS
     iptables -A OUTPUT $RULE_HTTP
-    iptables -A OUTPUT $RULE_DNS
+    iptables -A OUTPUT $RULE_DNS_UDP
+    iptables -A OUTPUT $RULE_DNS_TCP
+    remove_temp_update_default
+    ip route add default via "$GATEWAY_IP" dev "$INT_IF" metric 1 2>/dev/null || \
+        ip route replace default via "$GATEWAY_IP" dev "$INT_IF" metric 1
 }
 
 disable_rules() {
     iptables -D OUTPUT $RULE_HTTPS 2>/dev/null
     iptables -D OUTPUT $RULE_HTTP 2>/dev/null
-    iptables -D OUTPUT $RULE_DNS 2>/dev/null
+    iptables -D OUTPUT $RULE_DNS_UDP 2>/dev/null
+    iptables -D OUTPUT $RULE_DNS_TCP 2>/dev/null
+    remove_temp_update_default
 }
 
 case "$1" in
     --enable)
-        echo "Enabling HTTP/HTTPS/DNS outbound via gateway..."
+        echo "Enabling DNS/HTTP/HTTPS outbound via internal gateway..."
         enable_rules
-        echo "Done. Also enable on gateway, then run 'apk update && apk upgrade'"
+        echo "Done. Internal gateway route preferred for updates (metric 1)."
+        echo "Also enable on gateway, then run 'apk update && apk upgrade'"
         ;;
     --disable)
-        echo "Disabling HTTP/HTTPS/DNS outbound via gateway..."
+        echo "Disabling DNS/HTTP/HTTPS outbound via internal gateway..."
         disable_rules
-        echo "Done."
+        echo "Done. Temporary internal update route removed."
         ;;
     --run)
         echo "Enabling updates, running apk, then disabling..."
@@ -52,7 +70,7 @@ case "$1" in
     *)
         echo "Usage: $0 --enable | --disable | --run"
         echo ""
-        echo "  --enable   Open HTTP/HTTPS/DNS to gateway for updates"
+        echo "  --enable   Open DNS (to gateway) + HTTP/HTTPS via internal gateway for updates"
         echo "  --disable  Close after done"
         echo "  --run      Open, update, upgrade, close (all-in-one)"
         echo ""
