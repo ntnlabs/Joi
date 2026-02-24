@@ -1,0 +1,47 @@
+pki:
+  ca: /etc/nebula/ca.crt
+  cert: /etc/nebula/host.crt
+  key: /etc/nebula/host.key
+
+static_host_map:
+  "10.42.0.1": ["172.22.22.1:4242"]
+
+lighthouse:
+  am_lighthouse: false
+  interval: 60
+  hosts:
+    - "10.42.0.1"
+
+listen:
+  # Internal-only Nebula transport (no WAN)
+  host: 172.22.22.2
+  port: 4242
+
+punchy:
+  # No NAT traversal needed on the internal /29
+  punch: false
+
+tun:
+  dev: tun0
+  mtu: 1300
+
+logging:
+  level: info
+  format: text
+
+firewall:
+  outbound:
+    - port: any
+      proto: icmp
+      host: any
+    - port: 8444
+      proto: tcp
+      group: gateway
+
+  inbound:
+    - port: any
+      proto: icmp
+      host: any
+    - port: 8443
+      proto: tcp
+      group: gateway
