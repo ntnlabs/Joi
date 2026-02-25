@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Optional
 
 import httpx
 
-from hmac_auth import create_request_headers, get_shared_secret
+from hmac_auth import create_request_headers, get_shared_secret, HMAC_SECRET_FILE
 
 if TYPE_CHECKING:
     from policy_manager import PolicyManager
@@ -26,8 +26,6 @@ logger = logging.getLogger(__name__)
 # Grace period: old key remains valid for this duration after rotation
 DEFAULT_GRACE_PERIOD_MS = 60_000  # 60 seconds
 
-# Environment file where HMAC secret is stored
-JOI_ENV_FILE = Path("/etc/default/joi-api")
 MESH_ROTATION_ENDPOINT = "/config/sync"
 
 
@@ -152,9 +150,9 @@ class HMACRotator:
             # Store new secret in memory for immediate use
             self._current_secret = new_secret
 
-            # Update local env file (for persistence across restarts)
-            if not self._update_env_file(new_secret_hex):
-                return False, "failed_to_update_env"
+            # Update local secret file (for persistence across restarts)
+            if not self._update_secret_file(new_secret_hex):
+                return False, "failed_to_update_secret_file"
 
             # Update state
             self._last_rotation_time = time.time()
@@ -163,39 +161,29 @@ class HMACRotator:
             logger.info("HMAC rotation complete, new key active in memory")
             return True, "ok"
 
-    def _update_env_file(self, new_secret_hex: str) -> bool:
-        """Update HMAC secret in env file."""
-        if not JOI_ENV_FILE.exists():
-            logger.warning("Env file not found: %s", JOI_ENV_FILE)
-            return False
+    def _update_secret_file(self, new_secret_hex: str) -> bool:
+        """Update HMAC secret in writable secret file.
 
+        Writes to /var/lib/joi/hmac.secret (or JOI_HMAC_SECRET_FILE env).
+        This location is writable by the joi user, unlike /etc/default/.
+        """
         try:
-            content = JOI_ENV_FILE.read_text()
-            lines = content.splitlines()
-            new_lines = []
-            found = False
+            # Ensure parent directory exists
+            HMAC_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-            for line in lines:
-                if line.startswith("JOI_HMAC_SECRET="):
-                    new_lines.append(f'JOI_HMAC_SECRET="{new_secret_hex}"')
-                    found = True
-                else:
-                    new_lines.append(line)
+            # Atomic write: temp file then rename
+            temp_file = HMAC_SECRET_FILE.with_suffix(".tmp")
+            temp_file.write_text(new_secret_hex + "\n")
+            temp_file.rename(HMAC_SECRET_FILE)
 
-            if not found:
-                new_lines.append(f'JOI_HMAC_SECRET="{new_secret_hex}"')
+            # Set restrictive permissions (owner read/write only)
+            HMAC_SECRET_FILE.chmod(0o600)
 
-            JOI_ENV_FILE.write_text("\n".join(new_lines) + "\n")
-            logger.info("Updated HMAC secret in %s", JOI_ENV_FILE)
-
-            # Note: The new secret takes effect on next restart.
-            # For immediate effect, we'd need to reload the module-level HMAC_SECRET.
-            # Since we track _old_secret for grace period, this is handled.
-
+            logger.info("Updated HMAC secret in %s", HMAC_SECRET_FILE)
             return True
 
         except Exception as e:
-            logger.error("Failed to update env file: %s", e)
+            logger.error("Failed to update secret file %s: %s", HMAC_SECRET_FILE, e)
             return False
 
     def get_current_secret(self) -> Optional[bytes]:

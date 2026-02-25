@@ -15,6 +15,7 @@ from forwarder import forward_to_joi, forward_document_to_joi, set_config_state
 from hmac_auth import (
     InMemoryNonceStore,
     get_shared_secret,
+    save_shared_secret,
     verify_hmac,
     verify_timestamp,
     DEFAULT_TIMESTAMP_TOLERANCE_MS,
@@ -287,7 +288,7 @@ class ConfigState:
             return self._privacy_mode
 
     def _handle_hmac_rotation(self, rotation: Dict[str, Any]) -> None:
-        """Handle HMAC key rotation from config push (in-memory only)."""
+        """Handle HMAC key rotation from config push."""
         new_secret_hex = rotation.get("new_secret")
         grace_period_ms = rotation.get("grace_period_ms", 60000)
 
@@ -297,8 +298,11 @@ class ConfigState:
             self._old_hmac_secret = self._new_hmac_secret if self._new_hmac_secret else get_shared_secret()
             self._old_hmac_expires = time.time() + (grace_period_ms / 1000)
 
-            # Store new secret in memory (no disk - mesh is stateless)
+            # Store new secret in memory for immediate use
             self._new_hmac_secret = bytes.fromhex(new_secret_hex)
+
+            # Persist to file for restart recovery
+            save_shared_secret(new_secret_hex)
 
             logger.info(
                 "HMAC rotation: new key active, old key valid for %ds",

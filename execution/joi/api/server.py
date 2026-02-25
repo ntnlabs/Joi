@@ -9,11 +9,12 @@ import re
 import sys
 import threading
 import time
+import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from zoneinfo import ZoneInfo
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Add api/ and parent dirs to path for imports
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # api/
@@ -50,6 +51,84 @@ from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
 
 logger = logging.getLogger("joi.api")
+
+
+# --- Input/Output Sanitization (Prompt Injection Defense) ---
+
+# Max input length (defense in depth - mesh enforces 1500 at transport)
+MAX_INPUT_LENGTH = 1500
+# Max output length (Signal message limit is ~2000)
+MAX_OUTPUT_LENGTH = 2000
+
+# Markers that should never appear in LLM output (system prompt leakage)
+OUTPUT_LEAK_MARKERS = [
+    "CRITICAL INSTRUCTIONS",
+    "NEVER OVERRIDE",
+    "=== YOUR PERSONALITY ===",
+    "=== CONTEXT FORMAT ===",
+    "<system>",
+    "</system>",
+    "<|system|>",
+    "<|assistant|>",
+]
+
+
+def sanitize_input(text: str) -> str:
+    """
+    Sanitize user input before processing.
+
+    Removes control characters (keeps newlines and valid UTF-8 like Slovak ľščťž).
+    Normalizes Unicode to prevent homoglyph attacks.
+    """
+    if not text:
+        return ""
+
+    # Length limit
+    if len(text) > MAX_INPUT_LENGTH:
+        text = text[:MAX_INPUT_LENGTH]
+
+    # Remove null bytes and ASCII control chars (0x00-0x1F except newline/tab, and 0x7F)
+    # This preserves all UTF-8 characters (Slovak, Cyrillic, CJK, emoji, etc.)
+    cleaned = []
+    for c in text:
+        code = ord(c)
+        # Keep: tab (9), newline (10), carriage return (13), and printable (32+)
+        # Remove: other control chars (0-8, 11-12, 14-31, 127)
+        if code == 9 or code == 10 or code == 13 or code >= 32:
+            if code != 127:  # DEL character
+                cleaned.append(c)
+    text = ''.join(cleaned)
+
+    # Unicode normalization (NFKC) - prevents homoglyph attacks
+    # e.g., "ⅰgnore" (Roman numeral ⅰ) becomes "ignore"
+    text = unicodedata.normalize('NFKC', text)
+
+    return text
+
+
+def validate_output(response: str) -> Tuple[bool, str]:
+    """
+    Validate LLM output before sending to user.
+
+    Checks for leaked system prompt markers.
+    Returns (is_valid, sanitized_response_or_fallback).
+    """
+    if not response:
+        return True, ""
+
+    # Length limit
+    if len(response) > MAX_OUTPUT_LENGTH:
+        response = response[:MAX_OUTPUT_LENGTH]
+        logger.debug("Output truncated to %d chars", MAX_OUTPUT_LENGTH)
+
+    # Check for leaked system prompt markers
+    response_lower = response.lower()
+    for marker in OUTPUT_LEAK_MARKERS:
+        if marker.lower() in response_lower:
+            logger.warning("Output validation failed: leaked marker '%s'", marker)
+            return False, "I had trouble formulating a response. Could you rephrase that?"
+
+    return True, response
 
 
 # --- Priority Message Queue ---
@@ -1685,11 +1764,11 @@ def receive_message(msg: InboundMessage):
         logger.info("Skipping unsupported message type=%s", msg.content.type)
         return InboundResponse(status="ok", message_id=msg.message_id)
 
-    user_text = msg.content.text.strip()
+    user_text = sanitize_input(msg.content.text.strip())
     if not user_text:
         return InboundResponse(status="ok", message_id=msg.message_id)
 
-    # Store inbound message (always store for context)
+    # Store inbound message (always store for context, sanitized)
     memory.store_message(
         message_id=msg.message_id,
         direction="inbound",
@@ -1827,6 +1906,11 @@ def receive_message(msg: InboundMessage):
             logger.warning("LLM returned empty response")
             response_text = "I'm not sure how to respond to that."
 
+        # Validate output (prompt injection defense)
+        is_valid, response_text = validate_output(response_text)
+        if not is_valid:
+            logger.warning("Output validation failed, using fallback response")
+
         clean_response = response_text.replace("\r", "").replace("\n", " ")[:50]
         logger.info("LLM response: %s", clean_response)
 
@@ -1921,6 +2005,12 @@ Just the response, no explanation."""
     # Keep it short
     if len(text) > 50:
         return None
+
+    # Validate output (even short responses)
+    is_valid, text = validate_output(text)
+    if not is_valid:
+        return None
+
     return text
 
 
