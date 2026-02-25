@@ -693,8 +693,27 @@ class GroupMembershipCache:
         self._last_refresh: float = 0
         self._lock = threading.Lock()
         self._refreshing = False  # Single-flight flag to prevent thundering herd
-        # Configurable via env (default 15 min)
-        self._refresh_minutes = int(os.getenv("JOI_MEMBERSHIP_REFRESH_MINUTES", "15"))
+        # Configurable via env (default 15 min, bounds: 1-1440)
+        self._refresh_minutes = self._validate_refresh_minutes(
+            os.getenv("JOI_MEMBERSHIP_REFRESH_MINUTES", "15")
+        )
+
+    @staticmethod
+    def _validate_refresh_minutes(value: str) -> int:
+        """Validate refresh minutes config with reasonable bounds."""
+        try:
+            minutes = int(value)
+        except ValueError:
+            logger.warning("Invalid JOI_MEMBERSHIP_REFRESH_MINUTES '%s', using default 15", value)
+            return 15
+        # Bounds: 1 minute (aggressive) to 1440 minutes (24 hours)
+        if minutes < 1:
+            logger.warning("JOI_MEMBERSHIP_REFRESH_MINUTES %d too low, using minimum 1", minutes)
+            return 1
+        if minutes > 1440:
+            logger.warning("JOI_MEMBERSHIP_REFRESH_MINUTES %d too high, using maximum 1440", minutes)
+            return 1440
+        return minutes
 
     def _should_be_active(self) -> bool:
         """Only run when the attack vector exists (business mode + dm_group_knowledge)."""
