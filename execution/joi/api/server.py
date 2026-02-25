@@ -735,15 +735,30 @@ class GroupMembershipCache:
 
         if time_since_refresh > refresh_seconds:
             if not self.refresh():
-                # Refresh failed - use stale cache if available, else fail closed
+                # Refresh failed - use stale cache if available, else fallback to policy
                 if has_cache:
                     logger.warning("Using stale membership cache (refresh failed)")
                 else:
-                    logger.warning("No membership cache and refresh failed - denying group access")
-                    return []
+                    logger.warning("No membership cache and refresh failed - falling back to policy participants")
+                    return self._fallback_from_policy(user_id)
 
         with self._lock:
             return [gid for gid, members in self._cache.items() if user_id in members]
+
+    def _fallback_from_policy(self, user_id: str) -> List[str]:
+        """Fallback: check policy participants if signal-cli fails.
+
+        Uses the participants list from policy group config when live
+        membership from signal-cli is unavailable.
+        """
+        groups = policy_manager.get_groups()
+        result = [
+            gid for gid, cfg in groups.items()
+            if user_id in cfg.get("participants", [])
+        ]
+        if result:
+            logger.info("Policy fallback found %d groups for user %s", len(result), user_id[:8])
+        return result
 
     def get_cache_age_seconds(self) -> float:
         """Get age of cache in seconds."""
