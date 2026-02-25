@@ -1,0 +1,29 @@
+[Unit]
+Description=Nebula overlay network
+Documentation=https://github.com/slackhq/nebula
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/nebula -config /etc/nebula/config.yml
+Restart=on-failure
+RestartSec=2s
+
+# Nebula manages a TUN interface and needs root privileges.
+User=root
+Group=root
+
+# Basic hardening while keeping tun/network access working.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ProtectKernelModules=true
+ReadWritePaths=/etc/nebula
+
+[Install]
+WantedBy=multi-user.target
+
