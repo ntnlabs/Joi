@@ -49,7 +49,12 @@ def sanitize_scope(scope: str) -> str:
     Signal group IDs may contain base64 characters (/, +, =) that are
     problematic for filesystem paths. This ensures consistent sanitization
     between storage and retrieval.
+
+    Returns empty string for invalid input (None, empty, whitespace-only).
     """
+    # Handle invalid input
+    if not scope or not scope.strip():
+        return ""
     # Replace path-dangerous characters
     result = scope.replace("/", "_").replace("\\", "_").replace("+", "-")
     # Collapse any resulting ".." sequences (path traversal defense)
@@ -288,19 +293,27 @@ def _read_knowledge_file(path: Path) -> List[str]:
 def get_user_knowledge_scopes(user_id: str) -> List[str]:
     """Get knowledge scopes for a user. Always includes own scope (sanitized)."""
     safe_user_id = sanitize_scope(user_id)
+    if not safe_user_id:
+        return []  # Invalid user_id
     user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.knowledge"
     extra_scopes = _read_knowledge_file(user_file)
     # Always include own scope first (sanitized for RAG lookup consistency)
-    return [safe_user_id] + [sanitize_scope(s) for s in extra_scopes if s != user_id]
+    # Filter out empty scopes from extra_scopes
+    extra = [sanitize_scope(s) for s in extra_scopes if s and s != user_id]
+    return [safe_user_id] + [s for s in extra if s]
 
 
 def get_group_knowledge_scopes(group_id: str) -> List[str]:
     """Get knowledge scopes for a group. Always includes own scope (sanitized)."""
     safe_group_id = sanitize_scope(group_id)
+    if not safe_group_id:
+        return []  # Invalid group_id
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.knowledge"
     extra_scopes = _read_knowledge_file(group_file)
     # Always include own scope first (sanitized for RAG lookup consistency)
-    return [safe_group_id] + [sanitize_scope(s) for s in extra_scopes if s != group_id]
+    # Filter out empty scopes from extra_scopes
+    extra = [sanitize_scope(s) for s in extra_scopes if s and s != group_id]
+    return [safe_group_id] + [s for s in extra if s]
 
 
 def get_knowledge_scopes_for_conversation(
@@ -338,7 +351,7 @@ def get_knowledge_scopes_for_conversation(
     if is_business_mode and dm_group_knowledge_enabled and get_user_groups:
         for group_id in get_user_groups(sender_id):
             safe_group_id = sanitize_scope(group_id)
-            if safe_group_id not in scopes:
+            if safe_group_id and safe_group_id not in scopes:
                 scopes.append(safe_group_id)
 
     return scopes
