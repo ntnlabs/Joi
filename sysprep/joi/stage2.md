@@ -111,3 +111,4 @@ ping -c2 10.42.0.1
 - Joi Nebula is internal-only in this deployment (no WAN exposure).
 - Joi DNS and general egress policy still follow stage 1 (via gateway/hopper).
 - Joi default route may be intentionally non-persistent in this environment (fail-closed). Add it manually before Nebula startup if required for your current test plan.
+- Docker + Ollama setup is stage 3 (`sysprep/joi/stage3.md`).
