@@ -92,7 +92,7 @@ if ! id -u joi >/dev/null 2>&1; then
 fi
 
 mkdir -p /var/lib/joi
-mkdir -p /opt/joi
+mkdir -p /opt/Joi
 
 # Data dir must be writable by the joi service user.
 chown joi:joi /var/lib/joi

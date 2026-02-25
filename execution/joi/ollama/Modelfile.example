@@ -2,7 +2,7 @@
 #
 # USAGE:
 #   1. Copy to Modelfile and customize if needed
-#   2. Build: docker exec joi-brain ollama create joi -f /opt/joi/execution/joi/ollama/Modelfile
+#   2. Build: docker exec joi-brain ollama create joi -f /opt/Joi/execution/joi/ollama/Modelfile
 #   3. Test:  docker exec -it joi-brain ollama run joi "Hey"
 #   4. Use:   Set JOI_OLLAMA_MODEL=joi or create .model files for per-user selection
 #
