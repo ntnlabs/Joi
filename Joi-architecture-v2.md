@@ -2244,7 +2244,7 @@ The encryption key is:
 
 ```bash
 # 1. Generate encryption key (run as root)
-cd /opt/joi/execution/joi/scripts
+cd /opt/Joi/execution/joi/scripts
 sudo ./generate-memory-key.sh joi    # 'joi' is the service user
 
 # 2. Verify permissions
@@ -2268,7 +2268,7 @@ If you have an existing unencrypted database:
 sudo systemctl stop joi-api
 
 # 2. Generate key if not already done
-cd /opt/joi/execution/joi/scripts
+cd /opt/Joi/execution/joi/scripts
 sudo ./generate-memory-key.sh joi
 
 # 3. Run migration script

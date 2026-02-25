@@ -424,7 +424,7 @@ Actions:
 # /etc/systemd/system/joi-api.service
 [Service]
 User=joi
-WorkingDirectory=/opt/joi/execution/joi
+WorkingDirectory=/opt/Joi/execution/joi
 ExecStart=/usr/bin/python3 -m api.server
 EnvironmentFile=/etc/default/joi-api
 ```
@@ -435,8 +435,8 @@ EnvironmentFile=/etc/default/joi-api
 # /etc/systemd/system/mesh-signal-worker.service
 [Service]
 User=signal
-WorkingDirectory=/opt/joi/execution/mesh/proxy
-ExecStart=/opt/joi/execution/mesh/proxy/run-worker.sh
+WorkingDirectory=/opt/Joi/execution/mesh/proxy
+ExecStart=/opt/Joi/execution/mesh/proxy/run-worker.sh
 EnvironmentFile=/etc/default/mesh-signal-worker
 ProtectSystem=strict
 ReadWritePaths=/var/lib/signal-cli

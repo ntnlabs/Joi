@@ -113,7 +113,7 @@ cp ollama/Modelfile.example ollama/Modelfile
 vim ollama/Modelfile
 
 # 2. Build the model
-docker exec joi-brain ollama create joi -f /opt/joi/execution/joi/ollama/Modelfile
+docker exec joi-brain ollama create joi -f /opt/Joi/execution/joi/ollama/Modelfile
 
 # 3. Test it
 docker exec -it joi-brain ollama run joi "Hey"
