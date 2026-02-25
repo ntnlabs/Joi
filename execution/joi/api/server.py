@@ -681,12 +681,18 @@ class GroupMembershipCache:
 
     Only active when business mode + dm_group_knowledge enabled.
     Queries mesh /groups/members endpoint to get real group membership.
+
+    Security properties:
+    - Fail-closed: If membership cannot be verified, access is denied
+    - Single-flight refresh: Prevents thundering herd on cache expiry
+    - Dual ID matching: Handles both phone numbers and UUIDs from signal-cli
     """
 
     def __init__(self):
         self._cache: Dict[str, List[str]] = {}  # group_id -> [member_ids]
         self._last_refresh: float = 0
         self._lock = threading.Lock()
+        self._refreshing = False  # Single-flight flag to prevent thundering herd
         # Configurable via env (default 15 min)
         self._refresh_minutes = int(os.getenv("JOI_MEMBERSHIP_REFRESH_MINUTES", "15"))
 
@@ -695,8 +701,8 @@ class GroupMembershipCache:
         return (policy_manager.is_business_mode() and
                 policy_manager.is_dm_group_knowledge_enabled())
 
-    def refresh(self) -> bool:
-        """Fetch fresh membership from mesh (only if active)."""
+    def _refresh_unlocked(self) -> bool:
+        """Fetch fresh membership from mesh. Caller must NOT hold lock."""
         if not self._should_be_active():
             return False  # Skip - not needed
 
@@ -713,6 +719,8 @@ class GroupMembershipCache:
                 resp.raise_for_status()
                 data = resp.json().get("data", {})
 
+            # Only update cache if we got valid data (at least structure is correct)
+            # Empty dict is valid (no groups), but we still mark refresh as successful
             with self._lock:
                 self._cache = data
                 self._last_refresh = time.time()
@@ -722,43 +730,111 @@ class GroupMembershipCache:
             logger.warning("Failed to refresh group membership: %s", e)
             return False
 
+    def refresh(self) -> bool:
+        """Public refresh method with single-flight protection."""
+        # Single-flight: only one thread refreshes at a time
+        with self._lock:
+            if self._refreshing:
+                # Another thread is already refreshing, wait for it
+                return len(self._cache) > 0  # Return True if we have cache to use
+            self._refreshing = True
+
+        try:
+            return self._refresh_unlocked()
+        finally:
+            with self._lock:
+                self._refreshing = False
+
     def get_user_groups(self, user_id: str) -> List[str]:
-        """Get list of groups where user is a member."""
+        """Get list of groups where user is a member.
+
+        Security: Fail-closed - if membership cannot be verified, returns empty list.
+        """
         if not self._should_be_active():
             return []  # Feature disabled
 
-        # Auto-refresh if stale
+        if not user_id:
+            return []  # Invalid input
+
         refresh_seconds = self._refresh_minutes * 60
+
+        # Hold lock for entire check-and-return to fix TOCTOU
         with self._lock:
             time_since_refresh = time.time() - self._last_refresh
+            is_stale = time_since_refresh > refresh_seconds
             has_cache = len(self._cache) > 0
 
-        if time_since_refresh > refresh_seconds:
-            if not self.refresh():
-                # Refresh failed - use stale cache if available, else fallback to policy
+            # If cache is fresh, use it directly
+            if not is_stale and has_cache:
+                return self._find_user_groups_unlocked(user_id)
+
+            # Need refresh - check if another thread is already doing it
+            if self._refreshing:
+                # Another thread is refreshing, use current cache (stale or not)
                 if has_cache:
-                    logger.warning("Using stale membership cache (refresh failed)")
+                    logger.debug("Using cache while another thread refreshes")
+                    return self._find_user_groups_unlocked(user_id)
                 else:
-                    logger.warning("No membership cache and refresh failed - falling back to policy participants")
-                    return self._fallback_from_policy(user_id)
+                    # No cache and refresh in progress - fail closed
+                    logger.warning("No cache available, refresh in progress - denying access (fail-closed)")
+                    return []
 
+            # We need to refresh - mark ourselves as refreshing
+            self._refreshing = True
+
+        # Release lock during HTTP call to avoid blocking other threads
+        try:
+            refresh_success = self._refresh_unlocked()
+        finally:
+            with self._lock:
+                self._refreshing = False
+
+        # Now check results with lock held
         with self._lock:
-            return [gid for gid, members in self._cache.items() if user_id in members]
+            if refresh_success:
+                return self._find_user_groups_unlocked(user_id)
 
-    def _fallback_from_policy(self, user_id: str) -> List[str]:
-        """Fallback: check policy participants if signal-cli fails.
+            # Refresh failed
+            if has_cache:
+                logger.warning("Using stale membership cache (refresh failed)")
+                return self._find_user_groups_unlocked(user_id)
+            else:
+                # FAIL-CLOSED: No cache and refresh failed - deny access
+                logger.warning("No membership cache and refresh failed - denying group access (fail-closed)")
+                return []
 
-        Uses the participants list from policy group config when live
-        membership from signal-cli is unavailable.
+    def _find_user_groups_unlocked(self, user_id: str) -> List[str]:
+        """Find groups for user. Caller must hold lock.
+
+        Handles ID format mismatch by checking if user_id matches any member ID.
+        Signal-cli may return phone numbers (+1234567890) or UUIDs.
         """
-        groups = policy_manager.get_groups()
-        result = [
-            gid for gid, cfg in groups.items()
-            if user_id in cfg.get("participants", [])
-        ]
-        if result:
-            logger.info("Policy fallback found %d groups for user %s", len(result), user_id[:8])
+        result = []
+        for gid, members in self._cache.items():
+            for member_id in members:
+                # Direct match (most common case)
+                if user_id == member_id:
+                    result.append(gid)
+                    break
+                # Normalized phone number match (handle +/no-+ variations)
+                if self._phone_numbers_match(user_id, member_id):
+                    result.append(gid)
+                    break
         return result
+
+    @staticmethod
+    def _phone_numbers_match(id1: str, id2: str) -> bool:
+        """Check if two IDs match as phone numbers (handling +prefix variations)."""
+        # Only compare if both look like phone numbers
+        if not (id1 and id2):
+            return False
+        # Normalize: strip + prefix for comparison
+        n1 = id1.lstrip('+')
+        n2 = id2.lstrip('+')
+        # Only match if they're numeric (phone numbers, not UUIDs)
+        if n1.isdigit() and n2.isdigit():
+            return n1 == n2
+        return False
 
     def get_cache_age_seconds(self) -> float:
         """Get age of cache in seconds."""

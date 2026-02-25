@@ -533,25 +533,33 @@ def _list_groups() -> List[Dict]:
 
 @flask_app.route("/groups/members", methods=["GET"])
 def get_group_members():
-    """Return all groups with their member lists."""
+    """Return all groups with their member lists.
+
+    Returns both phone numbers and UUIDs for each member to handle
+    ID format mismatches between signal-cli and message sender IDs.
+    """
     groups = _list_groups()
     result = {}
     for g in groups:
         group_id = g.get("id")
         members = g.get("members", [])
         if group_id and members:
-            # Extract member phone numbers/UUIDs from member objects
-            member_ids = []
+            # Extract ALL member identifiers (both number and uuid)
+            # This ensures matching works regardless of ID format
+            member_ids = set()  # Use set to deduplicate
             for m in members:
                 if isinstance(m, dict):
-                    # Prefer number over uuid
-                    member_id = m.get("number") or m.get("uuid")
-                    if member_id:
-                        member_ids.append(member_id)
-                elif isinstance(m, str):
-                    member_ids.append(m)
+                    # Add both number and uuid if available
+                    number = m.get("number")
+                    uuid_id = m.get("uuid")
+                    if number:
+                        member_ids.add(number)
+                    if uuid_id:
+                        member_ids.add(uuid_id)
+                elif isinstance(m, str) and m:
+                    member_ids.add(m)
             if member_ids:
-                result[group_id] = member_ids
+                result[group_id] = list(member_ids)
     return jsonify({"status": "ok", "data": result})
 
 
