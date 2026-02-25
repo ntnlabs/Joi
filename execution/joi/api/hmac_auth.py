@@ -13,6 +13,7 @@ import logging
 import os
 import time
 import uuid
+from pathlib import Path
 from typing import Optional, Tuple
 
 logger = logging.getLogger("joi.hmac_auth")
@@ -23,13 +24,36 @@ DEFAULT_TIMESTAMP_TOLERANCE_MS = 300_000
 # Nonce retention: 15 minutes (must be > 2x timestamp tolerance)
 NONCE_RETENTION_MS = 15 * 60 * 1000
 
+# Writable secret file (for rotation persistence)
+HMAC_SECRET_FILE = Path(os.getenv("JOI_HMAC_SECRET_FILE", "/var/lib/joi/hmac.secret"))
+
 
 def get_shared_secret() -> Optional[bytes]:
-    """Get the shared secret from environment."""
+    """Get the shared secret from file or environment.
+
+    Priority:
+    1. Secret file (writable, updated by rotation)
+    2. Environment variable (initial setup / fallback)
+    """
+    # Try file first (supports rotation)
+    if HMAC_SECRET_FILE.exists():
+        try:
+            secret = HMAC_SECRET_FILE.read_text().strip()
+            if secret:
+                # Secret file contains hex-encoded bytes
+                return bytes.fromhex(secret)
+        except Exception as e:
+            logger.warning("Failed to read HMAC secret file: %s", e)
+
+    # Fall back to environment
     secret = os.getenv("JOI_HMAC_SECRET")
     if not secret:
         return None
-    return secret.encode("utf-8")
+    # Env var may be hex or raw string - try hex first
+    try:
+        return bytes.fromhex(secret)
+    except ValueError:
+        return secret.encode("utf-8")
 
 
 def generate_nonce() -> str:

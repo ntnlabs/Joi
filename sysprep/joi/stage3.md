@@ -10,7 +10,7 @@ This stage remains manual on purpose. Joi is a physical host in this deployment 
 ## What Stage 3 Does
 
 - Validate Joi network prerequisites for package/container pulls
-- Install Docker (if not already installed)
+- Install Docker Engine (`docker.io`) if not already installed
 - Install NVIDIA container runtime/toolkit pieces (if required)
 - Run or update the Ollama container workload
 - Verify GPU visibility and model runtime
@@ -54,7 +54,15 @@ This should open temporary outbound:
 
 ## 3. Install / Update Docker and Related Packages
 
-Use your existing deployment method (Ubuntu repo or Docker upstream repo), then verify:
+This stage standardizes on Ubuntu `docker.io` for now (not Podman).
+
+Install/update Docker Engine and verify:
+
+```bash
+apt install -y docker.io
+```
+
+Then verify:
 
 ```bash
 docker --version
@@ -120,3 +128,4 @@ docker exec <ollama_container_name> ollama list
 
 - Joi is intended to route external traffic via gateway/hopper, not direct WAN.
 - If GNOME is active on Joi, `Xorg` / `gnome-shell` may consume VRAM on the NVIDIA GPU. That is separate from Ollama correctness, but relevant for capacity/performance.
+- Podman is not covered by this stage walkthrough.

@@ -14,6 +14,7 @@ import os
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Optional, Tuple
 
 logger = logging.getLogger("mesh.hmac_auth")
@@ -24,17 +25,54 @@ DEFAULT_TIMESTAMP_TOLERANCE_MS = 300_000
 # Nonce retention: 15 minutes
 NONCE_RETENTION_MS = 15 * 60 * 1000
 
+# Writable secret file (for rotation persistence across restart)
+HMAC_SECRET_FILE = Path(os.getenv("MESH_HMAC_SECRET_FILE", "/var/lib/signal-cli/hmac.secret"))
+
 
 def get_shared_secret() -> Optional[bytes]:
     """
-    Get the shared secret from environment variable.
+    Get the shared secret from file or environment.
 
-    Mesh is stateless - no key file fallback. Rotated keys are in-memory only.
+    Priority:
+    1. Secret file (persisted after rotation)
+    2. Environment variable (initial setup / fallback)
     """
+    # Try file first (supports rotation persistence)
+    if HMAC_SECRET_FILE.exists():
+        try:
+            secret = HMAC_SECRET_FILE.read_text().strip()
+            if secret:
+                return bytes.fromhex(secret)
+        except Exception as e:
+            logger.warning("Failed to read HMAC secret file: %s", e)
+
+    # Fall back to environment
     secret = os.getenv("MESH_HMAC_SECRET")
     if secret:
-        return secret.encode("utf-8")
+        try:
+            return bytes.fromhex(secret)
+        except ValueError:
+            return secret.encode("utf-8")
     return None
+
+
+def save_shared_secret(secret_hex: str) -> bool:
+    """
+    Persist rotated secret to file for restart recovery.
+
+    Called by ConfigState when receiving HMAC rotation from Joi.
+    """
+    try:
+        HMAC_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
+        temp_file = HMAC_SECRET_FILE.with_suffix(".tmp")
+        temp_file.write_text(secret_hex + "\n")
+        temp_file.rename(HMAC_SECRET_FILE)
+        HMAC_SECRET_FILE.chmod(0o600)
+        logger.info("Persisted rotated HMAC secret to %s", HMAC_SECRET_FILE)
+        return True
+    except Exception as e:
+        logger.error("Failed to persist HMAC secret: %s", e)
+        return False
 
 
 def generate_nonce() -> str:

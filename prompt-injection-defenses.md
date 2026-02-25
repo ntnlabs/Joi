@@ -1,8 +1,18 @@
 # Joi Prompt Injection Defenses
 
 > Concrete defenses against prompt injection attacks.
-> Version: 1.0 (Draft)
-> Last updated: 2026-02-04
+> Version: 1.1
+> Last updated: 2026-02-25
+
+## Implementation Status
+
+| Layer | Status | Notes |
+|-------|--------|-------|
+| Layer 1: Input Sanitization | ✅ Implemented | `sanitize_input()` in server.py |
+| Layer 2: Prompt Structure | ⏳ Partial | No XML tagging (unclear benefit for Llama 3.1) |
+| Layer 3: LLM Config | ✅ Implemented | Llama 3.1 8B via Ollama |
+| Layer 4: Output Validation | ✅ Implemented | `validate_output()` in server.py |
+| Layer 5: Policy Engine | ✅ Implemented | Rate limits, sender allowlist |
 
 ## Threat Overview
 
@@ -86,20 +96,39 @@ Still, we defend in depth.
 
 ## Layer 1: Input Sanitization
 
-### 1.1 Signal Messages
+### 1.1 Signal Messages (Implemented)
 
-Signal messages from the owner are relatively trusted, but still sanitized.
+All incoming messages are sanitized before processing.
 
 ```python
-def sanitize_signal_message(text: str) -> str:
+# From execution/joi/api/server.py
+
+MAX_INPUT_LENGTH = 1500  # Matches mesh transport limit
+
+def sanitize_input(text: str) -> str:
+    """
+    Sanitize user input before processing.
+    Removes control characters (keeps newlines and valid UTF-8 like Slovak ľščťž).
+    Normalizes Unicode to prevent homoglyph attacks.
+    """
+    if not text:
+        return ""
+
     # Length limit
-    if len(text) > 4096:
-        text = text[:4096] + "... [truncated]"
+    if len(text) > MAX_INPUT_LENGTH:
+        text = text[:MAX_INPUT_LENGTH]
 
-    # Remove null bytes and control characters (except newlines)
-    text = ''.join(c for c in text if c == '\n' or (ord(c) >= 32 and ord(c) != 127))
+    # Remove null bytes and ASCII control chars (0x00-0x1F except newline/tab, and 0x7F)
+    # Preserves all UTF-8 characters (Slovak, Cyrillic, CJK, emoji, etc.)
+    cleaned = []
+    for c in text:
+        code = ord(c)
+        if code == 9 or code == 10 or code == 13 or code >= 32:
+            if code != 127:
+                cleaned.append(c)
+    text = ''.join(cleaned)
 
-    # Normalize unicode (prevent homoglyph attacks)
+    # Unicode normalization (NFKC) - prevents homoglyph attacks
     text = unicodedata.normalize('NFKC', text)
 
     return text
@@ -107,7 +136,7 @@ def sanitize_signal_message(text: str) -> str:
 
 **We do NOT:**
 - Strip "ignore" or "system" words (would break legitimate messages)
-- Heavily filter content (owner is trusted)
+- Block suspicious patterns in input (causes false positives)
 
 ### 1.2 openhab Events (Critical)
 
@@ -394,89 +423,59 @@ Llama 3.1 8B is relatively robust against prompt injection compared to smaller m
 
 ---
 
-## Layer 4: Output Validation
+## Layer 4: Output Validation (Implemented)
 
 ### 4.1 Response Validation
 
 ```python
-def validate_llm_response(response: str) -> tuple[bool, str]:
-    """
-    Validate LLM response before sending.
-    Returns (is_valid, sanitized_response or error_message)
-    """
+# From execution/joi/api/server.py
 
-    # Length check
-    if len(response) > 2048:
-        response = response[:2048] + "..."
+MAX_OUTPUT_LENGTH = 2000  # Signal message limit
+
+# Markers that should never appear in LLM output (system prompt leakage)
+OUTPUT_LEAK_MARKERS = [
+    "CRITICAL INSTRUCTIONS",
+    "NEVER OVERRIDE",
+    "=== YOUR PERSONALITY ===",
+    "=== CONTEXT FORMAT ===",
+    "<system>",
+    "</system>",
+    "<|system|>",
+    "<|assistant|>",
+]
+
+def validate_output(response: str) -> Tuple[bool, str]:
+    """
+    Validate LLM output before sending to user.
+    Checks for leaked system prompt markers.
+    Returns (is_valid, sanitized_response_or_fallback).
+    """
+    if not response:
+        return True, ""
+
+    # Length limit
+    if len(response) > MAX_OUTPUT_LENGTH:
+        response = response[:MAX_OUTPUT_LENGTH]
 
     # Check for leaked system prompt markers
-    leaked_markers = [
-        "CRITICAL INSTRUCTIONS",
-        "NEVER OVERRIDE",
-        "=== YOUR PERSONALITY ===",
-        "<home_status>",
-        "<user_message>",
-    ]
-    for marker in leaked_markers:
-        if marker in response:
-            return False, "Response contained system information"
-
-    # Check for attempts to impersonate system
-    if re.search(r'^(SYSTEM|Assistant|Human):', response, re.MULTILINE | re.IGNORECASE):
-        return False, "Response attempted role impersonation"
-
-    # Check for executable-looking content
-    executable_patterns = [
-        r'```(bash|sh|python|cmd)',  # Code blocks with execution
-        r'rm -rf',
-        r'sudo ',
-        r'curl .* \| (ba)?sh',
-    ]
-    for pattern in executable_patterns:
-        if re.search(pattern, response, re.IGNORECASE):
-            return False, "Response contained suspicious executable content"
-
-    # Check for URLs (Joi shouldn't be sharing links)
-    if re.search(r'https?://(?!signal\.)', response):
-        # Allow signal.* links, block others
-        return False, "Response contained external URL"
+    response_lower = response.lower()
+    for marker in OUTPUT_LEAK_MARKERS:
+        if marker.lower() in response_lower:
+            logger.warning("Output validation failed: leaked marker '%s'", marker)
+            return False, "I had trouble formulating a response. Could you rephrase that?"
 
     return True, response
-
-
-def sanitize_llm_response(response: str) -> str:
-    """Light sanitization of valid response."""
-
-    # Remove any accidental XML tags that slipped through
-    response = re.sub(r'</?(?:user_message|home_status|conversation|user_facts)>', '', response)
-
-    # Normalize whitespace
-    response = re.sub(r'\n{3,}', '\n\n', response)
-    response = response.strip()
-
-    return response
 ```
 
-### 4.2 Suspicious Response Handling
+### 4.2 What We Do NOT Block
 
-```python
-def handle_response(llm_response: str) -> str:
-    """Process LLM response with validation."""
+Unlike the original spec, we intentionally **do not** block:
+- External URLs (user may legitimately ask for links)
+- Code blocks (user may ask for code help)
+- Role impersonation patterns (too many false positives)
+- Executable patterns (Joi is text-only, no action capability)
 
-    is_valid, result = validate_llm_response(llm_response)
-
-    if not is_valid:
-        # Log the issue
-        log_security_event("output_validation_failed", {
-            "reason": result,
-            "response_preview": llm_response[:200]
-        })
-
-        # Return safe fallback
-        return "I'm having trouble formulating a response. Could you rephrase that?"
-
-    return sanitize_llm_response(result)
-```
+This is a pragmatic choice: Joi's action space is limited to text messages, and blocking these causes more harm (broken legitimate use) than good.
 
 ---
 
@@ -619,52 +618,59 @@ def test_injection_resistance():
 
 ---
 
-## Configuration
+## Configuration (Actual)
 
-```yaml
-# prompt-security.yaml
+Settings are hardcoded in `execution/joi/api/server.py`:
 
-input_sanitization:
-  signal_transport_limit: 1500   # Enforced at mesh (user-facing Signal limit)
-  signal_api_max_length: 4096    # API payload limit (includes metadata)
-  event_description_max_length: 200
-  normalize_unicode: true
+```python
+# Input limits
+MAX_INPUT_LENGTH = 1500      # Matches mesh transport limit
 
-output_validation:
-  max_response_length: 2048
-  block_external_urls: true
-  block_code_blocks: true
-  detect_system_leakage: true
+# Output limits
+MAX_OUTPUT_LENGTH = 2000     # Signal message limit
 
-suspicious_patterns:
-  # Patterns that trigger alert (not block) in user messages
-  - "ignore.*instruction"
-  - "system.*prompt"
-  - "you are now"
-  - "pretend to be"
+# Leak detection markers
+OUTPUT_LEAK_MARKERS = [
+    "CRITICAL INSTRUCTIONS",
+    "NEVER OVERRIDE",
+    "=== YOUR PERSONALITY ===",
+    "=== CONTEXT FORMAT ===",
+    "<system>",
+    "</system>",
+    "<|system|>",
+    "<|assistant|>",
+]
+```
 
-security_logging:
-  log_validation_failures: true
-  log_suspicious_patterns: true
-  alert_on_repeated_attempts: true
-  attempts_threshold: 3
+Mesh-side limits (in policy):
+```json
+{
+  "validation": {
+    "max_text_length": 1500,
+    "max_timestamp_skew_ms": 300000
+  }
+}
 ```
 
 ---
 
 ## Summary
 
-| Layer | Defense | Purpose |
-|-------|---------|---------|
-| 1. Input | Sanitization, templates | Prevent malicious data reaching LLM |
-| 2. Prompt | Clear delimiters, hierarchy | LLM understands what's instruction vs content |
-| 3. LLM | Model selection, config | Robust model less susceptible |
-| 4. Output | Validation, filtering | Catch if injection succeeded |
-| 5. Policy | Rate limits, allowlists | Contain damage even if bypassed |
+| Layer | Defense | Status | Purpose |
+|-------|---------|--------|---------|
+| 1. Input | `sanitize_input()` | ✅ | Control chars, unicode normalization, length |
+| 2. Prompt | XML delimiters | ⏳ | Not implemented (unclear benefit) |
+| 3. LLM | Llama 3.1 8B | ✅ | Robust model, instruction-following |
+| 4. Output | `validate_output()` | ✅ | Detect system prompt leakage |
+| 5. Policy | Rate limits, allowlists | ✅ | Contain damage even if bypassed |
 
-**Key principles:**
-- Never trust input, always sanitize
-- Structured templates for openhab (never raw data)
-- Clear separation between instructions and user content
-- Validate output before acting
+**Implemented principles:**
+- Sanitize all input (control chars, unicode normalization)
+- Validate output for leaked system markers
 - Rate limits as last line of defense
+- Sender allowlists (only vetted users can interact)
+
+**Deliberately not implemented:**
+- XML tagging of user content (adds complexity, unclear benefit for modern LLMs)
+- URL/code block blocking in output (breaks legitimate use cases)
+- Suspicious pattern alerting (too noisy, false positives)
