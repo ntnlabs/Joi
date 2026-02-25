@@ -719,12 +719,15 @@ class GroupMembershipCache:
                 resp.raise_for_status()
                 data = resp.json().get("data", {})
 
-            # Only update cache if we got valid data (at least structure is correct)
-            # Empty dict is valid (no groups), but we still mark refresh as successful
             with self._lock:
-                self._cache = data
+                # Don't replace valid cache with empty response (signal-cli might be restarting)
+                # Only update if: new data has groups, OR we have no cache yet
+                if data or not self._cache:
+                    self._cache = data
+                    logger.debug("Refreshed group membership: %d groups", len(data))
+                else:
+                    logger.warning("Ignoring empty membership response (keeping %d cached groups)", len(self._cache))
                 self._last_refresh = time.time()
-            logger.debug("Refreshed group membership: %d groups", len(data))
             return True
         except Exception as e:
             logger.warning("Failed to refresh group membership: %s", e)

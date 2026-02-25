@@ -268,6 +268,64 @@ LLM Services are compute services on isolated VMs (imagegen, websearch, tts, cod
 3. Isolated VM: Only websearch has internet; Joi cannot reach internet
 4. Audit: All queries logged; anomaly detection for exfiltration patterns
 
+### 4.6 Business Mode (DM Group Knowledge Access)
+
+Business mode allows DM users to access RAG knowledge from Signal groups they're members of. This creates a specific attack surface.
+
+| ID | Threat | Impact | Likelihood | Risk |
+|----|--------|--------|------------|------|
+| BM1 | `/groups/members` endpoint exposes social graph | Attacker with HMAC learns all group memberships | Low | **High** |
+| BM2 | Stale membership cache grants access after removal | Ex-member accesses group knowledge via DM | Medium | Medium |
+| BM3 | ID format mismatch bypasses membership check | User denied legitimate access | Low | Medium |
+| BM4 | signal-cli unavailable, access denied | Legitimate users can't access group knowledge | Medium | Low |
+
+**Mitigations:**
+- BM1: **ACCEPTED RISK** - HMAC authentication is sole protection. If HMAC compromised, attacker learns group membership graph. This is by design; endpoint required for feature.
+- BM2: Cache refresh interval (default 15 min) limits stale window. Fail-closed: when membership unverifiable, access denied.
+- BM3: Mesh returns both phone number AND UUID for each member; client normalizes phone number formats.
+- BM4: Fail-closed design - if signal-cli is down and no cache, access denied (security over availability).
+
+**Security Design Decisions:**
+- **Companion mode:** DM group knowledge is hardcoded OFF. Config value ignored.
+- **Business mode:** DM group knowledge is configurable via `dm_group_knowledge` flag.
+- **Fail-closed:** When membership cannot be verified (no cache, signal-cli down), access is denied rather than granted.
+- **No policy fallback:** Static policy participants are NOT used as fallback - only live signal-cli membership is trusted.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Business Mode Access Flow                     │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│   DM User ──► Is Business Mode? ──► NO ──► Own scope only       │
+│                     │                                            │
+│                    YES                                           │
+│                     │                                            │
+│              dm_group_knowledge? ──► NO ──► Own scope only      │
+│                     │                                            │
+│                    YES                                           │
+│                     │                                            │
+│         ┌──────────────────────┐                                │
+│         │ Membership Cache     │                                │
+│         │ (from signal-cli)    │                                │
+│         └──────────┬───────────┘                                │
+│                    │                                            │
+│            Cache fresh? ──► YES ──► Return user's groups        │
+│                    │                                            │
+│                   NO                                            │
+│                    │                                            │
+│         Refresh from mesh ──► Success ──► Return user's groups  │
+│                    │                                            │
+│                 Failed                                          │
+│                    │                                            │
+│         Has stale cache? ──► YES ──► Use stale (with warning)   │
+│                    │                                            │
+│                   NO                                            │
+│                    │                                            │
+│         FAIL-CLOSED: Return [] (deny access)                    │
+│                                                                  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
 ### 4.7 LLM and Agent Behavior
 
 | ID | Threat | Impact | Likelihood | Risk |
