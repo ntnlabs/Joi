@@ -7,6 +7,10 @@ JOI_BIND_HOST=0.0.0.0
 JOI_BIND_PORT=8443
 #JOI_LOG_LEVEL=DEBUG
 
+# --- Message Limits ---
+# Max output length (Signal supports up to ~6000 chars)
+#JOI_MAX_OUTPUT_LENGTH=2000
+
 # --- LLM ---
 JOI_OLLAMA_URL=http://localhost:11434
 JOI_OLLAMA_MODEL=llama3

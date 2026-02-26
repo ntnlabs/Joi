@@ -58,9 +58,9 @@ logger = logging.getLogger("joi.api")
 # --- Input/Output Sanitization (Prompt Injection Defense) ---
 
 # Max input length (defense in depth - mesh enforces 1500 at transport)
-MAX_INPUT_LENGTH = 1500
-# Max output length (Signal message limit is ~2000)
-MAX_OUTPUT_LENGTH = 2000
+MAX_INPUT_LENGTH = int(os.getenv("JOI_MAX_INPUT_LENGTH", "1500"))
+# Max output length (Signal supports up to ~6000 chars, but long messages can be annoying)
+MAX_OUTPUT_LENGTH = int(os.getenv("JOI_MAX_OUTPUT_LENGTH", "2000"))
 
 # Markers that should never appear in LLM output (system prompt leakage)
 OUTPUT_LEAK_MARKERS = [
@@ -120,8 +120,9 @@ def validate_output(response: str) -> Tuple[bool, str]:
 
     # Length limit
     if len(response) > MAX_OUTPUT_LENGTH:
+        original_len = len(response)
         response = response[:MAX_OUTPUT_LENGTH]
-        logger.debug("Output truncated to %d chars", MAX_OUTPUT_LENGTH)
+        logger.info("Output truncated: %d -> %d chars", original_len, MAX_OUTPUT_LENGTH)
 
     # Check for leaked system prompt markers
     response_lower = response.lower()
@@ -2193,9 +2194,10 @@ def _build_enriched_prompt(
         )
         if rag_context:
             parts.append("\n\n" + rag_context)
-            logger.debug("Added RAG context for query: %s (scopes: %s)", user_message[:50], knowledge_scopes)
+            rag_chars = len(rag_context)
+            logger.info("RAG: added %d chars of context", rag_chars)
         else:
-            logger.debug("No RAG results for query: %s (scopes: %s)", user_message[:50], knowledge_scopes)
+            logger.info("RAG: no matches for query")
 
     # Add current datetime if time awareness is enabled
     if TIME_AWARENESS_ENABLED:
