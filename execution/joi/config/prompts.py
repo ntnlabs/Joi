@@ -238,6 +238,29 @@ def get_prompt_source(conversation_type: str, conversation_id: str, sender_id: s
     return "default"
 
 
+def get_model_source(conversation_type: str, conversation_id: str, sender_id: str) -> str:
+    """
+    Get the source of the model for logging purposes.
+
+    Returns: 'group', 'user', or 'none'
+    """
+    if conversation_type == "group":
+        safe_group_id = sanitize_scope(conversation_id)
+        group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.model"
+        if group_file.exists():
+            return "group"
+    else:
+        safe_user_id = sanitize_scope(sender_id)
+        user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.model"
+        if user_file.exists():
+            return "user"
+    # Check default.model
+    default_file = PROMPTS_DIR / "default.model"
+    if default_file.exists():
+        return "default"
+    return "none"
+
+
 # --- Context Size Configuration ---
 
 def _read_context_file(path: Path) -> Optional[int]:
