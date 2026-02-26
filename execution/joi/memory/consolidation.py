@@ -279,16 +279,30 @@ Corrected JSON:"""
 
         if store and valid_facts:
             # Store facts under conversation_id (works for both DMs and groups)
-            # Facts include person's name in the value, so no need to separate by sender
             convo_id = messages[0].conversation_id if messages else ""
+
+            # Detect if this is a group (not a phone number)
+            is_group = convo_id and not convo_id.startswith("+")
 
             stored_count = 0
             for fact in valid_facts:
                 try:
+                    fact_key = fact["key"]
+                    fact_value = str(fact["value"])
+
+                    # For groups, try to extract name from value and prefix key
+                    if is_group and fact_value:
+                        # Extract first word as likely name (e.g., "Peter is a developer" -> "peter")
+                        first_word = fact_value.split()[0].lower() if fact_value.split() else ""
+                        # Only use if it looks like a name (capitalized in original, reasonable length)
+                        original_first = fact_value.split()[0] if fact_value.split() else ""
+                        if original_first and original_first[0].isupper() and 2 <= len(first_word) <= 20:
+                            fact_key = f"{first_word}_{fact['key']}"
+
                     self.memory.store_fact(
                         category=fact["category"],
-                        key=fact["key"],
-                        value=str(fact["value"]),
+                        key=fact_key,
+                        value=fact_value,
                         confidence=float(fact.get("confidence", 0.8)),
                         source="inferred",
                         conversation_id=convo_id,
