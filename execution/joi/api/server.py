@@ -1462,7 +1462,8 @@ def startup_event():
     hmac_status = "HMAC enabled" if HMAC_ENABLED else "HMAC DISABLED - set JOI_HMAC_SECRET"
     scheduler_status = f"scheduler enabled (interval: {SCHEDULER_INTERVAL}s)" if scheduler else "scheduler disabled"
     time_status = f"time awareness enabled (tz: {TIME_AWARENESS_TIMEZONE})" if TIME_AWARENESS_ENABLED else "time awareness disabled"
-    logger.info("Joi API started: %s, %s, %s", hmac_status, scheduler_status, time_status)
+    privacy_status = "privacy ON" if policy_manager.is_privacy_mode() else "privacy off"
+    logger.info("Joi API started: %s, %s, %s, %s", hmac_status, scheduler_status, time_status, privacy_status)
     _init_fingerprints()
 
 
