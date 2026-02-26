@@ -1145,8 +1145,13 @@ Return ONLY valid JSON, nothing else:"""
                     source="stated",
                     conversation_id=conversation_id,
                 )
-                logger.info("Saved stated fact for %s: %s.%s = %s",
-                           conversation_id or "global", result["category"], result["key"], result["value"])
+                if policy_manager.is_privacy_mode():
+                    logger.info("Saved stated fact for %s: %s.%s [privacy mode]",
+                               conversation_id[:8] + "..." if conversation_id else "global",
+                               result["category"], result["key"])
+                else:
+                    logger.info("Saved stated fact for %s: %s.%s = %s",
+                               conversation_id or "global", result["category"], result["key"], result["value"])
                 return result["value"]
     except json.JSONDecodeError as e:
         logger.debug("Failed to parse remember response: %s", e)
@@ -2024,8 +2029,13 @@ def receive_message(msg: InboundMessage):
         if not is_valid:
             logger.warning("Output validation failed, using fallback response")
 
-        clean_response = response_text.replace("\r", "").replace("\n", " ")[:50]
-        logger.info("LLM response: %s", clean_response)
+        # Log response (redact content in privacy mode)
+        response_len = len(response_text)
+        if policy_manager.is_privacy_mode():
+            logger.info("LLM response generated (%d chars) [privacy mode]", response_len)
+        else:
+            clean_response = response_text.replace("\r", "").replace("\n", " ")[:50]
+            logger.info("LLM response: %s... (%d chars)", clean_response, response_len)
 
         # Send response back via mesh
         outbound_message_id = str(uuid.uuid4())
