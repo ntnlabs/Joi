@@ -1095,7 +1095,9 @@ def main() -> None:
                     # Add store_only flag to payload for Joi
                     if decision.store_only:
                         payload["store_only"] = True
-                        logger.info("Forwarding message_id=%s to Joi (store_only)", payload.get("message_id"))
+                        # Show full sender for store_only - admin needs ID to add them to participants
+                        sender = payload.get("sender", {}).get("transport_id", "unknown")
+                        logger.info("Forwarding message_id=%s to Joi (store_only, sender=%s)", payload.get("message_id"), sender)
                     else:
                         logger.info("Forwarding message_id=%s to Joi", payload.get("message_id"))
 
