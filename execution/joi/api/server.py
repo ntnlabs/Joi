@@ -2206,11 +2206,8 @@ def _build_enriched_prompt(
         except Exception:
             tz = ZoneInfo("UTC")
         now = datetime.now(tz)
-        # Compact format: "Tuesday, 14:30, Europe/Bratislava"
-        day_name = now.strftime('%A')
-        time_str = now.strftime('%H:%M')
-        tz_name = TIME_AWARENESS_TIMEZONE  # Full timezone name
-        human_datetime = f"{day_name}, {time_str}, {tz_name}"
+        # Format: "Wednesday, February 26, 2026, 14:30, Europe/Bratislava"
+        human_datetime = now.strftime('%A, %B %d, %Y, %H:%M') + f", {TIME_AWARENESS_TIMEZONE}"
         parts.append(f"\n\nCurrent date and time: {human_datetime}")
 
     return "".join(parts)
