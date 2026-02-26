@@ -2188,15 +2188,12 @@ def _build_enriched_prompt(
         except Exception:
             tz = ZoneInfo("UTC")
         now = datetime.now(tz)
-        # Human-readable format: "Tuesday, 1. January 1995, 14:30 CEST"
+        # Compact format: "Tuesday, 14:30, Europe/Bratislava"
         day_name = now.strftime('%A')
-        day_num = now.day  # No leading zero
-        month_name = now.strftime('%B')
-        year = now.year
         time_str = now.strftime('%H:%M')
-        tz_abbr = now.strftime('%Z') or TIME_AWARENESS_TIMEZONE
-        human_datetime = f"{day_name}, {day_num}. {month_name} {year}, {time_str} {tz_abbr}"
-        parts.append(f"\n\nCurrent time: {human_datetime}")
+        tz_name = TIME_AWARENESS_TIMEZONE  # Full timezone name
+        human_datetime = f"{day_name}, {time_str}, {tz_name}"
+        parts.append(f"\n\nCurrent date and time: {human_datetime}")
 
     return "".join(parts)
 
