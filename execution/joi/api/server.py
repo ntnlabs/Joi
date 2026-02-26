@@ -1091,13 +1091,21 @@ def _has_remember_keywords(text: str) -> bool:
     return any(kw in text_lower for kw in REMEMBER_KEYWORDS)
 
 
-def _detect_and_extract_fact(text: str, conversation_id: str = "") -> Optional[str]:
+def _detect_and_extract_fact(
+    text: str,
+    conversation_id: str = "",
+    sender_id: str = "",
+    sender_name: str = "",
+    is_group: bool = False,
+) -> Optional[str]:
     """
     Use LLM to detect if user wants something remembered, and extract it.
 
     Hybrid approach:
     1. Quick keyword check (cheap)
     2. LLM detection and extraction (accurate)
+
+    For groups, includes sender info in the fact key to distinguish between users.
 
     Returns the saved fact value, or None if nothing to remember.
     """
@@ -1140,10 +1148,18 @@ Return ONLY valid JSON, nothing else:"""
                 return None
 
             if all(k in result for k in ["category", "key", "value"]):
+                # For groups, prefix key with sender name to distinguish users
+                fact_key = result["key"]
+                fact_value = str(result["value"])
+                if is_group and sender_name:
+                    # Use sender name in key: "peter_name" instead of "name"
+                    safe_name = sender_name.lower().replace(" ", "_")[:20]
+                    fact_key = f"{safe_name}_{result['key']}"
+
                 memory.store_fact(
                     category=result["category"],
-                    key=result["key"],
-                    value=str(result["value"]),
+                    key=fact_key,
+                    value=fact_value,
                     confidence=0.95,  # High confidence - user explicitly stated
                     source="stated",
                     conversation_id=conversation_id,
@@ -1151,11 +1167,11 @@ Return ONLY valid JSON, nothing else:"""
                 if policy_manager.is_privacy_mode():
                     logger.info("Saved stated fact for %s: %s.%s [privacy mode]",
                                conversation_id[:8] + "..." if conversation_id else "global",
-                               result["category"], result["key"])
+                               result["category"], fact_key)
                 else:
                     logger.info("Saved stated fact for %s: %s.%s = %s",
-                               conversation_id or "global", result["category"], result["key"], result["value"])
-                return result["value"]
+                               conversation_id or "global", result["category"], fact_key, fact_value)
+                return fact_value
     except json.JSONDecodeError as e:
         logger.debug("Failed to parse remember response: %s", e)
     except Exception as e:
@@ -1910,14 +1926,20 @@ def receive_message(msg: InboundMessage):
 
     # All facts (explicit and inferred) use conversation_id as key
     # - DMs: phone number (per-user scope)
-    # - Groups: group_id (group scope, facts include person names)
+    # - Groups: group_id (group scope, facts include person names in key)
     fact_key = msg.conversation.id
 
     # Check for "remember this" requests (only from allowed senders)
     # Uses hybrid approach: keyword filter + LLM detection/extraction
     saved_fact = None
     if not msg.store_only:
-        saved_fact = _detect_and_extract_fact(user_text, conversation_id=fact_key)
+        saved_fact = _detect_and_extract_fact(
+            user_text,
+            conversation_id=fact_key,
+            sender_id=msg.sender.transport_id,
+            sender_name=msg.sender.display_name or "",
+            is_group=(msg.conversation.type == "group"),
+        )
 
     # Determine if we should respond
     should_respond = True
