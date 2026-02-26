@@ -219,6 +219,25 @@ def get_prompt_for_conversation_optional(conversation_type: str, conversation_id
         return _read_prompt_file(user_file)
 
 
+def get_prompt_source(conversation_type: str, conversation_id: str, sender_id: str) -> str:
+    """
+    Get the source of the prompt for logging purposes.
+
+    Returns: 'group', 'user', or 'default'
+    """
+    if conversation_type == "group":
+        safe_group_id = sanitize_scope(conversation_id)
+        group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.txt"
+        if group_file.exists():
+            return "group"
+    else:
+        safe_user_id = sanitize_scope(sender_id)
+        user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.txt"
+        if user_file.exists():
+            return "user"
+    return "default"
+
+
 # --- Context Size Configuration ---
 
 def _read_context_file(path: Path) -> Optional[int]:

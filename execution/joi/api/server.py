@@ -40,6 +40,7 @@ from config import (
     load_settings,
     get_prompt_for_conversation,
     get_prompt_for_conversation_optional,
+    get_prompt_source,
     get_model_for_conversation,
     get_context_for_conversation,
     get_knowledge_scopes_for_conversation,
@@ -2008,7 +2009,9 @@ def receive_message(msg: InboundMessage):
         # Generate response from LLM with conversation context
         model_info = f"model={custom_model}" if custom_model else "model=default"
         context_info = f"context={context_size}" if custom_context else f"context={context_size}(default)"
-        logger.info("Generating LLM response with %d messages (%s, %s)", len(chat_messages), model_info, context_info)
+        prompt_source = get_prompt_source(msg.conversation.type, msg.conversation.id, msg.sender.transport_id)
+        prompt_info = f"prompt={prompt_source}"
+        logger.info("Generating LLM response with %d messages (%s, %s, %s)", len(chat_messages), model_info, prompt_info, context_info)
         llm_response = llm.chat(messages=chat_messages, system=enriched_prompt, model=custom_model)
 
         if llm_response.error:
