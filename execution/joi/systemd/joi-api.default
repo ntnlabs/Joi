@@ -11,6 +11,9 @@ JOI_BIND_PORT=8443
 JOI_OLLAMA_URL=http://localhost:11434
 JOI_OLLAMA_MODEL=llama3
 JOI_LLM_TIMEOUT=180
+# Context window size (0 = use model default, typically 2048-4096)
+# Higher = more context but more VRAM. 4096 is safe for 12GB cards.
+#JOI_OLLAMA_NUM_CTX=4096
 
 # --- Mesh ---
 # Mesh proxy URL (Nebula IP)
