@@ -48,7 +48,7 @@ Goal:
 Examples in this repo:
 
 - `mesh/stage2.md` (Nebula)
-- `joi/stage2.md` (Nebula)
+- `joi/stage2.md` (Nebula + Docker/NVIDIA runtime substrate)
 
 ## Stage 3: Project/Application Deployment
 
@@ -57,7 +57,7 @@ Stage 3 is Joi-project-specific deployment and integration.
 Typical content:
 
 - `signal-cli` account linking / daemon workflow for Mesh transport integration
-- Docker + Ollama deployment on Joi
+- Ollama deployment on Joi (after Docker/NVIDIA runtime is already in place)
 - Joi API / Mesh worker service deployment
 - app config/env/secrets wiring (HMAC, endpoints, service units)
 - end-to-end integration checks
@@ -71,7 +71,7 @@ Goal:
 Examples in this repo:
 
 - `mesh/stage3.md` (`signal-cli`)
-- `joi/stage3.md` (Docker + Ollama)
+- `joi/stage3.md` (Ollama deployment)
 
 ## Practical Rule
 
