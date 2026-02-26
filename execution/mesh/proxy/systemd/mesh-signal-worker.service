@@ -18,6 +18,8 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/signal-cli
+RuntimeDirectory=signal-cli
+RuntimeDirectoryMode=0755
 UMask=0077
 
 [Install]

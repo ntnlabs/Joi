@@ -1,4 +1,4 @@
-# Mesh Stage 2 Walkthrough (Nebula)
+# Mesh Stage 2 Walkthrough (Nebula + signal-cli Runtime)
 
 Use this after `sysprep/mesh/setup.sh` (stage 1) is complete.
 
@@ -9,6 +9,9 @@ This is a manual walkthrough on purpose. It avoids brittle download URLs and kee
 - Install Nebula from an upstream binary (not Ubuntu `nebula` package `1.6.1`)
 - Install a simple `nebula.service` unit (`sysprep/nebula/nebula.service`)
 - Install Mesh Nebula config template (`sysprep/mesh/config.yml`)
+- Install `signal-cli` (upstream release package or standalone binary)
+- Link a Signal device
+- Validate `signal-cli` daemon socket runtime
 
 ## Why Not Ubuntu Nebula Package
 
@@ -27,6 +30,7 @@ Use upstream Nebula binary (`>= 1.7` recommended).
     - `ca.crt`
     - `host.crt` (mesh cert)
     - `host.key` (mesh key)
+  - `signal-cli` package or standalone binary (for mesh stage 2 runtime setup)
 
 ## Files in This Repo Used by Stage 2
 
@@ -102,10 +106,91 @@ After Joi Nebula is also configured, verify:
 ping -c2 10.42.0.10
 ```
 
-## 6. Post-Checks
+## 6. Install signal-cli Runtime
+
+Prepare the service user/runtime directory (idempotent):
+
+```bash
+id signal || useradd -r -s /usr/sbin/nologin signal
+mkdir -p /var/lib/signal-cli
+chown -R signal:signal /var/lib/signal-cli
+chmod 0700 /var/lib/signal-cli
+```
+
+Install `signal-cli` using one of the two supported approaches:
+
+### Option A: Upstream `.deb` package
+
+```bash
+./update.sh --enable
+apt install -y /root/signal-cli_*.deb
+./update.sh --disable
+```
+
+### Option B: Standalone extracted binary (single binary layout)
+
+```bash
+mkdir -p /opt/signal-cli/bin
+install -m 0755 /path/to/signal-cli /opt/signal-cli/bin/signal-cli
+chown root:root /opt/signal-cli/bin/signal-cli
+ln -sfn /opt/signal-cli/bin/signal-cli /usr/local/bin/signal-cli
+```
+
+Verify install:
+
+```bash
+signal-cli --version
+sudo -u signal /usr/local/bin/signal-cli --version
+```
+
+## 7. Link Signal Device
+
+Run as `signal` user so account state lands with correct ownership:
+
+```bash
+sudo -u signal /usr/local/bin/signal-cli --config /var/lib/signal-cli link -n ai-proxy-cli
+```
+
+If using terminal QR workflow, keep the `link` process alive and render the exact URI in another terminal:
+
+```bash
+printf '%s\n' "sgnl://linkdevice?uuid=...&pub_key=..." | qrencode -t ansiutf8
+```
+
+## 8. Validate `signal-cli` Daemon Socket (Stage 2 Endpoint)
+
+Create runtime socket directory (tmpfs-backed, may not exist after reboot):
+
+```bash
+mkdir -p /var/run/signal-cli
+chown signal:signal /var/run/signal-cli
+chmod 0755 /var/run/signal-cli
+```
+
+Start daemon manually as `signal` user:
+
+```bash
+sudo -u signal /usr/local/bin/signal-cli --config /var/lib/signal-cli daemon --socket /var/run/signal-cli/socket
+```
+
+In another shell verify:
+
+```bash
+ls -l /var/run/signal-cli/socket
+```
+
+This is the Stage 2 completion point on Mesh:
+- Nebula up
+- signal-cli linked
+- signal-cli daemon socket working
+
+## 9. Post-Checks
 
 - `systemctl status nebula`
 - `ip a show tun0`
+- `sudo -u signal /usr/local/bin/signal-cli --version`
+- `ls -ld /var/lib/signal-cli`
+- `ls -l /var/run/signal-cli/socket` (during daemon test)
 
 ## Notes
 
@@ -113,4 +198,5 @@ ping -c2 10.42.0.10
 - Internal router/hopper is for SSH management source and internal segmentation.
 - Internal NTP server is the only NTP source for Mesh.
 - Mesh DNS policy in stage 1 is UDP-only (`53/udp`).
-- `signal-cli` installation/linking is stage 3 (`sysprep/mesh/stage3.md`).
+- Run all `signal-cli` operations as user `signal`.
+- Mesh worker deployment and Joi integration begin in stage 3 (`sysprep/mesh/stage3.md`).
