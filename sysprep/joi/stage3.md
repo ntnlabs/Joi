@@ -119,10 +119,13 @@ docker exec ollama nvidia-smi
 
 ## 7. Pull / Verify Model in Ollama
 
-Example model pull (adjust to your actual model choice):
+Primary business-mode deployment model for this host:
+- `phi4:14b-q4_K_M`
+
+Pull and verify the model:
 
 ```bash
-docker exec ollama ollama pull llama3
+docker exec ollama ollama pull phi4:14b-q4_K_M
 docker exec ollama ollama list
 ```
 
@@ -130,19 +133,18 @@ Quick generation smoke test:
 
 ```bash
 time curl -s http://localhost:11434/api/generate \
-  -d '{"model":"llama3","prompt":"hi","stream":false}' | head -c 200
+  -d '{"model":"phi4:14b-q4_K_M","prompt":"hi","stream":false}' | head -c 200
 ```
 
 ## 8. Configure Joi Model Selection (Important)
 
 Set the Joi model in `/etc/default/joi-api` to the exact model pulled into Ollama.
 
-Example (lab-proven model):
+Example (business-mode deployment on A2000):
 
 ```bash
-docker exec ollama ollama pull mannix/llama3.1-8b-abliterated
 docker exec -it ollama ollama list
-sed -i 's/JOI_OLLAMA_MODEL=.*/JOI_OLLAMA_MODEL=mannix\\/llama3.1-8b-abliterated/' /etc/default/joi-api
+sed -i 's/JOI_OLLAMA_MODEL=.*/JOI_OLLAMA_MODEL=phi4:14b-q4_K_M/' /etc/default/joi-api
 ```
 
 Optional context window override (append only if not already managed elsewhere):
@@ -215,4 +217,5 @@ cd /opt/Joi/execution/joi/scripts
 - Docker/NVIDIA runtime substrate setup belongs to stage 2.
 - Nebula installation/configuration belongs to stage 2. Do not repeat Nebula steps here.
 - Standard path in this repo is `/opt/Joi` (uppercase `J`).
+- Current business-mode model target for this host: `phi4:14b-q4_K_M`.
 - Do not open ad-hoc UFW ports manually for package installs on Joi; use `./update.sh --enable` / `--disable` so temporary egress stays consistent.

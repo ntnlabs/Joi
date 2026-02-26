@@ -179,6 +179,12 @@ In another shell verify:
 ls -l /var/run/signal-cli/socket
 ```
 
+Note:
+
+- In `signal-cli 0.13.24`, the daemon socket is for `jsonRpc`.
+- Top-level commands like `send` may not support `--socket` in this build.
+- For stage 2, a working daemon socket is sufficient. JSON-RPC behavior is exercised in mesh stage 3 via the worker.
+
 This is the Stage 2 completion point on Mesh:
 - Nebula up
 - signal-cli linked
