@@ -1080,13 +1080,15 @@ def main() -> None:
                     decision = policy.evaluate_inbound(payload)
                     if not decision.allowed:
                         sender = payload.get("sender", {}).get("transport_id", "unknown")
-                        sender_display = _redact_pii(sender, "phone")
                         if decision.reason == "unknown_sender":
-                            logger.info("Dropping unknown sender=%s", sender_display)
+                            # Don't redact unknown senders - admin needs full ID to add them
+                            logger.info("Dropping unknown sender=%s", sender)
                         elif decision.reason.startswith("rate_limited"):
+                            sender_display = _redact_pii(sender, "phone")
                             logger.warning("Rate limited sender=%s reason=%s", sender_display, decision.reason)
                             _send_rate_limit_notice(payload)
                         else:
+                            sender_display = _redact_pii(sender, "phone")
                             logger.warning("Dropping sender=%s reason=%s", sender_display, decision.reason)
                         continue
 
