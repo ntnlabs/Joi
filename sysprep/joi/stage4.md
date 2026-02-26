@@ -214,10 +214,26 @@ Be friendly and remember their preferences.
 
 ### 8.4 Per-Group Prompt
 
-Create `/var/lib/joi/prompts/<GROUP_ID>.txt` (filename is the group ID):
+Create `/var/lib/joi/prompts/groups/<GROUP_ID>.txt`
 
+**Important:** The filename must be sanitized:
+- Replace `+` with `-`
+- Replace `/` with `_`
+
+Example: Group ID `MJiIQPtAPqfodbXmG8+mKgnXl3dwRfPBs15rdChlV8k=`
+Filename: `MJiIQPtAPqfodbXmG8-mKgnXl3dwRfPBs15rdChlV8k=.txt`
+
+Helper to generate correct filename:
+```bash
+GROUP_ID="MJiIQPtAPqfodbXmG8+mKgnXl3dwRfPBs15rdChlV8k="
+SAFE_ID=$(echo "$GROUP_ID" | tr '+/' '-_')
+echo "Create: /var/lib/joi/prompts/groups/${SAFE_ID}.txt"
 ```
-You are Joi, the team assistant for this project group.
+
+Example prompt:
+```
+You are Zuza, the team assistant for this project group.
+When someone addresses "Zuza" or @mentions you, they are talking to you.
 Keep responses brief and action-oriented.
 ```
 
