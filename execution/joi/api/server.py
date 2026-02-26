@@ -1334,21 +1334,29 @@ _startup_fingerprints: Dict[str, str] = {}
 
 
 def _redact_filename_pii(filename: str) -> str:
-    """Redact phone numbers in filenames for privacy mode.
+    """Redact phone numbers and group IDs in filenames for privacy mode.
 
     Examples:
         +123456789.txt -> +***6789.txt
-        +123456789.model -> +***6789.model
+        MJiIQPtAPqfodbXmG8-mKgnXl3dwRfPBs15rdChlV8k=.txt -> [GRP:MJiI...].txt
     """
     import re
-    # Match phone number pattern at start of filename (with or without extension)
-    pattern = r'^\+\d+(?=\.|$)'
-    def redact_match(m):
-        phone = m.group(0)
-        if len(phone) > 5:
-            return f"+***{phone[-4:]}"
-        return "+***"
-    return re.sub(pattern, redact_match, filename)
+
+    # Get extension if present
+    name, ext = (filename.rsplit('.', 1) + [''])[:2]
+    ext = f'.{ext}' if ext else ''
+
+    # Phone number pattern
+    if re.match(r'^\+\d+$', name):
+        if len(name) > 5:
+            return f"+***{name[-4:]}{ext}"
+        return f"+***{ext}"
+
+    # Group ID pattern (base64-like, typically 32+ chars with = padding)
+    if len(name) > 20 and re.match(r'^[A-Za-z0-9+/=_-]+$', name):
+        return f"[GRP:{name[:4]}...]{ext}"
+
+    return filename
 
 
 def _compute_file_hash(path: str) -> str:
@@ -1395,11 +1403,7 @@ def _init_fingerprints():
     _startup_fingerprints = _compute_fingerprints()
     if _startup_fingerprints:
         # Check privacy mode for log redaction
-        privacy_mode = False
-        try:
-            privacy_mode = policy_manager.is_privacy_mode()
-        except Exception:
-            pass  # policy_manager may not be initialized yet
+        privacy_mode = policy_manager.is_privacy_mode()
 
         def format_entry(path, hash):
             name = os.path.basename(path)
@@ -1408,7 +1412,8 @@ def _init_fingerprints():
             return f"{name}:{hash}"
 
         summary = " | ".join(format_entry(p, h) for p, h in sorted(_startup_fingerprints.items()))
-        logger.info("Runtime fingerprint initialized: %s", summary)
+        privacy_tag = " [privacy]" if privacy_mode else ""
+        logger.info("Runtime fingerprint initialized%s: %s", privacy_tag, summary)
 
 
 def _check_fingerprints() -> List[str]:
