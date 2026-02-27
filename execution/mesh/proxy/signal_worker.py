@@ -1074,7 +1074,7 @@ def main() -> None:
         ]
     )
 
-    logger.info("Signal worker started (on-connection notifications)")
+    logger.info("Signal worker started (log_level=%s)", log_level)
     logger.info("Waiting for config push from Joi (denying all messages)")
     if _is_hmac_available():
         logger.info("HMAC authentication enabled")
