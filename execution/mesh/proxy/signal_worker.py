@@ -1074,6 +1074,23 @@ def main() -> None:
         ]
     )
 
+    # Startup health check - verify signal-cli is responding
+    logger.info("Testing signal-cli connection...")
+    try:
+        result = _rpc.call("listAccounts", {}, timeout=10.0)
+        if "error" in result:
+            raise SystemExit(f"signal-cli health check failed: {result['error']}")
+        accounts = result.get("result", [])
+        logger.info("signal-cli OK: %d account(s) registered", len(accounts))
+        # Verify our account is registered
+        account_numbers = [a.get("number") for a in accounts if isinstance(a, dict)]
+        if _account not in account_numbers:
+            logger.warning("Bot account %s not found in registered accounts: %s", _account, account_numbers)
+    except Exception as e:
+        if "SystemExit" in type(e).__name__:
+            raise
+        raise SystemExit(f"signal-cli not responding: {e}")
+
     logger.info("Signal worker started (log_level=%s)", log_level)
     logger.info("Waiting for config push from Joi (denying all messages)")
     if _is_hmac_available():
