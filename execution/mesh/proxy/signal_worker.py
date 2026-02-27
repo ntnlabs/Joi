@@ -1115,6 +1115,22 @@ def main() -> None:
             raise
         raise SystemExit(f"signal-cli not responding: {e}")
 
+    # Test Signal server connectivity
+    logger.info("Testing Signal server connection...")
+    try:
+        result = _rpc.call("sendSyncRequest", {"account": _account}, timeout=30.0)
+        if "error" in result:
+            err = result["error"]
+            # Some errors are warnings, not fatal
+            if "not a primary device" in str(err).lower():
+                logger.info("Signal server OK (linked device, sync request sent)")
+            else:
+                logger.warning("Signal server test returned error: %s", err)
+        else:
+            logger.info("Signal server OK (sync request successful)")
+    except Exception as e:
+        logger.warning("Signal server test failed: %s (continuing anyway)", e)
+
     logger.info("Signal worker started (log_level=%s)", log_level)
     logger.info("Waiting for config push from Joi (denying all messages)")
     if _is_hmac_available():
