@@ -1951,13 +1951,14 @@ def receive_message(msg: InboundMessage):
     elif msg.conversation.type == "group":
         # Group message from allowed sender - only respond if Joi is addressed
         # Check Signal @mention (bot_mentioned) or text-based @name
+        logger.debug("Group message: bot_mentioned=%s, group_names=%s", msg.bot_mentioned, msg.group_names)
         if msg.bot_mentioned:
             logger.info("Joi @mentioned in group message (Signal mention), will respond")
             should_respond = True
         else:
             # Fallback: check text for @name pattern
             names_to_check = msg.group_names if msg.group_names else None
-            logger.info("Checking address: names=%s, text_start='%s'", names_to_check, user_text[:50] if user_text else "")
+            logger.debug("Checking address: names=%s, text_start='%s'", names_to_check, user_text[:50] if user_text else "")
             if _is_addressing_joi(user_text, names=names_to_check):
                 logger.info("Joi addressed in group message (text pattern), will respond")
                 should_respond = True
