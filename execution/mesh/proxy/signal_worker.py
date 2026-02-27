@@ -736,9 +736,8 @@ def _check_bot_mentioned(
 ) -> bool:
     """Check if the bot is mentioned in the message.
 
-    Checks multiple signals:
-    1. Signal mentions array (phone number or UUID)
-    2. Fallback: U+FFFC present + bot name in text (signal-cli may omit mentions field)
+    Checks Signal mentions array for phone number or UUID match.
+    Note: signal-cli 0.13.24 doesn't provide mentions array (issue #1940).
     """
     mentions = data_message.get("mentions")
     message_text = data_message.get("message", "") or ""
@@ -1153,14 +1152,14 @@ def main() -> None:
                             payload["group_names"] = names
                             logger.debug("Group names for addressing: %s", names)
 
-                            # Re-check bot_mentioned with fallback (signal-cli may omit mentions array)
+                            # Re-check bot_mentioned (in case signal-cli provides mentions array)
                             if not payload.get("bot_mentioned"):
                                 raw_native = payload.get("content", {}).get("transport_native", {})
                                 envelope = _as_dict(raw_native.get("envelope"))
                                 data_message = _as_dict(envelope.get("dataMessage")) if envelope else {}
                                 if data_message and _check_bot_mentioned(data_message, _account, _account_uuid, names):
                                     payload["bot_mentioned"] = True
-                                    logger.info("Bot mention detected via fallback (U+FFFC + name match)")
+                                    logger.debug("Bot mention detected via mentions array")
                         else:
                             logger.debug("No group names found (bot_name=%s, group_id=%s)", bot_name, group_id[:8] if group_id else None)
 
