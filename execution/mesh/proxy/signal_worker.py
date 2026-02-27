@@ -763,13 +763,14 @@ def _check_bot_mentioned(
                     logger.debug("Bot mentioned via UUID in mentions array")
                     return True
 
-    # Method 2: Fallback when signal-cli doesn't provide mentions array
-    # signal-cli 0.13.24 omits mentions field, so we can't know WHO was mentioned.
-    # Heuristic: if U+FFFC is at position 0, user is addressing someone at start of message.
-    # In a group where bot responds to mentions, this is likely addressing the bot.
-    if message_text.startswith("\ufffc"):
-        logger.debug("Bot mentioned via fallback (U+FFFC at start of message)")
-        return True
+    # Method 2: Fallback disabled - too many false positives in business context.
+    # signal-cli 0.13.24 doesn't provide mentions array, so we can't know WHO was mentioned.
+    # Bug reported: https://github.com/AsamK/signal-cli/issues/XXXX
+    # Users should use text-based addressing (type bot name) instead of Signal autocomplete.
+    # TODO: Re-enable when signal-cli provides mentions array
+    # if message_text.startswith("\ufffc"):
+    #     logger.debug("Bot mentioned via fallback (U+FFFC at start of message)")
+    #     return True
 
     return False
 
