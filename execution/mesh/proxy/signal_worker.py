@@ -734,6 +734,13 @@ def _check_bot_mentioned(data_message: Dict[str, Any], bot_account: str, bot_uui
     Checks both phone number and UUID since Signal mentions may use either.
     """
     mentions = data_message.get("mentions")
+    message_text = data_message.get("message", "")
+
+    # Debug: if U+FFFC exists, dump entire dataMessage structure to find where mentions are
+    if "\ufffc" in str(message_text):
+        logger.info("U+FFFC detected! Full dataMessage keys: %s", list(data_message.keys()))
+        logger.info("dataMessage content: %s", {k: v for k, v in data_message.items() if k != "message"})
+
     # Log what we got for debugging
     logger.info("Mentions check: mentions=%s, bot_uuid=%s", mentions, bot_uuid[:8] if bot_uuid else None)
     if not isinstance(mentions, list):
