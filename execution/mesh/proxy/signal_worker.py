@@ -734,10 +734,13 @@ def _check_bot_mentioned(data_message: Dict[str, Any], bot_account: str, bot_uui
     Checks both phone number and UUID since Signal mentions may use either.
     """
     mentions = data_message.get("mentions")
+    # Log what we got for debugging
+    logger.info("Mentions check: mentions=%s, bot_uuid=%s", mentions, bot_uuid[:8] if bot_uuid else None)
     if not isinstance(mentions, list):
         return False
     for mention in mentions:
         if isinstance(mention, dict):
+            logger.info("Checking mention: %s", mention)
             # Check phone number
             number = mention.get("number")
             if number and isinstance(number, str) and number == bot_account:
