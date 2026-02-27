@@ -743,10 +743,9 @@ def _check_bot_mentioned(
     mentions = data_message.get("mentions")
     message_text = data_message.get("message", "") or ""
 
-    # Debug logging when U+FFFC detected
+    # Debug logging when U+FFFC detected (native Signal mention)
     if "\ufffc" in message_text:
-        logger.debug("U+FFFC detected, dataMessage keys: %s", list(data_message.keys()))
-        logger.info("Full message with U+FFFC: %r", message_text)  # %r shows raw repr
+        logger.debug("U+FFFC detected (native mention), awaiting signal-cli fix #1940")
 
     # Method 1: Check mentions array (preferred, if signal-cli provides it)
     if isinstance(mentions, list):
@@ -765,7 +764,7 @@ def _check_bot_mentioned(
 
     # Method 2: Fallback disabled - too many false positives in business context.
     # signal-cli 0.13.24 doesn't provide mentions array, so we can't know WHO was mentioned.
-    # Bug reported: https://github.com/AsamK/signal-cli/issues/XXXX
+    # Bug reported: https://github.com/AsamK/signal-cli/issues/1940
     # Users should use text-based addressing (type bot name) instead of Signal autocomplete.
     # TODO: Re-enable when signal-cli provides mentions array
     # if message_text.startswith("\ufffc"):
