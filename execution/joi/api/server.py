@@ -2354,7 +2354,7 @@ def main():
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    logger.info("Starting Joi API on %s:%d", settings.bind_host, settings.bind_port)
+    logger.info("Starting Joi API on %s:%d (log_level=%s)", settings.bind_host, settings.bind_port, settings.log_level)
     ctx_info = f", num_ctx: {settings.ollama_num_ctx}" if settings.ollama_num_ctx > 0 else ""
     logger.info("Ollama: %s (model: %s%s)", settings.ollama_url, settings.ollama_model, ctx_info)
     logger.info("Mesh: %s", settings.mesh_url)
