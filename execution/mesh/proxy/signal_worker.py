@@ -897,7 +897,11 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
     # Debug: log what type of envelope this is (helps diagnose skipped events)
     if not data_message:
         envelope_types = [k for k in envelope.keys() if k.endswith("Message") or k == "typingMessage"]
-        logger.debug("Envelope has no dataMessage, found: %s", envelope_types or list(envelope.keys()))
+        if envelope_types:
+            logger.debug("Envelope has no dataMessage, found: %s", envelope_types)
+        else:
+            # No message type at all - dump full raw for investigation
+            logger.debug("Empty envelope (no message type), raw: %s", raw)
 
     reaction = _as_dict(data_message.get("reaction"))
     message_text = _extract_message_text(data_message)
