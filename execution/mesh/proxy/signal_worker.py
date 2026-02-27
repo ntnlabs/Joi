@@ -764,13 +764,12 @@ def _check_bot_mentioned(
                     return True
 
     # Method 2: Fallback when signal-cli doesn't provide mentions array
-    # If U+FFFC (mention placeholder) exists, check if bot name appears in text
-    if "\ufffc" in message_text and bot_names:
-        text_lower = message_text.lower()
-        for name in bot_names:
-            if name.lower() in text_lower:
-                logger.debug("Bot mentioned via fallback (U+FFFC + name '%s' in text)", name)
-                return True
+    # signal-cli 0.13.24 omits mentions field, so we can't know WHO was mentioned.
+    # Heuristic: if U+FFFC is at position 0, user is addressing someone at start of message.
+    # In a group where bot responds to mentions, this is likely addressing the bot.
+    if message_text.startswith("\ufffc"):
+        logger.debug("Bot mentioned via fallback (U+FFFC at start of message)")
+        return True
 
     return False
 
