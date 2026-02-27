@@ -728,34 +728,49 @@ def _extract_message_text(data_message: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _check_bot_mentioned(data_message: Dict[str, Any], bot_account: str, bot_uuid: str = "") -> bool:
+def _check_bot_mentioned(
+    data_message: Dict[str, Any],
+    bot_account: str,
+    bot_uuid: str = "",
+    bot_names: Optional[List[str]] = None,
+) -> bool:
     """Check if the bot is mentioned in the message.
 
-    Checks both phone number and UUID since Signal mentions may use either.
+    Checks multiple signals:
+    1. Signal mentions array (phone number or UUID)
+    2. Fallback: U+FFFC present + bot name in text (signal-cli may omit mentions field)
     """
     mentions = data_message.get("mentions")
-    message_text = data_message.get("message", "")
+    message_text = data_message.get("message", "") or ""
 
-    # Debug: if U+FFFC exists, dump entire dataMessage structure to find where mentions are
-    if "\ufffc" in str(message_text):
-        logger.info("U+FFFC detected! Full dataMessage keys: %s", list(data_message.keys()))
-        logger.info("dataMessage content: %s", {k: v for k, v in data_message.items() if k != "message"})
+    # Debug logging (only at DEBUG level)
+    if "\ufffc" in message_text:
+        logger.debug("U+FFFC detected, dataMessage keys: %s", list(data_message.keys()))
 
-    # Log what we got for debugging
-    logger.info("Mentions check: mentions=%s, bot_uuid=%s", mentions, bot_uuid[:8] if bot_uuid else None)
-    if not isinstance(mentions, list):
-        return False
-    for mention in mentions:
-        if isinstance(mention, dict):
-            logger.info("Checking mention: %s", mention)
-            # Check phone number
-            number = mention.get("number")
-            if number and isinstance(number, str) and number == bot_account:
+    # Method 1: Check mentions array (preferred, if signal-cli provides it)
+    if isinstance(mentions, list):
+        for mention in mentions:
+            if isinstance(mention, dict):
+                # Check phone number
+                number = mention.get("number")
+                if number and isinstance(number, str) and number == bot_account:
+                    logger.debug("Bot mentioned via phone number in mentions array")
+                    return True
+                # Check UUID (Signal autocomplete uses UUID)
+                uuid = mention.get("uuid")
+                if uuid and bot_uuid and isinstance(uuid, str) and uuid == bot_uuid:
+                    logger.debug("Bot mentioned via UUID in mentions array")
+                    return True
+
+    # Method 2: Fallback when signal-cli doesn't provide mentions array
+    # If U+FFFC (mention placeholder) exists, check if bot name appears in text
+    if "\ufffc" in message_text and bot_names:
+        text_lower = message_text.lower()
+        for name in bot_names:
+            if name.lower() in text_lower:
+                logger.debug("Bot mentioned via fallback (U+FFFC + name '%s' in text)", name)
                 return True
-            # Check UUID (Signal autocomplete uses UUID)
-            uuid = mention.get("uuid")
-            if uuid and bot_uuid and isinstance(uuid, str) and uuid == bot_uuid:
-                return True
+
     return False
 
 
@@ -1137,6 +1152,15 @@ def main() -> None:
                         if names:
                             payload["group_names"] = names
                             logger.debug("Group names for addressing: %s", names)
+
+                            # Re-check bot_mentioned with fallback (signal-cli may omit mentions array)
+                            if not payload.get("bot_mentioned"):
+                                raw_native = payload.get("content", {}).get("transport_native", {})
+                                envelope = _as_dict(raw_native.get("envelope"))
+                                data_message = _as_dict(envelope.get("dataMessage")) if envelope else {}
+                                if data_message and _check_bot_mentioned(data_message, _account, _account_uuid, names):
+                                    payload["bot_mentioned"] = True
+                                    logger.info("Bot mention detected via fallback (U+FFFC + name match)")
                         else:
                             logger.debug("No group names found (bot_name=%s, group_id=%s)", bot_name, group_id[:8] if group_id else None)
 
