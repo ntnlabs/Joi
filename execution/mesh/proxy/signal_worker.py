@@ -862,6 +862,11 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Opt
                  envelope.get("source"), envelope.get("sourceNumber"), envelope.get("sourceUuid"))
 
     data_message = _as_dict(envelope.get("dataMessage"))
+    # DEBUG: Log full dataMessage to find where mentions are
+    if data_message:
+        logger.info("DEBUG dataMessage keys: %s", list(data_message.keys()))
+        if "mentions" in data_message:
+            logger.info("DEBUG mentions: %s", data_message.get("mentions"))
     reaction = _as_dict(data_message.get("reaction"))
     message_text = _extract_message_text(data_message)
     bot_mentioned = _check_bot_mentioned(data_message, bot_account) if bot_account else False

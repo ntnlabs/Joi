@@ -1181,21 +1181,11 @@ Return ONLY valid JSON, nothing else:"""
 
 
 def _is_addressing_joi(text: str, names: Optional[List[str]] = None) -> bool:
-    """Check if the message is addressing Joi directly via @mention.
-
-    Handles both:
-    - Text @mentions: "@zuza hello"
-    - Signal native mentions: "￼ hello" (U+FFFC Object Replacement Character)
-    """
+    """Check if the message is addressing Joi directly via @mention."""
     if names is None:
         names = JOI_NAME_DEFAULT
 
-    # Check for Signal native mention (U+FFFC at start = someone was @mentioned)
-    # When Signal autocomplete is used, the mention becomes U+FFFC placeholder
-    if text and text[0] == '\ufffc':
-        return True
-
-    # Use cached regex if available for text @mentions
+    # Use cached regex if available
     names_key = tuple(sorted(names))
     if names_key not in _address_regex_cache:
         _address_regex_cache[names_key] = _build_address_regex(names)
