@@ -893,6 +893,12 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
                  envelope.get("source"), envelope.get("sourceNumber"), envelope.get("sourceUuid"))
 
     data_message = _as_dict(envelope.get("dataMessage"))
+
+    # Debug: log what type of envelope this is (helps diagnose skipped events)
+    if not data_message:
+        envelope_types = [k for k in envelope.keys() if k.endswith("Message") or k == "typingMessage"]
+        logger.debug("Envelope has no dataMessage, found: %s", envelope_types or list(envelope.keys()))
+
     reaction = _as_dict(data_message.get("reaction"))
     message_text = _extract_message_text(data_message)
     bot_mentioned = _check_bot_mentioned(data_message, bot_account, bot_uuid) if bot_account else False
@@ -911,6 +917,9 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
             content_type = "attachment"
             message_text = ""  # Empty text, but we'll process attachments
         else:
+            # Log why we're skipping (dataMessage exists but no text/attachments)
+            if data_message:
+                logger.debug("dataMessage has no text/attachments, keys: %s", list(data_message.keys()))
             return None
 
     # Prefer phone number over UUID for sender identification
