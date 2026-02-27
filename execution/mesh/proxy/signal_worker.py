@@ -1115,6 +1115,9 @@ def main() -> None:
                             names.extend(n for n in group_names if n not in names)
                         if names:
                             payload["group_names"] = names
+                            logger.info("Group names for addressing: %s", names)
+                        else:
+                            logger.warning("No group names found (bot_name=%s, group_id=%s)", bot_name, group_id[:8] if group_id else None)
 
                     # Check kill switch before forwarding
                     if _config_state.is_kill_switch_active():
