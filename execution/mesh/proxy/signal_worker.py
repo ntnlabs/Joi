@@ -743,9 +743,10 @@ def _check_bot_mentioned(
     mentions = data_message.get("mentions")
     message_text = data_message.get("message", "") or ""
 
-    # Debug logging (only at DEBUG level)
+    # Debug logging when U+FFFC detected
     if "\ufffc" in message_text:
         logger.debug("U+FFFC detected, dataMessage keys: %s", list(data_message.keys()))
+        logger.info("Full message with U+FFFC: %r", message_text)  # %r shows raw repr
 
     # Method 1: Check mentions array (preferred, if signal-cli provides it)
     if isinstance(mentions, list):
