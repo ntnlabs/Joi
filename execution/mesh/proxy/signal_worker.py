@@ -884,6 +884,17 @@ def _process_attachments(
 
 
 def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uuid: str = "") -> Optional[Dict[str, Any]]:
+    # Check for exceptions (e.g., UntrustedIdentityException) - log at INFO level
+    exception = raw.get("exception")
+    if isinstance(exception, dict):
+        exc_type = exception.get("type", "Unknown")
+        exc_msg = exception.get("message", "")
+        if exc_type == "UntrustedIdentityException":
+            logger.warning("UNTRUSTED IDENTITY: %s - run: signal-cli trust <uuid>", exc_msg)
+        else:
+            logger.warning("Signal exception: %s - %s", exc_type, exc_msg)
+        return None
+
     envelope = _as_dict(raw.get("envelope"))
     if not envelope:
         return None
