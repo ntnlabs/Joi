@@ -728,16 +728,23 @@ def _extract_message_text(data_message: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _check_bot_mentioned(data_message: Dict[str, Any], bot_account: str) -> bool:
-    """Check if the bot is mentioned in the message."""
+def _check_bot_mentioned(data_message: Dict[str, Any], bot_account: str, bot_uuid: str = "") -> bool:
+    """Check if the bot is mentioned in the message.
+
+    Checks both phone number and UUID since Signal mentions may use either.
+    """
     mentions = data_message.get("mentions")
     if not isinstance(mentions, list):
         return False
     for mention in mentions:
         if isinstance(mention, dict):
-            # Signal uses 'number' field for phone-based mentions
+            # Check phone number
             number = mention.get("number")
-            if isinstance(number, str) and number == bot_account:
+            if number and isinstance(number, str) and number == bot_account:
+                return True
+            # Check UUID (Signal autocomplete uses UUID)
+            uuid = mention.get("uuid")
+            if uuid and bot_uuid and isinstance(uuid, str) and uuid == bot_uuid:
                 return True
     return False
 
@@ -852,7 +859,7 @@ def _process_attachments(
             logger.warning("Failed to delete attachment %s: %s", attachment_path, e)
 
 
-def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Optional[Dict[str, Any]]:
+def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uuid: str = "") -> Optional[Dict[str, Any]]:
     envelope = _as_dict(raw.get("envelope"))
     if not envelope:
         return None
@@ -862,14 +869,9 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Opt
                  envelope.get("source"), envelope.get("sourceNumber"), envelope.get("sourceUuid"))
 
     data_message = _as_dict(envelope.get("dataMessage"))
-    # DEBUG: Log full dataMessage to find where mentions are
-    if data_message:
-        logger.info("DEBUG dataMessage keys: %s", list(data_message.keys()))
-        if "mentions" in data_message:
-            logger.info("DEBUG mentions: %s", data_message.get("mentions"))
     reaction = _as_dict(data_message.get("reaction"))
     message_text = _extract_message_text(data_message)
-    bot_mentioned = _check_bot_mentioned(data_message, bot_account) if bot_account else False
+    bot_mentioned = _check_bot_mentioned(data_message, bot_account, bot_uuid) if bot_account else False
 
     content_type = "text"
     content_reaction: Optional[str] = None
@@ -1008,8 +1010,11 @@ def run_http_server(port: int):
     server.serve_forever()
 
 
+_account_uuid: str = ""  # Bot's UUID, fetched at startup
+
+
 def main() -> None:
-    global _rpc, _account
+    global _rpc, _account, _account_uuid
 
     log_level = os.getenv("MESH_LOG_LEVEL", "INFO").upper()
     logging.basicConfig(level=getattr(logging, log_level, logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -1017,6 +1022,7 @@ def main() -> None:
     _account = os.getenv("SIGNAL_ACCOUNT", "")
     if not _account:
         raise SystemExit("SIGNAL_ACCOUNT not set")
+    _account_uuid = os.getenv("SIGNAL_BOT_UUID", "")  # Optional, will try to fetch if not set
 
     http_port = int(os.getenv("MESH_WORKER_HTTP_PORT", "8444"))
     notification_wait_seconds = float(os.getenv("MESH_SIGNAL_POLL_SECONDS", "5"))
@@ -1071,7 +1077,7 @@ def main() -> None:
                     if _handle_receipt_message(msg):
                         continue  # Receipt handled, no further processing needed
 
-                    payload = _normalize_signal_message(msg, bot_account=_account)
+                    payload = _normalize_signal_message(msg, bot_account=_account, bot_uuid=_account_uuid)
                     if payload is None:
                         logger.debug("Skipping unsupported Signal event")
                         continue
