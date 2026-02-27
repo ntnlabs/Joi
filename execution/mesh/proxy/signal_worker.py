@@ -733,12 +733,18 @@ def _check_bot_mentioned(data_message: Dict[str, Any], bot_account: str) -> bool
     mentions = data_message.get("mentions")
     if not isinstance(mentions, list):
         return False
+    logger.debug("Checking mentions: %s (bot_account=%s)", mentions, bot_account)
     for mention in mentions:
         if isinstance(mention, dict):
-            # Signal uses 'number' field for phone-based mentions
+            # Signal may use 'number' (phone) or 'uuid' field for mentions
             number = mention.get("number")
-            if isinstance(number, str) and number == bot_account:
+            uuid = mention.get("uuid")
+            if number and isinstance(number, str) and number == bot_account:
                 return True
+            # Also check if uuid matches (for autocomplete mentions)
+            # Note: bot_account might be phone, but mention might use uuid
+            if uuid:
+                logger.debug("Mention has uuid=%s (bot phone=%s)", uuid, bot_account)
     return False
 
 
@@ -865,6 +871,10 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "") -> Opt
     reaction = _as_dict(data_message.get("reaction"))
     message_text = _extract_message_text(data_message)
     bot_mentioned = _check_bot_mentioned(data_message, bot_account) if bot_account else False
+    # Temporary debug - remove after fixing mention issue
+    mentions_raw = data_message.get("mentions")
+    if mentions_raw:
+        logger.info("DEBUG mentions: %s, bot_mentioned=%s, text='%s'", mentions_raw, bot_mentioned, message_text[:50] if message_text else "")
 
     content_type = "text"
     content_reaction: Optional[str] = None
@@ -1115,9 +1125,9 @@ def main() -> None:
                             names.extend(n for n in group_names if n not in names)
                         if names:
                             payload["group_names"] = names
-                            logger.info("Group names for addressing: %s", names)
+                            logger.debug("Group names for addressing: %s", names)
                         else:
-                            logger.warning("No group names found (bot_name=%s, group_id=%s)", bot_name, group_id[:8] if group_id else None)
+                            logger.debug("No group names found (bot_name=%s, group_id=%s)", bot_name, group_id[:8] if group_id else None)
 
                     # Check kill switch before forwarding
                     if _config_state.is_kill_switch_active():
