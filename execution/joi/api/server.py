@@ -1957,6 +1957,7 @@ def receive_message(msg: InboundMessage):
         else:
             # Fallback: check text for @name pattern
             names_to_check = msg.group_names if msg.group_names else None
+            logger.info("Checking address: names=%s, text_start='%s'", names_to_check, user_text[:50] if user_text else "")
             if _is_addressing_joi(user_text, names=names_to_check):
                 logger.info("Joi addressed in group message (text pattern), will respond")
                 should_respond = True
