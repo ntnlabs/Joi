@@ -95,6 +95,7 @@ class UserFact:
     source: str  # 'stated', 'inferred', 'configured'
     learned_at: int
     last_verified_at: Optional[int]
+    important: bool = False  # Core facts always included in context
 
 
 @dataclass
@@ -182,6 +183,7 @@ CREATE TABLE IF NOT EXISTS user_facts (
     source TEXT NOT NULL,
     source_message_id TEXT,
     active INTEGER NOT NULL DEFAULT 1,
+    important INTEGER NOT NULL DEFAULT 0,
     learned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     last_referenced_at INTEGER,
     last_verified_at INTEGER,
@@ -192,6 +194,7 @@ CREATE TABLE IF NOT EXISTS user_facts (
 CREATE INDEX IF NOT EXISTS idx_facts_category ON user_facts(category, active);
 CREATE INDEX IF NOT EXISTS idx_facts_active ON user_facts(active, confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_facts_conversation ON user_facts(conversation_id, active);
+CREATE INDEX IF NOT EXISTS idx_facts_important ON user_facts(important, active);
 
 -- Context summaries table (compressed conversation history, per-conversation)
 CREATE TABLE IF NOT EXISTS context_summaries (
@@ -415,7 +418,7 @@ class MemoryStore:
             conn.execute("ALTER TABLE messages ADD COLUMN sender_name TEXT")
             conn.commit()
 
-        # Check user_facts table for conversation_id
+        # Check user_facts table for conversation_id and important
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_facts'")
         if cursor.fetchone():
             cursor = conn.execute("PRAGMA table_info(user_facts)")
@@ -426,6 +429,11 @@ class MemoryStore:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_conversation ON user_facts(conversation_id, active)")
                 # Drop and recreate unique constraint (SQLite doesn't support ALTER CONSTRAINT)
                 # Existing facts get conversation_id='' which works for backward compatibility
+                conn.commit()
+            if "important" not in fact_columns:
+                logger.info("Migration: Adding 'important' column to user_facts table")
+                conn.execute("ALTER TABLE user_facts ADD COLUMN important INTEGER NOT NULL DEFAULT 0")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_important ON user_facts(important, active)")
                 conn.commit()
 
         # Check context_summaries table for conversation_id
@@ -793,24 +801,29 @@ class MemoryStore:
         source: str = "inferred",
         source_message_id: Optional[str] = None,
         conversation_id: str = "",
+        important: bool = False,
     ) -> int:
         """
         Store or update a fact about the user for a specific conversation.
 
         If fact with same conversation_id+category+key exists, updates it.
+
+        Args:
+            important: If True, fact is always included in context regardless of query.
         """
         conn = self._connect()
         now_ms = int(time.time() * 1000)
+        important_int = 1 if important else 0
 
         # Try to update existing active fact for this conversation
         cursor = conn.execute(
             """
             UPDATE user_facts
             SET value = ?, confidence = ?, source = ?, source_message_id = ?,
-                last_verified_at = ?, updated_at = ?
+                important = ?, last_verified_at = ?, updated_at = ?
             WHERE conversation_id = ? AND category = ? AND key = ? AND active = 1
             """,
-            (value, confidence, source, source_message_id, now_ms, now_ms, conversation_id, category, key)
+            (value, confidence, source, source_message_id, important_int, now_ms, now_ms, conversation_id, category, key)
         )
 
         if cursor.rowcount == 0:
@@ -819,14 +832,15 @@ class MemoryStore:
                 """
                 INSERT INTO user_facts (
                     conversation_id, category, key, value, confidence, source, source_message_id,
-                    learned_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    important, learned_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (conversation_id, category, key, value, confidence, source, source_message_id, now_ms, now_ms)
+                (conversation_id, category, key, value, confidence, source, source_message_id, important_int, now_ms, now_ms)
             )
 
         conn.commit()
-        logger.debug("Stored fact for %s: %s.%s = %s (confidence: %.2f)", conversation_id or "global", category, key, value, confidence)
+        important_marker = " [important]" if important else ""
+        logger.debug("Stored fact for %s: %s.%s = %s (confidence: %.2f)%s", conversation_id or "global", category, key, value, confidence, important_marker)
         return cursor.lastrowid or 0
 
     def get_facts(
@@ -857,10 +871,10 @@ class MemoryStore:
         cursor = conn.execute(
             f"""
             SELECT id, conversation_id, category, key, value, confidence, source,
-                   learned_at, last_verified_at
+                   learned_at, last_verified_at, important
             FROM user_facts
             WHERE {where_clause}
-            ORDER BY category, confidence DESC
+            ORDER BY important DESC, category, confidence DESC
             LIMIT ?
             """,
             params
@@ -877,6 +891,7 @@ class MemoryStore:
                 source=row["source"],
                 learned_at=row["learned_at"],
                 last_verified_at=row["last_verified_at"],
+                important=bool(row["important"]),
             )
             for row in cursor.fetchall()
         ]
@@ -942,7 +957,7 @@ class MemoryStore:
                 f"""
                 SELECT f.id, f.conversation_id, f.category, f.key, f.value,
                        f.confidence, f.source, f.learned_at, f.last_verified_at,
-                       bm25(user_facts_fts) as rank
+                       f.important, bm25(user_facts_fts) as rank
                 FROM user_facts f
                 JOIN user_facts_fts fts ON f.id = fts.rowid
                 WHERE user_facts_fts MATCH ?
@@ -971,8 +986,56 @@ class MemoryStore:
                 source=row["source"],
                 learned_at=row["learned_at"],
                 last_verified_at=row["last_verified_at"],
+                important=bool(row["important"]),
             )
             for row in rows
+        ]
+
+    def get_important_facts(
+        self,
+        min_confidence: float = 0.5,
+        conversation_id: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[UserFact]:
+        """Get all important (core) facts for a conversation."""
+        conn = self._connect()
+
+        conditions = ["active = 1", "important = 1", "confidence >= ?"]
+        params: list = [min_confidence]
+
+        if conversation_id is not None:
+            conditions.append("conversation_id = ?")
+            params.append(conversation_id)
+
+        params.append(limit)
+        where_clause = " AND ".join(conditions)
+
+        cursor = conn.execute(
+            f"""
+            SELECT id, conversation_id, category, key, value, confidence, source,
+                   learned_at, last_verified_at, important
+            FROM user_facts
+            WHERE {where_clause}
+            ORDER BY category, confidence DESC
+            LIMIT ?
+            """,
+            params
+        )
+
+        return [
+            UserFact(
+                id=row["id"],
+                conversation_id=row["conversation_id"] or "",
+                category=row["category"],
+                key=row["key"],
+                value=row["value"],
+                confidence=row["confidence"],
+                source=row["source"],
+                learned_at=row["learned_at"],
+                last_verified_at=row["last_verified_at"],
+                important=bool(row["important"]),
+            )
+            for row in cursor.fetchall()
         ]
 
     def get_facts_as_context(
@@ -983,7 +1046,10 @@ class MemoryStore:
         conversation_id: Optional[str] = None,
     ) -> str:
         """
-        Search facts and format for LLM context with token limit.
+        Get facts for LLM context using hybrid approach:
+        1. Always include important (core) facts
+        2. Add FTS search results for query relevance
+        3. Respect token limit
 
         Args:
             query: Search query
@@ -992,15 +1058,30 @@ class MemoryStore:
             conversation_id: Filter by conversation ID
 
         Returns:
-            Formatted context string, empty if no matches
+            Formatted context string, empty if no facts
         """
-        facts = self.search_facts(
+        # First, get all important facts (always included)
+        important_facts = self.get_important_facts(
+            min_confidence=min_confidence,
+            conversation_id=conversation_id,
+            limit=20,
+        )
+        important_ids = {f.id for f in important_facts}
+
+        # Then, search for relevant facts via FTS
+        fts_facts = self.search_facts(
             query,
-            limit=20,  # Fetch more than needed, will truncate by tokens
+            limit=20,
             min_confidence=min_confidence,
             conversation_id=conversation_id,
         )
-        if not facts:
+        # Filter out already-included important facts
+        fts_facts = [f for f in fts_facts if f.id not in important_ids]
+
+        # Combine: important first, then FTS matches
+        all_facts = important_facts + fts_facts
+
+        if not all_facts:
             return ""
 
         lines = ["Relevant facts about the user:"]
@@ -1008,7 +1089,7 @@ class MemoryStore:
         max_chars = max_tokens * 4  # Rough estimate
 
         by_category: Dict[str, List[UserFact]] = {}
-        for fact in facts:
+        for fact in all_facts:
             by_category.setdefault(fact.category, []).append(fact)
 
         for category, cat_facts in sorted(by_category.items()):
