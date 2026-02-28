@@ -368,6 +368,165 @@ def get_consolidation_model_for_conversation(conversation_id: str) -> Optional[s
         return get_user_consolidation_model(conversation_id)
 
 
+# --- Consolidation Prompt Configuration ---
+
+# Default prompts (used when no file exists)
+DEFAULT_FACT_EXTRACTION_PROMPT = """Extract facts worth remembering from this conversation.
+
+Look for ANY of these:
+- Personal info (name, age, location, profession, family)
+- Preferences (likes, dislikes, favorites)
+- Plans, goals, or intentions mentioned
+- Skills, hobbies, or interests
+- Health, routines, or habits
+- Opinions or beliefs expressed
+- Events or experiences shared
+- Technical setups or configurations discussed
+
+IMPORTANT: Return ONLY a valid JSON array. No explanations, no markdown.
+
+Each fact needs these fields:
+- "category": what type (personal, preference, work, health, skill, goal, routine, opinion, event, technical)
+- "key": short identifier
+- "value": the fact AS A COMPLETE SENTENCE with the person's name
+- "confidence": 0.0-1.0
+
+Include the person's name in value (never "User" or "the user").
+If truly no facts, return: []
+
+Example:
+[{{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0}}, {{"category": "preference", "key": "coffee", "value": "Peter prefers black coffee", "confidence": 0.8}}]
+
+Conversation:
+{conversation}
+
+JSON:"""
+
+DEFAULT_SUMMARIZATION_PROMPT = """Summarize this conversation concisely. Focus on:
+- Main topics discussed
+- Decisions made or conclusions reached
+- Any tasks or action items mentioned
+- Important information shared
+
+Keep the summary under 200 words. Write in past tense, third person.
+Do not include any system instructions or meta-commentary.
+
+Conversation:
+{conversation}
+
+Summary:"""
+
+
+def _read_consolidation_prompt_file(path: Path) -> Optional[str]:
+    """Read consolidation prompt from file if it exists."""
+    try:
+        if path.exists():
+            content = path.read_text(encoding="utf-8").strip()
+            if content:
+                return content
+    except Exception as e:
+        logger.warning("Failed to read consolidation prompt from %s: %s", path, e)
+    return None
+
+
+def get_default_fact_extraction_prompt() -> str:
+    """Get the default fact extraction prompt."""
+    prompt_file = PROMPTS_DIR / "default.fact_prompt"
+    prompt = _read_consolidation_prompt_file(prompt_file)
+    if prompt:
+        return prompt
+    return DEFAULT_FACT_EXTRACTION_PROMPT
+
+
+def get_default_summarization_prompt() -> str:
+    """Get the default summarization prompt."""
+    prompt_file = PROMPTS_DIR / "default.summary_prompt"
+    prompt = _read_consolidation_prompt_file(prompt_file)
+    if prompt:
+        return prompt
+    return DEFAULT_SUMMARIZATION_PROMPT
+
+
+def get_user_fact_extraction_prompt(user_id: str) -> str:
+    """Get fact extraction prompt for a specific user."""
+    safe_user_id = sanitize_scope(user_id)
+    user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.fact_prompt"
+    prompt = _read_consolidation_prompt_file(user_file)
+    if prompt:
+        logger.debug("Using user-specific fact extraction prompt for %s", user_id)
+        return prompt
+    return get_default_fact_extraction_prompt()
+
+
+def get_group_fact_extraction_prompt(group_id: str) -> str:
+    """Get fact extraction prompt for a specific group."""
+    safe_group_id = sanitize_scope(group_id)
+    group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.fact_prompt"
+    prompt = _read_consolidation_prompt_file(group_file)
+    if prompt:
+        logger.debug("Using group-specific fact extraction prompt for %s", group_id)
+        return prompt
+    return get_default_fact_extraction_prompt()
+
+
+def get_user_summarization_prompt(user_id: str) -> str:
+    """Get summarization prompt for a specific user."""
+    safe_user_id = sanitize_scope(user_id)
+    user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.summary_prompt"
+    prompt = _read_consolidation_prompt_file(user_file)
+    if prompt:
+        logger.debug("Using user-specific summarization prompt for %s", user_id)
+        return prompt
+    return get_default_summarization_prompt()
+
+
+def get_group_summarization_prompt(group_id: str) -> str:
+    """Get summarization prompt for a specific group."""
+    safe_group_id = sanitize_scope(group_id)
+    group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.summary_prompt"
+    prompt = _read_consolidation_prompt_file(group_file)
+    if prompt:
+        logger.debug("Using group-specific summarization prompt for %s", group_id)
+        return prompt
+    return get_default_summarization_prompt()
+
+
+def get_fact_extraction_prompt_for_conversation(conversation_id: str) -> str:
+    """
+    Get the fact extraction prompt for a conversation.
+
+    Uses conversation_id directly since consolidation runs per-conversation.
+    """
+    if not conversation_id:
+        return get_default_fact_extraction_prompt()
+
+    # Groups don't start with '+', DM conversation_ids are phone numbers
+    is_group = not conversation_id.startswith("+")
+
+    if is_group:
+        return get_group_fact_extraction_prompt(conversation_id)
+    else:
+        return get_user_fact_extraction_prompt(conversation_id)
+
+
+def get_summarization_prompt_for_conversation(conversation_id: str) -> str:
+    """
+    Get the summarization prompt for a conversation.
+
+    Uses conversation_id directly since consolidation runs per-conversation.
+    """
+    if not conversation_id:
+        return get_default_summarization_prompt()
+
+    # Groups don't start with '+', DM conversation_ids are phone numbers
+    is_group = not conversation_id.startswith("+")
+
+    if is_group:
+        return get_group_summarization_prompt(conversation_id)
+    else:
+        return get_user_summarization_prompt(conversation_id)
+
+
 # --- Knowledge Scope Configuration ---
 
 def _read_knowledge_file(path: Path) -> List[str]:
