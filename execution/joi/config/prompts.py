@@ -396,12 +396,13 @@ Each fact needs these fields:
 - "key": short identifier
 - "value": the fact AS A COMPLETE SENTENCE with the person's name
 - "confidence": 0.0-1.0
+- "core": true/false - set true for fundamental identity facts (name, profession, family, key medical conditions) that should always be remembered
 
 Include the person's name in value (never "User" or "the user").
 If truly no facts, return: []
 
 Example:
-[{{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0}}, {{"category": "preference", "key": "coffee", "value": "Peter prefers black coffee", "confidence": 0.8}}]
+[{{"category": "personal", "key": "name", "value": "Peter is the user's name", "confidence": 1.0, "core": true}}, {{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0, "core": true}}, {{"category": "preference", "key": "coffee", "value": "Peter prefers black coffee", "confidence": 0.8, "core": false}}]
 
 Conversation:
 {conversation}

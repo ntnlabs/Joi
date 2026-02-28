@@ -1090,13 +1090,48 @@ REMEMBER_KEYWORDS = [
     "i like", "i love", "i hate", "i prefer", "my favorite",
     "i work", "i live", "my birthday", "my age", "my job",
     "keep in mind", "note that", "fyi", "btw", "by the way",
+    "always remember", "never forget", "important:",
 ]
+
+# Keywords that indicate the fact should always be remembered (marked important)
+ALWAYS_REMEMBER_KEYWORDS = ["always remember", "never forget", "important:"]
+
+# Categories that are automatically marked as important (core identity)
+IMPORTANT_CATEGORIES = ["personal", "relationship"]
+IMPORTANT_KEYS = ["name", "profession", "job", "partner", "spouse", "wife", "husband", "child", "children"]
 
 
 def _has_remember_keywords(text: str) -> bool:
     """Quick check if message might contain a remember request."""
     text_lower = text.lower()
     return any(kw in text_lower for kw in REMEMBER_KEYWORDS)
+
+
+def _should_mark_important(text: str, category: str, key: str) -> bool:
+    """
+    Determine if a fact should be marked as important (always included in context).
+
+    A fact is important if:
+    1. User explicitly says "always remember", "never forget", etc.
+    2. Category is in IMPORTANT_CATEGORIES (personal, relationship)
+    3. Key is in IMPORTANT_KEYS (name, profession, partner, etc.)
+    """
+    text_lower = text.lower()
+
+    # Check for explicit "always remember" phrases
+    if any(kw in text_lower for kw in ALWAYS_REMEMBER_KEYWORDS):
+        return True
+
+    # Check category
+    if category.lower() in IMPORTANT_CATEGORIES:
+        return True
+
+    # Check key
+    key_lower = key.lower()
+    if any(imp_key in key_lower for imp_key in IMPORTANT_KEYS):
+        return True
+
+    return False
 
 
 def _detect_and_extract_fact(
@@ -1114,6 +1149,7 @@ def _detect_and_extract_fact(
     2. LLM detection and extraction (accurate)
 
     For groups, includes sender info in the fact key to distinguish between users.
+    Core identity facts (name, profession, relationships) are auto-marked as important.
 
     Returns the saved fact value, or None if nothing to remember.
     """
@@ -1164,6 +1200,9 @@ Return ONLY valid JSON, nothing else:"""
                     safe_name = sender_name.lower().replace(" ", "_")[:20]
                     fact_key = f"{safe_name}_{result['key']}"
 
+                # Determine if fact is important (core identity)
+                is_important = _should_mark_important(text, result["category"], fact_key)
+
                 memory.store_fact(
                     category=result["category"],
                     key=fact_key,
@@ -1171,14 +1210,16 @@ Return ONLY valid JSON, nothing else:"""
                     confidence=0.95,  # High confidence - user explicitly stated
                     source="stated",
                     conversation_id=conversation_id,
+                    important=is_important,
                 )
+                important_marker = " [important]" if is_important else ""
                 if policy_manager.is_privacy_mode():
-                    logger.info("Saved stated fact for %s: %s.%s [privacy mode]",
+                    logger.info("Saved stated fact for %s: %s.%s%s [privacy mode]",
                                conversation_id[:8] + "..." if conversation_id else "global",
-                               result["category"], fact_key)
+                               result["category"], fact_key, important_marker)
                 else:
-                    logger.info("Saved stated fact for %s: %s.%s = %s",
-                               conversation_id or "global", result["category"], fact_key, fact_value)
+                    logger.info("Saved stated fact for %s: %s.%s = %s%s",
+                               conversation_id or "global", result["category"], fact_key, fact_value, important_marker)
                 return fact_value
     except json.JSONDecodeError as e:
         logger.debug("Failed to parse remember response: %s", e)
