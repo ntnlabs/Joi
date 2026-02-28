@@ -274,6 +274,7 @@ Corrected JSON:"""
             is_group = convo_id and not convo_id.startswith("+")
 
             stored_count = 0
+            important_count = 0
             for fact in valid_facts:
                 try:
                     fact_key = fact["key"]
@@ -288,6 +289,11 @@ Corrected JSON:"""
                         if original_first and original_first[0].isupper() and 2 <= len(first_word) <= 20:
                             fact_key = f"{first_word}_{fact['key']}"
 
+                    # Check if fact is marked as core (important)
+                    is_important = fact.get("core", False)
+                    if is_important:
+                        important_count += 1
+
                     self.memory.store_fact(
                         category=fact["category"],
                         key=fact_key,
@@ -295,12 +301,16 @@ Corrected JSON:"""
                         confidence=float(fact.get("confidence", 0.8)),
                         source="inferred",
                         conversation_id=convo_id,
+                        important=bool(is_important),
                     )
                     stored_count += 1
                 except (KeyError, TypeError, ValueError) as e:
                     logger.warning("Skipping malformed fact %s: %s", fact, e)
             if stored_count:
-                logger.info("Extracted and stored %d facts for %s", stored_count, convo_id)
+                if important_count:
+                    logger.info("Extracted and stored %d facts (%d core) for %s", stored_count, important_count, convo_id)
+                else:
+                    logger.info("Extracted and stored %d facts for %s", stored_count, convo_id)
 
         return valid_facts
 
