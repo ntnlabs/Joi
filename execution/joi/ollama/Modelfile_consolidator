@@ -1,0 +1,40 @@
+# Joi Consolidator Model - for memory tasks (fact extraction, summarization)
+#
+# USAGE:
+#   1. Copy to Modelfile and customize if needed
+#   2. Build: docker exec joi-brain ollama create joi-consolidator -f /opt/joi/execution/joi/ollama/Modelfile_consolidator
+#   3. Test:  docker exec -it joi-brain ollama run joi-consolidator "Extract facts: Peter likes coffee"
+#   4. Use:   Set JOI_CONSOLIDATION_MODEL=joi-consolidator or create .consolidation files
+#
+# UPDATING:
+#   If you change this file, re-run step 2 to "rebake" the model.
+#   Changes don't apply until you recreate the model.
+
+FROM mannix/llama3.1-8b-abliterated
+
+# --- Parameters ---
+
+# Temperature: higher = more creative, lower = more focused
+PARAMETER temperature 0.3
+
+# Top-p (nucleus sampling): higher = more diverse vocabulary
+PARAMETER top_p 0.5
+
+# Context window (tokens the model can "see")
+# 4096 is good for GTX 1650 (4GB VRAM)
+PARAMETER num_ctx 4096
+
+# Stop sequences - model stops generating when it sees these
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "<|end_of_text|>"
+
+# Repetition control - prevents getting stuck in loops
+PARAMETER repeat_penalty 1.2
+PARAMETER repeat_last_n 128
+
+# --- System Prompt ---
+# This is baked into the model - no need to send it each request
+
+SYSTEM """
+You are a precise assistant for memory tasks. Follow instructions exactly. Output only what is requested - no extra text, explanations, or formatting beyond what the prompt asks for.
+"""
