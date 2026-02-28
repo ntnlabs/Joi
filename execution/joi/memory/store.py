@@ -246,6 +246,47 @@ CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE ON knowledge_chunks BEGIN
     INSERT INTO knowledge_fts(knowledge_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
     INSERT INTO knowledge_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
 END;
+
+-- FTS5 for user_facts (indexes key and value)
+CREATE VIRTUAL TABLE IF NOT EXISTS user_facts_fts USING fts5(
+    key,
+    value,
+    content=user_facts,
+    content_rowid=id
+);
+
+CREATE TRIGGER IF NOT EXISTS facts_ai AFTER INSERT ON user_facts BEGIN
+    INSERT INTO user_facts_fts(rowid, key, value) VALUES (new.id, new.key, new.value);
+END;
+
+CREATE TRIGGER IF NOT EXISTS facts_ad AFTER DELETE ON user_facts BEGIN
+    INSERT INTO user_facts_fts(user_facts_fts, rowid, key, value) VALUES('delete', old.id, old.key, old.value);
+END;
+
+CREATE TRIGGER IF NOT EXISTS facts_au AFTER UPDATE ON user_facts BEGIN
+    INSERT INTO user_facts_fts(user_facts_fts, rowid, key, value) VALUES('delete', old.id, old.key, old.value);
+    INSERT INTO user_facts_fts(rowid, key, value) VALUES (new.id, new.key, new.value);
+END;
+
+-- FTS5 for context_summaries (indexes summary_text)
+CREATE VIRTUAL TABLE IF NOT EXISTS summaries_fts USING fts5(
+    summary_text,
+    content=context_summaries,
+    content_rowid=id
+);
+
+CREATE TRIGGER IF NOT EXISTS summaries_ai AFTER INSERT ON context_summaries BEGIN
+    INSERT INTO summaries_fts(rowid, summary_text) VALUES (new.id, new.summary_text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS summaries_ad AFTER DELETE ON context_summaries BEGIN
+    INSERT INTO summaries_fts(summaries_fts, rowid, summary_text) VALUES('delete', old.id, old.summary_text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS summaries_au AFTER UPDATE ON context_summaries BEGIN
+    INSERT INTO summaries_fts(summaries_fts, rowid, summary_text) VALUES('delete', old.id, old.summary_text);
+    INSERT INTO summaries_fts(rowid, summary_text) VALUES (new.id, new.summary_text);
+END;
 """
 
 
@@ -401,6 +442,39 @@ class MemoryStore:
                 conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN scope TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_scope ON knowledge_chunks(scope)")
                 conn.commit()
+
+        # Rebuild FTS indexes if empty but main tables have data
+        self._rebuild_fts_indexes_if_needed(conn)
+
+    def _rebuild_fts_indexes_if_needed(self, conn: sqlite3.Connection) -> None:
+        """Rebuild FTS indexes if they're empty but main tables have data (migration)."""
+        # Check user_facts_fts
+        try:
+            cursor = conn.execute("SELECT COUNT(*) FROM user_facts_fts")
+            fts_count = cursor.fetchone()[0]
+            cursor = conn.execute("SELECT COUNT(*) FROM user_facts WHERE active = 1")
+            facts_count = cursor.fetchone()[0]
+            if fts_count == 0 and facts_count > 0:
+                logger.info("Migration: Rebuilding user_facts_fts (%d facts)", facts_count)
+                conn.execute("INSERT INTO user_facts_fts(user_facts_fts) VALUES('rebuild')")
+                conn.commit()
+        except sqlite3.OperationalError as e:
+            # FTS table may not exist yet
+            logger.debug("user_facts_fts rebuild check skipped: %s", e)
+
+        # Check summaries_fts
+        try:
+            cursor = conn.execute("SELECT COUNT(*) FROM summaries_fts")
+            fts_count = cursor.fetchone()[0]
+            cursor = conn.execute("SELECT COUNT(*) FROM context_summaries")
+            summaries_count = cursor.fetchone()[0]
+            if fts_count == 0 and summaries_count > 0:
+                logger.info("Migration: Rebuilding summaries_fts (%d summaries)", summaries_count)
+                conn.execute("INSERT INTO summaries_fts(summaries_fts) VALUES('rebuild')")
+                conn.commit()
+        except sqlite3.OperationalError as e:
+            # FTS table may not exist yet
+            logger.debug("summaries_fts rebuild check skipped: %s", e)
 
     def close(self) -> None:
         """Close the database connection for this thread."""
@@ -818,6 +892,134 @@ class MemoryStore:
 
         return "\n".join(lines)
 
+    def search_facts(
+        self,
+        query: str,
+        limit: int = 10,
+        min_confidence: float = 0.5,
+        conversation_id: Optional[str] = None,
+    ) -> List[UserFact]:
+        """
+        Search user facts using FTS5 with BM25 ranking.
+
+        Args:
+            query: Search query (plain text, will be sanitized)
+            limit: Maximum number of results
+            min_confidence: Minimum confidence threshold
+            conversation_id: Filter by conversation ID (None = all)
+
+        Returns:
+            List of matching UserFact objects, ranked by relevance
+        """
+        conn = self._connect()
+
+        # Sanitize query for FTS5: extract words and wrap in quotes
+        import re
+        words = re.findall(r'\w+', query)
+        if not words:
+            return []
+
+        # Join words with OR, each word quoted to treat as literal
+        fts_query = " OR ".join(f'"{word}"' for word in words[:20])
+
+        try:
+            # Build conversation filter
+            if conversation_id is not None:
+                convo_filter = "AND f.conversation_id = ?"
+                params = [fts_query, min_confidence, conversation_id, limit]
+            else:
+                convo_filter = ""
+                params = [fts_query, min_confidence, limit]
+
+            cursor = conn.execute(
+                f"""
+                SELECT f.id, f.conversation_id, f.category, f.key, f.value,
+                       f.confidence, f.source, f.learned_at, f.last_verified_at,
+                       bm25(user_facts_fts) as rank
+                FROM user_facts f
+                JOIN user_facts_fts fts ON f.id = fts.rowid
+                WHERE user_facts_fts MATCH ?
+                  AND f.active = 1
+                  AND f.confidence >= ?
+                  {convo_filter}
+                ORDER BY rank
+                LIMIT ?
+                """,
+                params
+            )
+            rows = cursor.fetchall()
+            logger.debug("Facts FTS: %d matches for query '%s'", len(rows), fts_query[:50])
+        except sqlite3.OperationalError as e:
+            logger.warning("Facts FTS5 search failed: %s", e)
+            return []
+
+        return [
+            UserFact(
+                id=row["id"],
+                conversation_id=row["conversation_id"] or "",
+                category=row["category"],
+                key=row["key"],
+                value=row["value"],
+                confidence=row["confidence"],
+                source=row["source"],
+                learned_at=row["learned_at"],
+                last_verified_at=row["last_verified_at"],
+            )
+            for row in rows
+        ]
+
+    def get_facts_as_context(
+        self,
+        query: str,
+        max_tokens: int = 300,
+        min_confidence: float = 0.6,
+        conversation_id: Optional[str] = None,
+    ) -> str:
+        """
+        Search facts and format for LLM context with token limit.
+
+        Args:
+            query: Search query
+            max_tokens: Approximate max tokens (chars / 4)
+            min_confidence: Minimum confidence threshold
+            conversation_id: Filter by conversation ID
+
+        Returns:
+            Formatted context string, empty if no matches
+        """
+        facts = self.search_facts(
+            query,
+            limit=20,  # Fetch more than needed, will truncate by tokens
+            min_confidence=min_confidence,
+            conversation_id=conversation_id,
+        )
+        if not facts:
+            return ""
+
+        lines = ["Relevant facts about the user:"]
+        total_chars = 0
+        max_chars = max_tokens * 4  # Rough estimate
+
+        by_category: Dict[str, List[UserFact]] = {}
+        for fact in facts:
+            by_category.setdefault(fact.category, []).append(fact)
+
+        for category, cat_facts in sorted(by_category.items()):
+            cat_line = f"\n{category.title()}:"
+            if total_chars + len(cat_line) > max_chars:
+                break
+            lines.append(cat_line)
+            total_chars += len(cat_line)
+
+            for fact in cat_facts:
+                fact_line = f"  - {fact.key}: {fact.value}"
+                if total_chars + len(fact_line) > max_chars:
+                    break
+                lines.append(fact_line)
+                total_chars += len(fact_line)
+
+        return "\n".join(lines)
+
     # --- Context Summaries Operations ---
 
     def store_summary(
@@ -913,6 +1115,129 @@ class MemoryStore:
             date_str = datetime.fromtimestamp(summary.period_end / 1000).strftime("%Y-%m-%d")
             lines.append(f"\n[{date_str}]")
             lines.append(summary.summary_text)
+
+        return "\n".join(lines)
+
+    def search_summaries(
+        self,
+        query: str,
+        limit: int = 5,
+        days: int = 30,
+        conversation_id: Optional[str] = None,
+    ) -> List[ContextSummary]:
+        """
+        Search summaries using FTS5 with BM25 ranking.
+
+        Args:
+            query: Search query (plain text, will be sanitized)
+            limit: Maximum number of results
+            days: Only search summaries from last N days
+            conversation_id: Filter by conversation ID (None = all)
+
+        Returns:
+            List of matching ContextSummary objects, ranked by relevance
+        """
+        conn = self._connect()
+
+        # Sanitize query for FTS5: extract words and wrap in quotes
+        import re
+        words = re.findall(r'\w+', query)
+        if not words:
+            return []
+
+        # Calculate cutoff time
+        now_ms = int(time.time() * 1000)
+        cutoff_ms = now_ms - (days * 24 * 60 * 60 * 1000)
+
+        # Join words with OR, each word quoted to treat as literal
+        fts_query = " OR ".join(f'"{word}"' for word in words[:20])
+
+        try:
+            # Build conversation filter
+            if conversation_id is not None:
+                convo_filter = "AND s.conversation_id = ?"
+                params = [fts_query, cutoff_ms, conversation_id, limit]
+            else:
+                convo_filter = ""
+                params = [fts_query, cutoff_ms, limit]
+
+            cursor = conn.execute(
+                f"""
+                SELECT s.id, s.summary_type, s.period_start, s.period_end,
+                       s.summary_text, s.message_count, s.created_at,
+                       bm25(summaries_fts) as rank
+                FROM context_summaries s
+                JOIN summaries_fts fts ON s.id = fts.rowid
+                WHERE summaries_fts MATCH ?
+                  AND s.period_end > ?
+                  {convo_filter}
+                ORDER BY rank
+                LIMIT ?
+                """,
+                params
+            )
+            rows = cursor.fetchall()
+            logger.debug("Summaries FTS: %d matches for query '%s'", len(rows), fts_query[:50])
+        except sqlite3.OperationalError as e:
+            logger.warning("Summaries FTS5 search failed: %s", e)
+            return []
+
+        return [
+            ContextSummary(
+                id=row["id"],
+                summary_type=row["summary_type"],
+                period_start=row["period_start"],
+                period_end=row["period_end"],
+                summary_text=row["summary_text"],
+                message_count=row["message_count"] or 0,
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
+    def get_summaries_as_context(
+        self,
+        query: str,
+        max_tokens: int = 400,
+        days: int = 30,
+        conversation_id: Optional[str] = None,
+    ) -> str:
+        """
+        Search summaries and format for LLM context with token limit.
+
+        Args:
+            query: Search query
+            max_tokens: Approximate max tokens (chars / 4)
+            days: Only search summaries from last N days
+            conversation_id: Filter by conversation ID
+
+        Returns:
+            Formatted context string, empty if no matches
+        """
+        summaries = self.search_summaries(
+            query,
+            limit=10,  # Fetch more than needed, will truncate by tokens
+            days=days,
+            conversation_id=conversation_id,
+        )
+        if not summaries:
+            return ""
+
+        # Import here to avoid circular dependency
+        from datetime import datetime
+
+        lines = ["Relevant conversation history:"]
+        total_chars = 0
+        max_chars = max_tokens * 4  # Rough estimate
+
+        # Sort by period_end ascending (oldest first) for chronological context
+        for summary in sorted(summaries, key=lambda s: s.period_end):
+            date_str = datetime.fromtimestamp(summary.period_end / 1000).strftime("%Y-%m-%d")
+            summary_block = f"\n[{date_str}]\n{summary.summary_text}"
+            if total_chars + len(summary_block) > max_chars:
+                break
+            lines.append(summary_block)
+            total_chars += len(summary_block)
 
         return "\n".join(lines)
 
