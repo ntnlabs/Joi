@@ -371,6 +371,12 @@ def get_consolidation_model_for_conversation(conversation_id: str) -> Optional[s
 # --- Consolidation Prompt Configuration ---
 
 # Default prompts (used when no file exists)
+#
+# NOTE: These prompts must contain {conversation} placeholder.
+# The code replaces {conversation} with the actual messages before sending to LLM.
+# If you create custom prompt files, include {conversation} where you want
+# the conversation text to appear.
+
 DEFAULT_FACT_EXTRACTION_PROMPT = """Extract facts worth remembering from this conversation.
 
 Look for ANY of these:
