@@ -339,8 +339,14 @@ class MemoryStore:
         # Ensure directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
+        # Check if this is a fresh database
+        is_new_db = not Path(db_path).exists()
+
         # Initialize schema
         self._init_schema()
+
+        if is_new_db:
+            logger.info("Created new memory database: %s", db_path)
 
         encryption_status = "encrypted" if self._encrypted else "unencrypted"
         logger.info("Memory store initialized: %s (%s)", db_path, encryption_status)
