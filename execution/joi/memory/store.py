@@ -816,11 +816,14 @@ class MemoryStore:
         important_int = 1 if important else 0
 
         # Try to update existing active fact for this conversation
+        # Note: important flag can only be promoted (0->1), never demoted (1->0)
+        # This preserves explicitly marked important facts even when updated via other paths
         cursor = conn.execute(
             """
             UPDATE user_facts
             SET value = ?, confidence = ?, source = ?, source_message_id = ?,
-                important = ?, last_verified_at = ?, updated_at = ?
+                important = CASE WHEN important = 1 THEN 1 ELSE ? END,
+                last_verified_at = ?, updated_at = ?
             WHERE conversation_id = ? AND category = ? AND key = ? AND active = 1
             """,
             (value, confidence, source, source_message_id, important_int, now_ms, now_ms, conversation_id, category, key)
