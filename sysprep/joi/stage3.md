@@ -94,7 +94,36 @@ chmod 640 /etc/default/joi-api
 chown root:joi /etc/default/joi-api
 ```
 
-## 6. Deploy / Start Ollama Container (GPU)
+## 6. Configure Docker NVIDIA Runtime as Default
+
+Docker may fall back to CPU even with `--gpus all` if NVIDIA runtime is not the default. Check and fix:
+
+```bash
+docker info | grep -i "default runtime"
+```
+
+If it shows `runc` instead of `nvidia`, configure the daemon:
+
+```bash
+cat > /etc/docker/daemon.json << 'EOF'
+{
+  "default-runtime": "nvidia",
+  "runtimes": {
+    "nvidia": {
+      "path": "nvidia-container-runtime",
+      "runtimeArgs": []
+    }
+  }
+}
+EOF
+
+systemctl restart docker
+docker info | grep -i "default runtime"
+```
+
+Should now show `Default Runtime: nvidia`.
+
+## 7. Deploy / Start Ollama Container (GPU)
 
 Run Ollama with GPU access:
 
@@ -117,7 +146,7 @@ docker logs --tail 100 ollama
 docker exec ollama nvidia-smi
 ```
 
-## 7. Pull / Verify Model in Ollama
+## 8. Pull / Verify Model in Ollama
 
 Primary business-mode deployment model for this host:
 - `phi4:14b-q4_K_M`
@@ -136,7 +165,7 @@ time curl -s http://localhost:11434/api/generate \
   -d '{"model":"phi4:14b-q4_K_M","prompt":"hi","stream":false}' | head -c 200
 ```
 
-## 8. Configure Joi Model Selection (Important)
+## 9. Configure Joi Model Selection (Important)
 
 Set the Joi model in `/etc/default/joi-api` to the exact model pulled into Ollama.
 
@@ -161,7 +190,7 @@ Verify:
 grep -E '^JOI_OLLAMA_MODEL=|^JOI_OLLAMA_NUM_CTX=' /etc/default/joi-api
 ```
 
-## 9. Start / Restart Joi API
+## 10. Start / Restart Joi API
 
 Enable/start the service:
 
@@ -171,7 +200,7 @@ systemctl restart joi-api
 systemctl status joi-api
 ```
 
-## 10. Verify Joi API Health
+## 11. Verify Joi API Health
 
 ```bash
 curl http://127.0.0.1:8443/health
@@ -179,7 +208,7 @@ curl http://127.0.0.1:8443/health
 
 If you are testing across Nebula, also verify Mesh-facing health from the appropriate peer path.
 
-## 11. Live Logs / Runtime Checks
+## 12. Live Logs / Runtime Checks
 
 Useful checks during rollout:
 
@@ -196,13 +225,13 @@ ufw status verbose
 cd /opt/Joi/execution/joi/scripts
 ```
 
-## 12. Close Joi Update Window (If Opened)
+## 13. Close Joi Update Window (If Opened)
 
 ```bash
 ./update.sh --disable
 ```
 
-## 13. Post-Checks
+## 14. Post-Checks
 
 - `docker ps` (Ollama running)
 - `docker exec ollama nvidia-smi` (GPU visible in container)
