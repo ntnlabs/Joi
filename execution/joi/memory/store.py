@@ -346,7 +346,8 @@ class MemoryStore:
         self._init_schema()
 
         if is_new_db:
-            logger.info("Created new memory database: %s", db_path)
+            encryption_status = "encrypted" if self._encrypted else "unencrypted"
+            logger.info("Created new memory database: %s (%s)", db_path, encryption_status)
 
         encryption_status = "encrypted" if self._encrypted else "unencrypted"
         logger.info("Memory store initialized: %s (%s)", db_path, encryption_status)
