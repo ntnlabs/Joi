@@ -15,6 +15,8 @@ from .prompts import (
     get_context_for_conversation,
     get_knowledge_scopes_for_conversation,
     get_consolidation_model_for_conversation,
+    get_fact_extraction_prompt_for_conversation,
+    get_summarization_prompt_for_conversation,
     sanitize_scope,
 )
 from .settings import Settings, load_settings
@@ -33,6 +35,8 @@ __all__ = [
     "get_context_for_conversation",
     "get_knowledge_scopes_for_conversation",
     "get_consolidation_model_for_conversation",
+    "get_fact_extraction_prompt_for_conversation",
+    "get_summarization_prompt_for_conversation",
     "has_custom_model",
     "ensure_prompts_dir",
     "sanitize_scope",
