@@ -45,6 +45,7 @@ from config import (
     get_model_for_conversation,
     get_context_for_conversation,
     get_knowledge_scopes_for_conversation,
+    get_consolidation_model_for_conversation,
     ensure_prompts_dir,
     sanitize_scope,
 )
@@ -677,6 +678,7 @@ consolidator = MemoryConsolidator(
     memory=memory,
     llm_client=llm,
     consolidation_model=CONSOLIDATION_MODEL,
+    model_lookup=get_consolidation_model_for_conversation,
 )
 
 # Initialize policy manager for mesh config sync

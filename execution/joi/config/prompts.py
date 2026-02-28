@@ -317,6 +317,57 @@ def get_context_for_conversation(conversation_type: str, conversation_id: str, s
         return get_user_context(sender_id)
 
 
+# --- Consolidation Model Configuration ---
+
+def get_default_consolidation_model() -> Optional[str]:
+    """Get the default consolidation model from default.consolidation file."""
+    model_file = PROMPTS_DIR / "default.consolidation"
+    return _read_model_file(model_file)
+
+
+def get_user_consolidation_model(user_id: str) -> Optional[str]:
+    """Get consolidation model for a specific user."""
+    safe_user_id = sanitize_scope(user_id)
+    user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.consolidation"
+    model = _read_model_file(user_file)
+    if model:
+        logger.debug("Using user-specific consolidation model for %s: %s", user_id, model)
+        return model
+    return get_default_consolidation_model()
+
+
+def get_group_consolidation_model(group_id: str) -> Optional[str]:
+    """Get consolidation model for a specific group."""
+    safe_group_id = sanitize_scope(group_id)
+    group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.consolidation"
+    model = _read_model_file(group_file)
+    if model:
+        logger.debug("Using group-specific consolidation model for %s: %s", group_id, model)
+        return model
+    return get_default_consolidation_model()
+
+
+def get_consolidation_model_for_conversation(conversation_id: str) -> Optional[str]:
+    """
+    Get the consolidation model for a conversation.
+
+    Unlike chat model lookup, this uses conversation_id directly since
+    consolidation runs per-conversation (not per-message with sender context).
+
+    Returns None if no custom consolidation model is configured (use env default).
+    """
+    if not conversation_id:
+        return get_default_consolidation_model()
+
+    # Groups don't start with '+', DM conversation_ids are phone numbers
+    is_group = not conversation_id.startswith("+")
+
+    if is_group:
+        return get_group_consolidation_model(conversation_id)
+    else:
+        return get_user_consolidation_model(conversation_id)
+
+
 # --- Knowledge Scope Configuration ---
 
 def _read_knowledge_file(path: Path) -> List[str]:
