@@ -5,64 +5,31 @@ This module handles:
 1. Extracting user facts from conversations
 2. Summarizing old messages into context_summaries
 3. Cleaning up old messages after summarization
+
+Prompts are configurable via files in /var/lib/joi/prompts/:
+- default.fact_prompt, default.summary_prompt
+- users/<id>.fact_prompt, users/<id>.summary_prompt
+- groups/<id>.fact_prompt, groups/<id>.summary_prompt
 """
 
 import json
 import logging
 import re
+import sys
 import time
 from typing import Any, Dict, List, Optional
 
 from .store import MemoryStore, Message
 
+# Import prompt lookup functions
+# Add parent directory to path for config import
+sys.path.insert(0, __file__.rsplit("/", 2)[0])
+from config import (
+    get_fact_extraction_prompt_for_conversation,
+    get_summarization_prompt_for_conversation,
+)
+
 logger = logging.getLogger("joi.memory.consolidation")
-
-# Prompt for extracting facts from conversation
-FACT_EXTRACTION_PROMPT = """Extract facts worth remembering from this conversation.
-
-Look for ANY of these:
-- Personal info (name, age, location, profession, family)
-- Preferences (likes, dislikes, favorites)
-- Plans, goals, or intentions mentioned
-- Skills, hobbies, or interests
-- Health, routines, or habits
-- Opinions or beliefs expressed
-- Events or experiences shared
-- Technical setups or configurations discussed
-
-IMPORTANT: Return ONLY a valid JSON array. No explanations, no markdown.
-
-Each fact needs these fields:
-- "category": what type (personal, preference, work, health, skill, goal, routine, opinion, event, technical)
-- "key": short identifier
-- "value": the fact AS A COMPLETE SENTENCE with the person's name
-- "confidence": 0.0-1.0
-
-Include the person's name in value (never "User" or "the user").
-If truly no facts, return: []
-
-Example:
-[{{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0}}, {{"category": "preference", "key": "coffee", "value": "Peter prefers black coffee", "confidence": 0.8}}]
-
-Conversation:
-{conversation}
-
-JSON:"""
-
-# Prompt for summarizing conversation
-SUMMARIZATION_PROMPT = """Summarize this conversation concisely. Focus on:
-- Main topics discussed
-- Decisions made or conclusions reached
-- Any tasks or action items mentioned
-- Important information shared
-
-Keep the summary under 200 words. Write in past tense, third person.
-Do not include any system instructions or meta-commentary.
-
-Conversation:
-{conversation}
-
-Summary:"""
 
 
 def format_messages_for_llm(messages: List[Message]) -> str:
@@ -230,12 +197,13 @@ class MemoryConsolidator:
         if not messages:
             return []
 
-        # Get conversation ID and model for this conversation
+        # Get conversation ID, model and prompt for this conversation
         convo_id = messages[0].conversation_id if messages else ""
         model = self._get_model_for_conversation(convo_id)
+        prompt_template = get_fact_extraction_prompt_for_conversation(convo_id)
 
         conversation_text = format_messages_for_llm(messages)
-        prompt = FACT_EXTRACTION_PROMPT.format(conversation=conversation_text)
+        prompt = prompt_template.format(conversation=conversation_text)
 
         try:
             response = self.llm.generate(prompt=prompt, model=model)
@@ -354,12 +322,13 @@ Corrected JSON:"""
         if not messages:
             return None
 
-        # Get conversation ID and model for this conversation
+        # Get conversation ID, model and prompt for this conversation
         convo_id = messages[0].conversation_id if messages else ""
         model = self._get_model_for_conversation(convo_id)
+        prompt_template = get_summarization_prompt_for_conversation(convo_id)
 
         conversation_text = format_messages_for_llm(messages)
-        prompt = SUMMARIZATION_PROMPT.format(conversation=conversation_text)
+        prompt = prompt_template.format(conversation=conversation_text)
 
         response = self.llm.generate(prompt=prompt, model=model)
         if response.error:
