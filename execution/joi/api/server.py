@@ -656,6 +656,12 @@ _validate_compaction_settings()
 RAG_ENABLED = os.getenv("JOI_RAG_ENABLED", "1") == "1"  # Default: enabled
 RAG_MAX_TOKENS = int(os.getenv("JOI_RAG_MAX_TOKENS", "500"))  # Max tokens for RAG context
 
+# FTS search settings for facts and summaries
+FACTS_FTS_ENABLED = os.getenv("JOI_FACTS_FTS_ENABLED", "1") == "1"  # Default: enabled
+FACTS_FTS_MAX_TOKENS = int(os.getenv("JOI_FACTS_FTS_MAX_TOKENS", "300"))
+SUMMARIES_FTS_ENABLED = os.getenv("JOI_SUMMARIES_FTS_ENABLED", "1") == "1"  # Default: enabled
+SUMMARIES_FTS_MAX_TOKENS = int(os.getenv("JOI_SUMMARIES_FTS_MAX_TOKENS", "400"))
+
 # Time awareness - inject current datetime into system prompt
 TIME_AWARENESS_ENABLED = os.getenv("JOI_TIME_AWARENESS", "0") == "1"  # Default: disabled
 TIME_AWARENESS_TIMEZONE = os.getenv("JOI_TIMEZONE", "Europe/Bratislava")  # User timezone
@@ -1525,6 +1531,10 @@ def health():
             "sources": len(knowledge_sources),
             "chunks": knowledge_chunks,
         },
+        "fts": {
+            "facts_enabled": FACTS_FTS_ENABLED,
+            "summaries_enabled": SUMMARIES_FTS_ENABLED,
+        },
         "queue": {
             "inbound": message_queue.get_queue_size(),
         },
@@ -2204,15 +2214,51 @@ def _build_enriched_prompt(
     """Build system prompt enriched with user facts, summaries, and RAG context for this conversation."""
     parts = [base_prompt]
 
-    # Add user facts for this conversation
-    facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
-    if facts_text:
-        parts.append("\n\n" + facts_text)
+    # Add user facts for this conversation (FTS search with fallback)
+    if FACTS_FTS_ENABLED and user_message:
+        facts_text = memory.get_facts_as_context(
+            user_message,
+            max_tokens=FACTS_FTS_MAX_TOKENS,
+            min_confidence=0.6,
+            conversation_id=conversation_id,
+        )
+        if facts_text:
+            parts.append("\n\n" + facts_text)
+            logger.info("Facts FTS: added %d chars", len(facts_text))
+        else:
+            # Fallback: load all facts if FTS returns nothing
+            facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
+            if facts_text:
+                parts.append("\n\n" + facts_text)
+                logger.debug("Facts FTS: fallback to all facts (%d chars)", len(facts_text))
+    else:
+        # FTS disabled: original behavior
+        facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
+        if facts_text:
+            parts.append("\n\n" + facts_text)
 
-    # Add recent conversation summaries for this conversation
-    summaries_text = memory.get_summaries_as_text(days=7, conversation_id=conversation_id)
-    if summaries_text:
-        parts.append("\n\n" + summaries_text)
+    # Add recent conversation summaries for this conversation (FTS search with fallback)
+    if SUMMARIES_FTS_ENABLED and user_message:
+        summaries_text = memory.get_summaries_as_context(
+            user_message,
+            max_tokens=SUMMARIES_FTS_MAX_TOKENS,
+            days=30,
+            conversation_id=conversation_id,
+        )
+        if summaries_text:
+            parts.append("\n\n" + summaries_text)
+            logger.info("Summaries FTS: added %d chars", len(summaries_text))
+        else:
+            # Fallback: load recent summaries if FTS returns nothing
+            summaries_text = memory.get_summaries_as_text(days=7, conversation_id=conversation_id)
+            if summaries_text:
+                parts.append("\n\n" + summaries_text)
+                logger.debug("Summaries FTS: fallback to recent (%d chars)", len(summaries_text))
+    else:
+        # FTS disabled: original behavior
+        summaries_text = memory.get_summaries_as_text(days=7, conversation_id=conversation_id)
+        if summaries_text:
+            parts.append("\n\n" + summaries_text)
 
     # Add RAG context if enabled and user message provided
     if RAG_ENABLED and user_message:
