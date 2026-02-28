@@ -290,7 +290,8 @@ Corrected JSON:"""
                             fact_key = f"{first_word}_{fact['key']}"
 
                     # Check if fact is marked as core (important)
-                    is_important = fact.get("core", False)
+                    # Must be strictly True (not string "true" or "false")
+                    is_important = fact.get("core") is True
                     if is_important:
                         important_count += 1
 
