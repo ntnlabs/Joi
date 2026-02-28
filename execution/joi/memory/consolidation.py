@@ -172,6 +172,11 @@ def validate_summary(summary: str) -> tuple[bool, str]:
     return True, summary.strip()
 
 
+from typing import Callable
+
+ModelLookupFunc = Callable[[str], Optional[str]]
+
+
 class MemoryConsolidator:
     """Handles memory consolidation tasks."""
 
@@ -180,6 +185,7 @@ class MemoryConsolidator:
         memory: MemoryStore,
         llm_client: Any,
         consolidation_model: Optional[str] = None,
+        model_lookup: Optional[ModelLookupFunc] = None,
     ):
         """
         Initialize consolidator.
@@ -187,12 +193,24 @@ class MemoryConsolidator:
         Args:
             memory: MemoryStore instance
             llm_client: LLM client with generate() method
-            consolidation_model: Optional model name for consolidation tasks
+            consolidation_model: Default model name for consolidation tasks
                                 (uses low temperature for precise extraction)
+            model_lookup: Optional function to look up per-conversation model.
+                         Takes conversation_id, returns model name or None.
+                         Falls back to consolidation_model if returns None.
         """
         self.memory = memory
         self.llm = llm_client
         self.consolidation_model = consolidation_model
+        self.model_lookup = model_lookup
+
+    def _get_model_for_conversation(self, conversation_id: str) -> Optional[str]:
+        """Get the consolidation model for a conversation."""
+        if self.model_lookup:
+            model = self.model_lookup(conversation_id)
+            if model:
+                return model
+        return self.consolidation_model
 
     def extract_facts_from_messages(
         self,
@@ -212,11 +230,15 @@ class MemoryConsolidator:
         if not messages:
             return []
 
+        # Get conversation ID and model for this conversation
+        convo_id = messages[0].conversation_id if messages else ""
+        model = self._get_model_for_conversation(convo_id)
+
         conversation_text = format_messages_for_llm(messages)
         prompt = FACT_EXTRACTION_PROMPT.format(conversation=conversation_text)
 
         try:
-            response = self.llm.generate(prompt=prompt, model=self.consolidation_model)
+            response = self.llm.generate(prompt=prompt, model=model)
         except Exception as e:
             logger.error("LLM generate failed: %s", e)
             return []
@@ -261,7 +283,7 @@ Previous response that failed:
 
 Corrected JSON:"""
             try:
-                retry_response = self.llm.generate(prompt=retry_prompt, model=self.consolidation_model)
+                retry_response = self.llm.generate(prompt=retry_prompt, model=model)
                 if retry_response.text and not retry_response.error:
                     facts = parse_facts_json(retry_response.text)
                     if facts:
@@ -279,7 +301,6 @@ Corrected JSON:"""
 
         if store and valid_facts:
             # Store facts under conversation_id (works for both DMs and groups)
-            convo_id = messages[0].conversation_id if messages else ""
 
             # Detect if this is a group (not a phone number)
             is_group = convo_id and not convo_id.startswith("+")
@@ -333,10 +354,14 @@ Corrected JSON:"""
         if not messages:
             return None
 
+        # Get conversation ID and model for this conversation
+        convo_id = messages[0].conversation_id if messages else ""
+        model = self._get_model_for_conversation(convo_id)
+
         conversation_text = format_messages_for_llm(messages)
         prompt = SUMMARIZATION_PROMPT.format(conversation=conversation_text)
 
-        response = self.llm.generate(prompt=prompt, model=self.consolidation_model)
+        response = self.llm.generate(prompt=prompt, model=model)
         if response.error:
             logger.error("LLM error during summarization: %s", response.error)
             return None
@@ -350,7 +375,6 @@ Corrected JSON:"""
         if store:
             period_start = min(m.timestamp for m in messages)
             period_end = max(m.timestamp for m in messages)
-            convo_id = messages[0].conversation_id if messages else ""
 
             self.memory.store_summary(
                 summary_type="conversation",
