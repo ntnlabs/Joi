@@ -1126,9 +1126,11 @@ def _should_mark_important(text: str, category: str, key: str) -> bool:
     if category.lower() in IMPORTANT_CATEGORIES:
         return True
 
-    # Check key
+    # Check key - use word boundary matching to avoid false positives
+    # (e.g., "username" should not match "name")
     key_lower = key.lower()
-    if any(imp_key in key_lower for imp_key in IMPORTANT_KEYS):
+    key_words = set(re.split(r'[_\-\s]+', key_lower))  # Split on common separators
+    if key_words & set(IMPORTANT_KEYS):  # Set intersection
         return True
 
     return False
