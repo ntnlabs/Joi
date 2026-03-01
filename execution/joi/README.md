@@ -156,14 +156,17 @@ Different users or groups can use different models and context sizes via config 
 ├── default.txt              # Default prompt (fallback)
 ├── default.model            # Default model (optional)
 ├── default.context          # Default context message count (optional)
+├── default.compact_window   # Default compaction batch size (optional)
 ├── users/
-│   ├── +1234567890.txt      # User's extra prompt (optional)
-│   ├── +1234567890.model    # User's model: joi-creative
-│   └── +1234567890.context  # User's context size: 20
+│   ├── +1234567890.txt           # User's extra prompt (optional)
+│   ├── +1234567890.model         # User's model: joi-creative
+│   ├── +1234567890.context       # User's context size: 20
+│   └── +1234567890.compact_window # User's compact batch: 10
 └── groups/
-    ├── ABC123.txt           # Group's extra prompt (optional)
-    ├── ABC123.model         # Group's model: joi-formal
-    └── ABC123.context       # Group's context size: 60
+    ├── ABC123.txt                # Group's extra prompt (optional)
+    ├── ABC123.model              # Group's model: joi-formal
+    ├── ABC123.context            # Group's context size: 60
+    └── ABC123.compact_window     # Group's compact batch: 30
 ```
 
 ### File Types
@@ -173,6 +176,7 @@ Different users or groups can use different models and context sizes via config 
 | `.txt` | System prompt text | default.txt → hardcoded |
 | `.model` | Model name (e.g., `joi-creative`) | default.model → `JOI_OLLAMA_MODEL` |
 | `.context` | Number of messages (e.g., `20`) | default.context → `JOI_CONTEXT_MESSAGES` |
+| `.compact_window` | Compaction batch size (e.g., `15`) | default.compact_window → `JOI_COMPACT_BATCH_SIZE` |
 | `.knowledge` | Additional RAG scopes (one per line) | Own scope only |
 
 ### Model/Prompt Combinations
@@ -190,10 +194,12 @@ Different users or groups can use different models and context sizes via config 
 # User gets creative model with smaller context (for smaller model)
 echo "joi-creative" > /var/lib/joi/prompts/users/+1234567890.model
 echo "20" > /var/lib/joi/prompts/users/+1234567890.context
+echo "10" > /var/lib/joi/prompts/users/+1234567890.compact_window
 
-# Group gets formal model with larger context (for bigger model)
+# Group gets formal model with larger context and more aggressive compaction
 echo "joi-formal" > /var/lib/joi/prompts/groups/ABC123.model
-echo "60" > /var/lib/joi/prompts/groups/ABC123.context
+echo "100" > /var/lib/joi/prompts/groups/ABC123.context
+echo "30" > /var/lib/joi/prompts/groups/ABC123.compact_window
 echo "This is a work group. Keep responses professional." > /var/lib/joi/prompts/groups/ABC123.txt
 ```
 
