@@ -34,6 +34,9 @@ JOI_REQUIRE_ENCRYPTED_DB=1
 # When messages exceed context size, compact oldest N messages
 # Constraint: 10 <= batch < context // 2
 JOI_COMPACT_BATCH_SIZE=20
+# Per-user/group overrides: create .context or .compact_window files in:
+#   /var/lib/joi/prompts/users/<id>.context (e.g., "100")
+#   /var/lib/joi/prompts/groups/<id>.compact_window (e.g., "30")
 # Set to 1 to archive messages instead of deleting
 JOI_CONSOLIDATION_ARCHIVE=0
 # Optional: separate model for fact extraction (low temperature recommended)
