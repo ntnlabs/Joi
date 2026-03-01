@@ -27,6 +27,8 @@ sys.path.insert(0, __file__.rsplit("/", 2)[0])
 from config import (
     get_fact_extraction_prompt_for_conversation,
     get_summarization_prompt_for_conversation,
+    get_context_for_conversation_by_id,
+    get_compact_window_for_conversation,
 )
 
 logger = logging.getLogger("joi.memory.consolidation")
@@ -434,6 +436,7 @@ Corrected JSON:"""
         Consolidate a single conversation using count-based trigger.
 
         Compacts oldest messages when total exceeds context window.
+        Per-conversation settings (.context, .compact_window files) override defaults.
         """
         results = {
             "ran": False,
@@ -442,6 +445,15 @@ Corrected JSON:"""
             "messages_summarized": 0,
             "messages_removed": 0,
         }
+
+        # Look up per-conversation settings (override defaults if configured)
+        custom_context = get_context_for_conversation_by_id(conversation_id)
+        if custom_context is not None:
+            context_messages = custom_context
+
+        custom_compact = get_compact_window_for_conversation(conversation_id)
+        if custom_compact is not None:
+            compact_batch_size = custom_compact
 
         # Check message count for this conversation
         message_count = self.memory.get_message_count_for_conversation(conversation_id)
