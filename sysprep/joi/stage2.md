@@ -190,6 +190,17 @@ systemctl enable gdm3
 systemctl start gdm3
 ```
 
+Optional: blank the local notebook panel in CLI-only mode:
+
+```bash
+echo 1 > /sys/class/graphics/fb0/blank   # blank panel
+echo 0 > /sys/class/graphics/fb0/blank   # unblank panel
+```
+
+Notes:
+- This is local framebuffer blanking; it does not stop services.
+- `setterm --blank` over SSH may fail due to terminal type (`xterm-256color`).
+
 ## 10. Close Joi Update Window
 
 ```bash
