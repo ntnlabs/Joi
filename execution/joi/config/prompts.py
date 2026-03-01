@@ -5,17 +5,20 @@ Supports per-user and per-group prompts, models, and context sizes with fallback
 
 Directory structure:
     /var/lib/joi/prompts/
-    ├── default.txt           # Default prompt (fallback)
-    ├── default.model         # Default model name (optional)
-    ├── default.context       # Default context message count (optional)
+    ├── default.txt            # Default prompt (fallback)
+    ├── default.model          # Default model name (optional)
+    ├── default.context        # Default context message count (optional)
+    ├── default.compact_window # Default compact batch size (optional)
     ├── users/
-    │   ├── <user_id>.txt     # Per-user prompt (optional if .model exists)
-    │   ├── <user_id>.model   # Per-user model (optional)
-    │   └── <user_id>.context # Per-user context size (optional)
+    │   ├── <user_id>.txt           # Per-user prompt (optional if .model exists)
+    │   ├── <user_id>.model         # Per-user model (optional)
+    │   ├── <user_id>.context       # Per-user context size (optional)
+    │   └── <user_id>.compact_window # Per-user compact batch size (optional)
     └── groups/
-        ├── <group_id>.txt    # Per-group prompt (optional if .model exists)
-        ├── <group_id>.model  # Per-group model (optional)
-        └── <group_id>.context # Per-group context size (optional)
+        ├── <group_id>.txt           # Per-group prompt (optional if .model exists)
+        ├── <group_id>.model         # Per-group model (optional)
+        ├── <group_id>.context       # Per-group context size (optional)
+        └── <group_id>.compact_window # Per-group compact batch size (optional)
 
 Model/Prompt combinations:
     - No .model, no .txt  → default model + default prompt
@@ -24,8 +27,12 @@ Model/Prompt combinations:
     - Has .model, has .txt → user's model + user's prompt (additions)
 
 Context size:
-    - .context file contains a number (e.g., "20")
+    - .context file contains a number (e.g., "50")
     - Falls back to JOI_CONTEXT_MESSAGES env var if not set
+
+Compact window:
+    - .compact_window file contains a number (e.g., "20")
+    - Falls back to JOI_COMPACT_BATCH_SIZE env var if not set
 """
 
 import logging
@@ -315,6 +322,88 @@ def get_context_for_conversation(conversation_type: str, conversation_id: str, s
         return get_group_context(conversation_id)
     else:
         return get_user_context(sender_id)
+
+
+def get_context_for_conversation_by_id(conversation_id: str) -> Optional[int]:
+    """
+    Get the context message count using conversation_id directly.
+
+    Used by consolidation which runs per-conversation without sender context.
+    Returns None if no custom context is configured (use env default).
+    """
+    if not conversation_id:
+        return get_default_context()
+
+    # Groups don't start with '+', DM conversation_ids are phone numbers
+    is_group = not conversation_id.startswith("+")
+
+    if is_group:
+        return get_group_context(conversation_id)
+    else:
+        return get_user_context(conversation_id)
+
+
+# --- Compact Window Configuration ---
+
+def _read_compact_window_file(path: Path) -> Optional[int]:
+    """Read compact window size from file if it exists."""
+    try:
+        if path.exists():
+            content = path.read_text(encoding="utf-8").strip()
+            if content:
+                return int(content)
+    except ValueError:
+        logger.warning("Invalid compact window in %s (not a number)", path)
+    except Exception as e:
+        logger.warning("Failed to read compact window from %s: %s", path, e)
+    return None
+
+
+def get_default_compact_window() -> Optional[int]:
+    """Get the default compact window from default.compact_window file."""
+    compact_file = PROMPTS_DIR / "default.compact_window"
+    return _read_compact_window_file(compact_file)
+
+
+def get_user_compact_window(user_id: str) -> Optional[int]:
+    """Get compact window for a specific user."""
+    safe_user_id = sanitize_scope(user_id)
+    user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.compact_window"
+    compact = _read_compact_window_file(user_file)
+    if compact is not None:
+        logger.debug("Using user-specific compact window for %s: %d", user_id, compact)
+        return compact
+    return get_default_compact_window()
+
+
+def get_group_compact_window(group_id: str) -> Optional[int]:
+    """Get compact window for a specific group."""
+    safe_group_id = sanitize_scope(group_id)
+    group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.compact_window"
+    compact = _read_compact_window_file(group_file)
+    if compact is not None:
+        logger.debug("Using group-specific compact window for %s: %d", group_id, compact)
+        return compact
+    return get_default_compact_window()
+
+
+def get_compact_window_for_conversation(conversation_id: str) -> Optional[int]:
+    """
+    Get the compact window for a conversation.
+
+    Used by consolidation which runs per-conversation.
+    Returns None if no custom compact window is configured (use env default).
+    """
+    if not conversation_id:
+        return get_default_compact_window()
+
+    # Groups don't start with '+', DM conversation_ids are phone numbers
+    is_group = not conversation_id.startswith("+")
+
+    if is_group:
+        return get_group_compact_window(conversation_id)
+    else:
+        return get_user_compact_window(conversation_id)
 
 
 # --- Consolidation Model Configuration ---
