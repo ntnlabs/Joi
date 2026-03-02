@@ -12,6 +12,7 @@ execution/joi/ollama/Modelfile
 local-prep/
 mid-terms.txt
 security-overview.txt
+soma_ideas.txt
 
 # Data (databases, logs, runtime files)
 data/
