@@ -1805,6 +1805,50 @@ def admin_set_kill_switch(request: Request):
     }
 
 
+@app.get("/admin/routing/status")
+def admin_routing_status(request: Request):
+    """Get routing configuration status."""
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    routing = policy_manager.get_routing()
+    return {
+        "status": "ok",
+        "data": {
+            "enabled": routing.get("enabled", False),
+            "default_backend": routing.get("default_backend", "joi"),
+            "backends": list(routing.get("backends", {}).keys()),
+            "rules_count": len(routing.get("rules", []))
+        }
+    }
+
+
+@app.post("/admin/routing/toggle")
+def admin_routing_toggle(request: Request):
+    """
+    Toggle routing enabled/disabled.
+
+    Query params:
+        enabled: "true" or "false"
+    """
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    enabled = request.query_params.get("enabled", "").lower() == "true"
+    policy_manager.set_routing_enabled(enabled)
+
+    # Push config to mesh
+    if config_push_client:
+        success, result = config_push_client.push_config(force=True)
+        if not success:
+            logger.warning("Failed to push routing change to mesh: %s", result)
+
+    return {
+        "status": "ok",
+        "data": {"routing_enabled": enabled}
+    }
+
+
 @app.get("/admin/rag/scopes")
 def admin_rag_scopes(request: Request):
     """List all RAG scopes and their chunk counts (debug endpoint)."""
