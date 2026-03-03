@@ -1129,12 +1129,11 @@ _address_regex_cache: Dict[tuple, re.Pattern] = {}
 
 # Keywords that suggest user might want something remembered (hybrid approach)
 # If any keyword is present, we ask the LLM to confirm and extract
+# Narrowed to explicit intent only - avoids diary-style false positives from "i am", "i like" etc.
 REMEMBER_KEYWORDS = [
-    "remember", "forget", "call me", "my name", "i am", "i'm",
-    "i like", "i love", "i hate", "i prefer", "my favorite",
-    "i work", "i live", "my birthday", "my age", "my job",
-    "keep in mind", "note that", "fyi", "btw", "by the way",
-    "always remember", "never forget", "important:",
+    "remember", "never forget", "always remember", "don't forget",
+    "note that", "keep in mind",
+    "call me", "my name is",
 ]
 
 # Keywords that indicate the fact should always be remembered (marked important)
@@ -2132,11 +2131,8 @@ def receive_message(msg: InboundMessage):
             )
             enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
 
-        # Add hint if we just saved a fact
-        if saved_fact and enriched_prompt:
-            enriched_prompt += f"\n\n[You just saved this to memory: \"{saved_fact}\". Briefly acknowledge you'll remember it.]"
-        elif saved_fact:
-            enriched_prompt = f"[You just saved this to memory: \"{saved_fact}\". Briefly acknowledge you'll remember it.]"
+        # Note: We no longer hint to the LLM about saved facts - this caused meta-reactions
+        # and excessive "tagging" behavior. Memory is now invisible to the response generation.
 
         # Generate response from LLM with conversation context
         model_info = f"model={custom_model}" if custom_model else "model=default"
