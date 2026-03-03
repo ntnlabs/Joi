@@ -150,8 +150,24 @@ curl http://127.0.0.1:8444/health
 
 Updates the Ollama container image while preserving all models (stored in volume).
 
+### Check Current Version
+
 ```bash
-# 1. Pull latest image
+docker exec ollama ollama --version
+```
+
+### Check for Updates
+
+```bash
+docker pull ollama/ollama
+# "Image is up to date" = already latest
+# Downloads layers = newer version available, continue with update
+```
+
+### Update Procedure
+
+```bash
+# 1. Pull latest image (if not already done above)
 docker pull ollama/ollama
 
 # 2. Stop and remove old container
