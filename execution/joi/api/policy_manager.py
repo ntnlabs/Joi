@@ -42,6 +42,14 @@ DEFAULT_POLICY = {
         "privacy_mode": True,
         "kill_switch": False,
     },
+    "routing": {
+        "enabled": False,
+        "default_backend": "joi",
+        "backends": {
+            "joi": {"url": "http://10.42.0.10:8443"}
+        },
+        "rules": []
+    },
 }
 
 
@@ -372,3 +380,43 @@ class PolicyManager:
             self._update_hash_unlocked()
             self._save_unlocked()
         logger.info("DM group knowledge %s", "enabled" if enabled else "disabled")
+
+    # --- Routing Section ---
+
+    def get_routing(self) -> Dict[str, Any]:
+        """Get current routing config."""
+        with self._lock:
+            return dict(self._config.get("routing", {}))
+
+    def set_routing_enabled(self, enabled: bool) -> None:
+        """Enable or disable multi-backend routing."""
+        with self._lock:
+            if "routing" not in self._config:
+                self._config["routing"] = dict(DEFAULT_POLICY["routing"])
+            self._config["routing"]["enabled"] = enabled
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("Routing %s", "enabled" if enabled else "disabled")
+
+    def add_routing_rule(self, match: Dict[str, str], backend: str) -> None:
+        """Add a routing rule."""
+        with self._lock:
+            if "routing" not in self._config:
+                self._config["routing"] = dict(DEFAULT_POLICY["routing"])
+            self._config["routing"]["rules"].append({
+                "match": match,
+                "backend": backend
+            })
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("Added routing rule: match=%s backend=%s", match, backend)
+
+    def set_backend(self, name: str, url: str) -> None:
+        """Add or update a backend."""
+        with self._lock:
+            if "routing" not in self._config:
+                self._config["routing"] = dict(DEFAULT_POLICY["routing"])
+            self._config["routing"]["backends"][name] = {"url": url}
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("Set backend: name=%s url=%s", name, url)
