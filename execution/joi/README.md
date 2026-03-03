@@ -151,29 +151,31 @@ Different users or groups can use different models and context sizes via config 
 
 ### Directory Structure
 
+All files are optional. Create only what you need - system falls back to env vars or hardcoded defaults.
+
 ```
 /var/lib/joi/prompts/
-├── default.txt              # Default system prompt (fallback)
-├── default.model            # Default model (optional)
-├── default.context          # Default context message count (optional)
-├── default.compact_window   # Default compaction batch size (optional)
-├── default.consolidation    # Default consolidation model (optional)
-├── default.fact_prompt      # Default fact extraction prompt (optional)
-├── default.summary_prompt   # Default summarization prompt (optional)
+├── default.txt              # Default system prompt
+├── default.model            # Default model name
+├── default.context          # Default context message count
+├── default.compact_window   # Default compaction batch size
+├── default.consolidation    # Default consolidation model
+├── default.fact_prompt      # Default fact extraction prompt
+├── default.summary_prompt   # Default summarization prompt
 ├── users/
-│   ├── +1234567890.txt            # User's extra prompt
-│   ├── +1234567890.model          # User's model: joi-creative
-│   ├── +1234567890.context        # User's context size: 20
-│   ├── +1234567890.compact_window # User's compact batch: 10
+│   ├── +1234567890.txt            # User's system prompt
+│   ├── +1234567890.model          # User's model
+│   ├── +1234567890.context        # User's context size
+│   ├── +1234567890.compact_window # User's compact batch size
 │   ├── +1234567890.consolidation  # User's consolidation model
 │   ├── +1234567890.fact_prompt    # User's fact extraction prompt
 │   ├── +1234567890.summary_prompt # User's summarization prompt
 │   └── +1234567890.knowledge      # User's additional RAG scopes
 └── groups/
-    ├── ABC123.txt                 # Group's extra prompt
-    ├── ABC123.model               # Group's model: joi-formal
-    ├── ABC123.context             # Group's context size: 60
-    ├── ABC123.compact_window      # Group's compact batch: 30
+    ├── ABC123.txt                 # Group's system prompt
+    ├── ABC123.model               # Group's model
+    ├── ABC123.context             # Group's context size
+    ├── ABC123.compact_window      # Group's compact batch size
     ├── ABC123.consolidation       # Group's consolidation model
     ├── ABC123.fact_prompt         # Group's fact extraction prompt
     ├── ABC123.summary_prompt      # Group's summarization prompt
