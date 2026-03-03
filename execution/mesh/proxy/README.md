@@ -188,3 +188,41 @@ sudo systemctl status mesh-signal-worker
 5. **Configure policy on Joi** (not on mesh - mesh is stateless):
 
 Policy is managed on Joi at `/var/lib/joi/policy/mesh-policy.json` and pushed to mesh automatically. See the First Run Setup section above.
+
+## Troubleshooting
+
+### Startup Health Check
+
+The worker verifies signal-cli connectivity on startup by calling `listAccounts`. If this fails, the worker exits immediately with an error. Check:
+
+```bash
+# Test signal-cli directly
+signal-cli --config /var/lib/signal-cli jsonRpc --receive-mode=on-connection
+# Should print JSON-RPC responses
+```
+
+### UntrustedIdentityException
+
+When a contact's safety number changes (new device, reinstall), Signal requires trust verification. The worker logs:
+
+```
+WARNING - UNTRUSTED IDENTITY: <uuid> - run: signal-cli trust <uuid>
+```
+
+Fix by trusting the identity:
+
+```bash
+sudo -u signal signal-cli --config /var/lib/signal-cli trust -a +<YOUR_ACCOUNT> <UUID>
+```
+
+### Empty Envelopes
+
+Occasional empty envelopes from signal-cli are normal (typing indicators, read receipts without data). These are logged at DEBUG level and can be ignored.
+
+### Group Mentions Not Working
+
+Signal mentions require:
+1. The bot must be mentioned via Signal's autocomplete (typing @)
+2. signal-cli must be recent enough to include `mentions` array in messages
+
+If mentions aren't detected, check logs for "mentions array" debug output.
