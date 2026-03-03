@@ -1864,13 +1864,23 @@ def ingest_document(req: DocumentIngestRequest):
     by the scheduler tick. The scope determines which conversations
     can access the knowledge.
     """
-    logger.info(
-        "Received document: filename=%s content_type=%s scope=%s sender=%s",
-        req.filename,
-        req.content_type,
-        req.scope,
-        req.sender_id,
-    )
+    # Log with privacy mode redaction
+    if policy_manager.is_privacy_mode():
+        logger.info(
+            "Received document: filename=%s content_type=%s scope=%s sender=%s [privacy]",
+            req.filename,
+            req.content_type,
+            _redact_filename_pii(req.scope),
+            _redact_filename_pii(req.sender_id),
+        )
+    else:
+        logger.info(
+            "Received document: filename=%s content_type=%s scope=%s sender=%s",
+            req.filename,
+            req.content_type,
+            req.scope,
+            req.sender_id,
+        )
 
     # Validate filename (basic security check)
     if "/" in req.filename or "\\" in req.filename or ".." in req.filename:
@@ -1920,8 +1930,12 @@ def ingest_document(req: DocumentIngestRequest):
     try:
         temp_path.write_bytes(content)
         temp_path.rename(filepath)  # Atomic on POSIX
-        logger.info("Saved document to %s (%d bytes)", filepath, len(content))
+        if policy_manager.is_privacy_mode():
+            logger.info("Saved document (%d bytes) [privacy]", len(content))
+        else:
+            logger.info("Saved document to %s (%d bytes)", filepath, len(content))
     except Exception as e:
+        # Error logs always show path for debugging
         logger.error("Failed to save document %s: %s", filepath, e)
         return DocumentIngestResponse(
             status="error",
