@@ -62,6 +62,8 @@ logger = logging.getLogger("joi.api")
 MAX_INPUT_LENGTH = int(os.getenv("JOI_MAX_INPUT_LENGTH", "1500"))
 # Max output length (Signal supports up to ~6000 chars, but long messages can be annoying)
 MAX_OUTPUT_LENGTH = int(os.getenv("JOI_MAX_OUTPUT_LENGTH", "2000"))
+# Signal formatting - convert **bold** to Unicode bold (Signal doesn't support markdown)
+SIGNAL_FORMAT_ENABLED = os.getenv("JOI_SIGNAL_FORMAT_ENABLED", "0") == "1"
 
 # Markers that should never appear in LLM output (system prompt leakage)
 OUTPUT_LEAK_MARKERS = [
@@ -133,6 +135,42 @@ def validate_output(response: str) -> Tuple[bool, str]:
             return False, "I had trouble formulating a response. Could you rephrase that?"
 
     return True, response
+
+
+def format_for_signal(text: str) -> str:
+    """
+    Convert Markdown formatting to Signal-compatible formatting.
+
+    Signal doesn't support markdown, so we convert **bold** to Unicode
+    Mathematical Sans-Serif Bold characters which render as bold everywhere.
+
+    Example: **hello** → 𝗵𝗲𝗹𝗹𝗼
+    """
+    if not SIGNAL_FORMAT_ENABLED:
+        return text
+
+    # Unicode Mathematical Sans-Serif Bold mappings
+    # Uppercase: A-Z → U+1D5D4 to U+1D5ED
+    # Lowercase: a-z → U+1D5EE to U+1D607
+    # Digits: 0-9 → U+1D7EC to U+1D7F5
+    def to_bold(match: re.Match) -> str:
+        content = match.group(1)
+        result = []
+        for char in content:
+            if 'A' <= char <= 'Z':
+                result.append(chr(0x1D5D4 + ord(char) - ord('A')))
+            elif 'a' <= char <= 'z':
+                result.append(chr(0x1D5EE + ord(char) - ord('a')))
+            elif '0' <= char <= '9':
+                result.append(chr(0x1D7EC + ord(char) - ord('0')))
+            else:
+                result.append(char)
+        return ''.join(result)
+
+    # Replace **text** with Unicode bold
+    text = re.sub(r'\*\*(.+?)\*\*', to_bold, text)
+
+    return text
 
 
 # --- Priority Message Queue ---
@@ -2120,6 +2158,9 @@ def receive_message(msg: InboundMessage):
         is_valid, response_text = validate_output(response_text)
         if not is_valid:
             logger.warning("Output validation failed, using fallback response")
+
+        # Format for Signal (convert **bold** to Unicode bold)
+        response_text = format_for_signal(response_text)
 
         # Log response (redact content in privacy mode)
         response_len = len(response_text)
