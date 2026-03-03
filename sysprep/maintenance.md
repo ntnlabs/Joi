@@ -146,6 +146,35 @@ curl http://127.0.0.1:8444/health
 
 ---
 
+## Ollama Container Update
+
+Updates the Ollama container image while preserving all models (stored in volume).
+
+```bash
+# 1. Pull latest image
+docker pull ollama/ollama
+
+# 2. Stop and remove old container
+docker stop ollama
+docker rm ollama
+
+# 3. Run new container with same parameters
+docker run -d --gpus all \
+  -v ollama:/root/.ollama \
+  -p 11434:11434 \
+  --name ollama \
+  --restart unless-stopped \
+  ollama/ollama
+
+# 4. Verify models intact
+docker exec ollama ollama list
+docker exec ollama nvidia-smi
+```
+
+**Note:** The `-v ollama:/root/.ollama` volume mount preserves all models across container recreations.
+
+---
+
 ## Ollama Model Management
 
 ### List Models
