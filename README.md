@@ -34,7 +34,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Policy-based sender filtering (with user feedback on rate limit)
 - ✅ Message queue with owner priority
 - ✅ Async mesh → joi forwarding (fire-and-forget)
-- ✅ Signal @mention detection (native mentions + text fallback)
+- ⚠️ Signal @mention detection (limited - signal-cli doesn't provide mentions array reliably)
 - ✅ Group message handling (context-aware responses)
 - ✅ Per-user and per-group system prompts
 - ✅ Reaction responses (contextual acknowledgments)
