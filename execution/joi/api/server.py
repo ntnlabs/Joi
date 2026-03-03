@@ -2048,21 +2048,22 @@ def receive_message(msg: InboundMessage):
         logger.info("Message stored for context only (store_only=True)")
         should_respond = False
     elif msg.conversation.type == "group":
-        # Group message from allowed sender - only respond if Joi is addressed
+        # Group message from allowed sender - only respond if bot is addressed
         # Check Signal @mention (bot_mentioned) or text-based @name
+        bot_name = policy_manager.get_bot_name()
         logger.debug("Group message: bot_mentioned=%s, group_names=%s", msg.bot_mentioned, msg.group_names)
         if msg.bot_mentioned:
-            logger.info("Joi @mentioned in group message (Signal mention), will respond")
+            logger.info("%s @mentioned in group message (Signal mention), will respond", bot_name)
             should_respond = True
         else:
             # Fallback: check text for @name pattern
             names_to_check = msg.group_names if msg.group_names else None
             logger.debug("Checking address: names=%s, text_start='%s'", names_to_check, user_text[:50] if user_text else "")
             if _is_addressing_joi(user_text, names=names_to_check):
-                logger.info("Joi addressed in group message (text pattern), will respond")
+                logger.info("%s addressed in group message (text pattern), will respond", bot_name)
                 should_respond = True
             else:
-                logger.info("Joi not addressed in group message, storing only")
+                logger.info("%s not addressed in group message, storing only", bot_name)
                 should_respond = False
 
     if not should_respond:
