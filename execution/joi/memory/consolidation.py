@@ -146,6 +146,19 @@ from typing import Callable
 ModelLookupFunc = Callable[[str], Optional[str]]
 
 
+def _redact_convo_id(convo_id: str) -> str:
+    """Redact conversation ID for privacy mode logging."""
+    if not convo_id:
+        return convo_id
+    # Phone number pattern
+    if convo_id.startswith("+") and len(convo_id) > 5:
+        return f"+***{convo_id[-4:]}"
+    # Group ID (long base64-like string)
+    if len(convo_id) > 20:
+        return f"[GRP:{convo_id[:4]}...]"
+    return convo_id
+
+
 class MemoryConsolidator:
     """Handles memory consolidation tasks."""
 
@@ -155,6 +168,7 @@ class MemoryConsolidator:
         llm_client: Any,
         consolidation_model: Optional[str] = None,
         model_lookup: Optional[ModelLookupFunc] = None,
+        privacy_mode: bool = False,
     ):
         """
         Initialize consolidator.
@@ -167,11 +181,23 @@ class MemoryConsolidator:
             model_lookup: Optional function to look up per-conversation model.
                          Takes conversation_id, returns model name or None.
                          Falls back to consolidation_model if returns None.
+            privacy_mode: If True or callable returning True, redact conversation IDs in logs
         """
         self.memory = memory
         self.llm = llm_client
         self.consolidation_model = consolidation_model
         self.model_lookup = model_lookup
+        self._privacy_mode = privacy_mode
+
+    def _is_privacy_mode(self) -> bool:
+        """Check if privacy mode is enabled (supports callable or bool)."""
+        if callable(self._privacy_mode):
+            return self._privacy_mode()
+        return bool(self._privacy_mode)
+
+    def _log_convo_id(self, convo_id: str) -> str:
+        """Return conversation ID for logging, redacted if privacy mode."""
+        return _redact_convo_id(convo_id) if self._is_privacy_mode() else convo_id
 
     def _get_model_for_conversation(self, conversation_id: str) -> Optional[str]:
         """Get the consolidation model for a conversation."""
@@ -311,9 +337,9 @@ Corrected JSON:"""
                     logger.warning("Skipping malformed fact %s: %s", fact, e)
             if stored_count:
                 if important_count:
-                    logger.info("Extracted and stored %d facts (%d core) for %s", stored_count, important_count, convo_id)
+                    logger.info("Extracted and stored %d facts (%d core) for %s", stored_count, important_count, self._log_convo_id(convo_id))
                 else:
-                    logger.info("Extracted and stored %d facts for %s", stored_count, convo_id)
+                    logger.info("Extracted and stored %d facts for %s", stored_count, self._log_convo_id(convo_id))
 
         return valid_facts
 
@@ -476,7 +502,7 @@ Corrected JSON:"""
 
         logger.info(
             "Compacting %d oldest messages for conversation %s (total: %d, context: %d)",
-            len(oldest_messages), conversation_id, message_count, context_messages
+            len(oldest_messages), self._log_convo_id(conversation_id), message_count, context_messages
         )
 
         # Extract facts (with error handling)
@@ -484,14 +510,14 @@ Corrected JSON:"""
             facts = self.extract_facts_from_messages(oldest_messages, store=True)
             results["facts_extracted"] = len(facts)
         except Exception as e:
-            logger.error("Fact extraction failed for %s: %s", conversation_id, e, exc_info=True)
+            logger.error("Fact extraction failed for %s: %s", self._log_convo_id(conversation_id), e, exc_info=True)
             results["facts_extracted"] = 0
 
         # Summarize (with error handling)
         try:
             summary = self.summarize_messages(oldest_messages, store=True)
         except Exception as e:
-            logger.error("Summarization failed for %s: %s", conversation_id, e, exc_info=True)
+            logger.error("Summarization failed for %s: %s", self._log_convo_id(conversation_id), e, exc_info=True)
             summary = None
 
         if summary:

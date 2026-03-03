@@ -717,16 +717,17 @@ RESPONSE_COOLDOWN_GROUP_SECONDS = float(os.getenv("JOI_RESPONSE_COOLDOWN_GROUP_S
 _last_send_times: Dict[str, float] = {}  # conversation_id -> timestamp
 _send_lock = threading.Lock()
 
+# Initialize policy manager for mesh config sync
+policy_manager = PolicyManager()
+
 # Initialize memory consolidator
 consolidator = MemoryConsolidator(
     memory=memory,
     llm_client=llm,
     consolidation_model=CONSOLIDATION_MODEL,
     model_lookup=get_consolidation_model_for_conversation,
+    privacy_mode=policy_manager.is_privacy_mode,
 )
-
-# Initialize policy manager for mesh config sync
-policy_manager = PolicyManager()
 
 
 # --- Group Membership Cache ---
