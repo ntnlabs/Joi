@@ -9,7 +9,7 @@ import threading
 
 import httpx
 
-from hmac_auth import create_request_headers, get_shared_secret
+from hmac_auth import create_request_headers, get_shared_secret, get_shared_secret_for_backend
 
 logger = logging.getLogger("mesh.forwarder")
 
@@ -19,6 +19,16 @@ MESH_JOI_URL = os.getenv("MESH_JOI_URL", "http://joi:8443")
 
 # Reference to ConfigState - set by worker at startup to avoid module import issues
 _config_state_ref: Optional[Any] = None
+
+# Reference to RoutingState - set by worker at startup for multi-backend routing
+_routing_state: Optional[Any] = None
+
+
+def set_routing_state(state: Any) -> None:
+    """Set reference to RoutingState from worker (avoids module import issues)."""
+    global _routing_state
+    _routing_state = state
+    logger.debug("Forwarder routing_state reference set")
 
 # Cache the shared secret (fallback if config_state not set)
 _hmac_secret: Optional[bytes] = None
@@ -96,7 +106,7 @@ def _get_config_hash() -> Optional[str]:
 
 
 def _forward_async(url: str, payload: Dict[str, Any]) -> None:
-    """Forward message in background thread with HMAC signing."""
+    """Forward message in background thread with HMAC signing (legacy - uses default secret)."""
     global _pending_tasks
     try:
         client = _get_client()
@@ -126,12 +136,75 @@ def _forward_async(url: str, payload: Dict[str, Any]) -> None:
             _pending_tasks -= 1
 
 
-def forward_to_joi(payload: Dict[str, Any]) -> None:
-    """Forward message to Joi asynchronously (fire-and-forget)."""
+def _forward_async_to_backend(url: str, payload: Dict[str, Any], backend_name: str) -> None:
+    """Forward message to specified backend with backend-specific HMAC."""
+    global _pending_tasks
+    try:
+        client = _get_client()
+
+        # Serialize payload to JSON bytes
+        body = json.dumps(payload).encode("utf-8")
+
+        # Build headers with backend-specific HMAC
+        headers = {"Content-Type": "application/json"}
+        secret = get_shared_secret_for_backend(backend_name)
+        if secret:
+            hmac_headers = create_request_headers(body, secret)
+            headers.update(hmac_headers)
+
+        # Add config hash for sync verification
+        config_hash = _get_config_hash()
+        if config_hash:
+            headers["X-Config-Hash"] = config_hash
+
+        resp = client.post(url, content=body, headers=headers)
+        resp.raise_for_status()
+        logger.debug("Forwarded to %s: message_id=%s", backend_name, payload.get("message_id"))
+    except Exception as e:
+        logger.error("Forward to %s failed: %s", backend_name, e)
+    finally:
+        with _pending_lock:
+            _pending_tasks -= 1
+
+
+def forward_to_backend(payload: Dict[str, Any], backend_name: str, backend_url: str) -> None:
+    """Forward message to specified backend."""
     global _pending_tasks
     if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
         return
 
+    url = f"{backend_url}/api/v1/message/inbound"
+
+    # Check queue capacity before submitting
+    with _pending_lock:
+        if _pending_tasks >= _MAX_PENDING:
+            logger.warning("Forward queue full, dropping message for %s", backend_name)
+            return
+        _pending_tasks += 1
+
+    # Submit to bounded thread pool
+    try:
+        _executor.submit(_forward_async_to_backend, url, payload, backend_name)
+    except RuntimeError:
+        # Executor shutdown - log but don't crash
+        with _pending_lock:
+            _pending_tasks -= 1
+        logger.warning("Forwarder executor shutdown, dropping message for %s", backend_name)
+
+
+def forward_to_joi(payload: Dict[str, Any]) -> None:
+    """Forward message - routes based on config or uses default."""
+    global _pending_tasks
+    if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
+        return
+
+    # Check if routing is enabled and use multi-backend routing
+    if _routing_state and _routing_state.is_enabled():
+        backend_name, backend_url = _routing_state.get_backend_for_payload(payload)
+        forward_to_backend(payload, backend_name, backend_url)
+        return
+
+    # Legacy behavior - use MESH_JOI_URL with default HMAC secret
     url = f"{MESH_JOI_URL}/api/v1/message/inbound"
 
     # Check queue capacity before submitting

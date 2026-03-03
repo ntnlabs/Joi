@@ -56,6 +56,31 @@ def get_shared_secret() -> Optional[bytes]:
     return None
 
 
+def get_shared_secret_for_backend(backend_name: str) -> Optional[bytes]:
+    """Get HMAC secret for a specific backend.
+
+    Looks up MESH_HMAC_SECRET_{BACKEND} env var (uppercase).
+    No fallback - each backend must have its own secret configured.
+
+    Args:
+        backend_name: Backend identifier (e.g., "joi", "leeloo")
+
+    Returns:
+        Secret bytes if configured, None otherwise
+    """
+    env_name = f"MESH_HMAC_SECRET_{backend_name.upper()}"
+    secret = os.getenv(env_name)
+    if secret:
+        try:
+            return bytes.fromhex(secret)
+        except ValueError:
+            return secret.encode("utf-8")
+
+    # No fallback - fail-closed for security
+    logger.warning("No HMAC secret for backend %s (set %s)", backend_name, env_name)
+    return None
+
+
 def save_shared_secret(secret_hex: str) -> bool:
     """
     Persist rotated secret to file for restart recovery.

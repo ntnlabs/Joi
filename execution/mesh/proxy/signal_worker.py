@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from flask import Flask, jsonify, request
 
 from config import load_settings
-from forwarder import forward_to_joi, forward_document_to_joi, set_config_state
+from forwarder import forward_to_joi, forward_document_to_joi, set_config_state, set_routing_state
 from hmac_auth import (
     InMemoryNonceStore,
     get_shared_secret,
@@ -203,6 +203,75 @@ class DeliveryTracker:
 _delivery_tracker = DeliveryTracker()
 
 
+# --- Routing State for Multi-Backend Routing ---
+
+
+class RoutingState:
+    """Thread-safe routing configuration for multi-backend message forwarding."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._enabled = False
+        self._default_backend = "joi"
+        self._backends: Dict[str, str] = {}  # name -> url
+        self._rules: List[Dict[str, Any]] = []
+
+    def update_from_config(self, routing_config: Dict[str, Any]) -> None:
+        """Update routing from pushed config."""
+        with self._lock:
+            self._enabled = routing_config.get("enabled", False)
+            self._default_backend = routing_config.get("default_backend", "joi")
+            self._backends = {
+                name: cfg.get("url", "")
+                for name, cfg in routing_config.get("backends", {}).items()
+            }
+            self._rules = routing_config.get("rules", [])
+
+        if self._enabled:
+            logger.info("Routing enabled: %d backends, %d rules",
+                       len(self._backends), len(self._rules))
+        else:
+            logger.debug("Routing disabled, using default backend")
+
+    def is_enabled(self) -> bool:
+        """Check if multi-backend routing is enabled."""
+        with self._lock:
+            return self._enabled
+
+    def get_backend_for_payload(self, payload: Dict[str, Any]) -> Tuple[str, str]:
+        """Determine backend for message. Returns (name, url)."""
+        with self._lock:
+            if not self._enabled:
+                return self._default_backend, self._backends.get(self._default_backend, "")
+
+            conversation = payload.get("conversation", {})
+            conv_type = conversation.get("type")
+            conv_id = conversation.get("id", "")
+            sender_id = payload.get("sender", {}).get("transport_id", "")
+
+            # Check rules in order
+            for rule in self._rules:
+                match = rule.get("match", {})
+                backend = rule.get("backend")
+
+                # Group match
+                if "group" in match and conv_type == "group":
+                    if match["group"] == conv_id:
+                        url = self._backends.get(backend, "")
+                        if url:
+                            return backend, url
+
+                # User match (DM or group sender)
+                if "user" in match:
+                    if match["user"] == sender_id or match["user"] == conv_id:
+                        url = self._backends.get(backend, "")
+                        if url:
+                            return backend, url
+
+            # Default
+            return self._default_backend, self._backends.get(self._default_backend, "")
+
+
 # --- Config State for Joi-pushed config (memory-only, no disk) ---
 
 
@@ -229,6 +298,9 @@ class ConfigState:
         # Reference to MeshPolicy instance (set by main)
         self._mesh_policy: Optional[MeshPolicy] = None
 
+        # Reference to RoutingState instance (set by main)
+        self._routing_state: Optional[RoutingState] = None
+
         # Security flags (pushed from Joi)
         self._privacy_mode: bool = False
         self._kill_switch: bool = False
@@ -236,6 +308,10 @@ class ConfigState:
     def set_mesh_policy(self, policy: MeshPolicy) -> None:
         """Set reference to MeshPolicy instance for reloading."""
         self._mesh_policy = policy
+
+    def set_routing_state(self, routing_state: RoutingState) -> None:
+        """Set reference to RoutingState instance for routing updates."""
+        self._routing_state = routing_state
 
     def apply_config(self, config: Dict[str, Any]) -> str:
         """
@@ -274,6 +350,11 @@ class ConfigState:
             # Update MeshPolicy in memory (no disk)
             if self._mesh_policy:
                 self._mesh_policy.update_from_config(config)
+
+            # Update RoutingState from config
+            routing = config.get("routing", {})
+            if self._routing_state:
+                self._routing_state.update_from_config(routing)
 
             return self._config_hash
 
@@ -337,7 +418,9 @@ class ConfigState:
             return current, None
 
 
+_routing_state = RoutingState()
 _config_state = ConfigState()
+_config_state.set_routing_state(_routing_state)
 
 
 # Global RPC client (shared between receiver thread and HTTP server)
@@ -1087,6 +1170,7 @@ def main() -> None:
     # Set up config state for Joi-pushed config (memory-only)
     _config_state.set_mesh_policy(policy)
     set_config_state(_config_state)  # Share with forwarder to avoid module import issues
+    set_routing_state(_routing_state)  # Share routing state for multi-backend forwarding
 
     _rpc = JsonRpcStdioClient(
         [
