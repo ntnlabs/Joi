@@ -201,8 +201,12 @@ All files are optional. Create only what you need - system falls back to env var
 |-------------|-----------|--------|
 | No | No | Default model + default prompt |
 | No | Yes | Default model + user's prompt |
+| No | Empty | Default model + default prompt (empty = no file) |
 | Yes | No | User's model + NO prompt (Modelfile handles it) |
 | Yes | Yes | User's model + user's prompt (additions) |
+| Yes | Empty | User's model + NO prompt (Modelfile handles it) |
+
+**Note:** To use NO prompt without a custom model, you must create a `.model` file. Without it, the default prompt is always used.
 
 ### Example Setup
 
