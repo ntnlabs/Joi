@@ -141,13 +141,19 @@ def format_for_signal(text: str) -> str:
     """
     Convert Markdown formatting to Signal-compatible formatting.
 
-    Signal doesn't support markdown, so we convert **bold** to Unicode
-    Mathematical Sans-Serif Bold characters which render as bold everywhere.
+    Signal doesn't support markdown, so we:
+    - Convert **bold** to Unicode Mathematical Sans-Serif Bold
+    - Convert [text](url) to just url (Signal auto-links URLs)
 
     Example: **hello** → 𝗵𝗲𝗹𝗹𝗼
+    Example: [click here](https://example.com) → https://example.com
     """
     if not SIGNAL_FORMAT_ENABLED:
         return text
+
+    # Convert markdown links [text](url) to just url
+    # Signal auto-detects and makes URLs clickable
+    text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'\2', text)
 
     # Unicode Mathematical Sans-Serif Bold mappings
     # Uppercase: A-Z → U+1D5D4 to U+1D5ED
