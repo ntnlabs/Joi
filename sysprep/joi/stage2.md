@@ -128,6 +128,9 @@ systemctl status docker
 Add the NVIDIA Container Toolkit repository and install the toolkit package.
 
 ```bash
+# Prerequisites for repo setup (may already be installed)
+apt install -y curl gnupg
+
 install -d -m 0755 /etc/apt/keyrings
 
 curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \

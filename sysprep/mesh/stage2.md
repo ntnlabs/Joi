@@ -154,6 +154,9 @@ sudo -u signal /usr/local/bin/signal-cli --config /var/lib/signal-cli link -n ai
 If using terminal QR workflow, keep the `link` process alive and render the exact URI in another terminal:
 
 ```bash
+# Install qrencode if not present
+apt install -y qrencode
+
 printf '%s\n' "sgnl://linkdevice?uuid=...&pub_key=..." | qrencode -t ansiutf8
 ```
 

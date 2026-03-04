@@ -2,7 +2,7 @@
 #
 # USAGE:
 #   1. Copy to Modelfile and customize if needed
-#   2. Build: docker exec joi-brain ollama create joi-consolidator -f /opt/joi/execution/joi/ollama/Modelfile_consolidator
+#   2. Build: docker exec joi-brain ollama create joi-consolidator -f /opt/Joi/execution/joi/ollama/Modelfile_consolidator
 #   3. Test:  docker exec -it joi-brain ollama run joi-consolidator "Extract facts: Peter likes coffee"
 #   4. Use:   Set JOI_CONSOLIDATION_MODEL=joi-consolidator or create .consolidation files
 #
