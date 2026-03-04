@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS system_state (
 
 -- Initialize default system state if not exists
 INSERT OR IGNORE INTO system_state (key, value) VALUES
-    ('schema_version', '2'),
+    ('schema_version', '4'),
     ('last_interaction_at', '0'),
     ('last_impulse_check_at', '0'),
     ('messages_sent_this_hour', '0'),
