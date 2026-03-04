@@ -18,7 +18,7 @@ UPDATE_PORTS_UDP="53"
 ###########################################
 
 # Validate configuration
-if echo "$WAN_IF" | grep -q "^<"; then
+if echo "$WAN_IF" | grep -q "^<" || echo "$INT_IF" | grep -q "^<" || echo "$INTERNAL_NET" | grep -q "^<"; then
     echo "ERROR: Edit this script and set WAN_IF, INT_IF, INTERNAL_NET"
     exit 1
 fi
@@ -26,14 +26,17 @@ fi
 enable_updates() {
     echo "Enabling update routing for $INTERNAL_NET..."
 
-    # Forward HTTP/HTTPS from internal to WAN
-    iptables -A FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT
+    # Forward HTTP/HTTPS from internal to WAN (check first to avoid duplicates)
+    iptables -C FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT 2>/dev/null || \
+        iptables -A FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT
 
-    # Forward DNS from internal to WAN
-    iptables -A FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p udp --dport $UPDATE_PORTS_UDP -j ACCEPT
+    # Forward DNS from internal to WAN (check first to avoid duplicates)
+    iptables -C FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p udp --dport $UPDATE_PORTS_UDP -j ACCEPT 2>/dev/null || \
+        iptables -A FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p udp --dport $UPDATE_PORTS_UDP -j ACCEPT
 
-    # Allow router itself to reach HTTP/HTTPS on WAN (apk update/upgrade)
-    iptables -A OUTPUT -o $WAN_IF -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT
+    # Allow router itself to reach HTTP/HTTPS on WAN (check first to avoid duplicates)
+    iptables -C OUTPUT -o $WAN_IF -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT 2>/dev/null || \
+        iptables -A OUTPUT -o $WAN_IF -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT
 
     # NAT masquerade (if not already present)
     iptables -t nat -C POSTROUTING -s $INTERNAL_NET -o $WAN_IF -j MASQUERADE 2>/dev/null || \
@@ -50,10 +53,13 @@ enable_updates() {
 disable_updates() {
     echo "Disabling update routing..."
 
-    # Remove forward rules (ignore errors if not present)
-    iptables -D FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT 2>/dev/null
-    iptables -D FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p udp --dport $UPDATE_PORTS_UDP -j ACCEPT 2>/dev/null
-    iptables -D OUTPUT -o $WAN_IF -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT 2>/dev/null
+    # Remove all copies of forward rules (loop until none remain)
+    while iptables -D FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT 2>/dev/null; do :; done
+    while iptables -D FORWARD -i $INT_IF -o $WAN_IF -s $INTERNAL_NET -p udp --dport $UPDATE_PORTS_UDP -j ACCEPT 2>/dev/null; do :; done
+    while iptables -D OUTPUT -o $WAN_IF -p tcp -m multiport --dports $UPDATE_PORTS_TCP -j ACCEPT 2>/dev/null; do :; done
+
+    # Remove NAT masquerade rule
+    while iptables -t nat -D POSTROUTING -s $INTERNAL_NET -o $WAN_IF -j MASQUERADE 2>/dev/null; do :; done
 
     echo "Update routing DISABLED."
 }

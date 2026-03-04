@@ -30,18 +30,19 @@ remove_temp_update_default() {
 }
 
 enable_rules() {
-    iptables -A OUTPUT $RULE_HTTPS
-    iptables -A OUTPUT $RULE_HTTP
-    iptables -A OUTPUT $RULE_DNS_UDP
+    # Add rules only if not already present (idempotent)
+    iptables -C OUTPUT $RULE_HTTPS 2>/dev/null || iptables -A OUTPUT $RULE_HTTPS
+    iptables -C OUTPUT $RULE_HTTP 2>/dev/null || iptables -A OUTPUT $RULE_HTTP
+    iptables -C OUTPUT $RULE_DNS_UDP 2>/dev/null || iptables -A OUTPUT $RULE_DNS_UDP
     remove_temp_update_default
-    ip route add default via "$GATEWAY_IP" dev "$INT_IF" metric 1 2>/dev/null || \
-        ip route replace default via "$GATEWAY_IP" dev "$INT_IF" metric 1
+    ip route replace default via "$GATEWAY_IP" dev "$INT_IF" metric 1
 }
 
 disable_rules() {
-    iptables -D OUTPUT $RULE_HTTPS 2>/dev/null
-    iptables -D OUTPUT $RULE_HTTP 2>/dev/null
-    iptables -D OUTPUT $RULE_DNS_UDP 2>/dev/null
+    # Remove all copies of each rule (handles duplicate accumulation)
+    while iptables -D OUTPUT $RULE_HTTPS 2>/dev/null; do :; done
+    while iptables -D OUTPUT $RULE_HTTP 2>/dev/null; do :; done
+    while iptables -D OUTPUT $RULE_DNS_UDP 2>/dev/null; do :; done
     remove_temp_update_default
 }
 
