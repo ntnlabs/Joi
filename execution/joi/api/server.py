@@ -470,12 +470,15 @@ class Scheduler:
 
     def _tick(self):
         """
-        Single scheduler tick - check for pending work.
-
-        TODO: Implement actual logic:
-        - Check for due reminders/tasks
-        - Calculate impulse scores for wind
-        - Send proactive messages if thresholds met
+        Single scheduler tick - runs periodic maintenance tasks:
+        - Auto-ingestion of knowledge files
+        - Config sync with mesh
+        - Tamper detection
+        - Nonce cleanup and FTS integrity checks
+        - HMAC rotation checks
+        - Membership cache refresh
+        - Wind proactive messaging
+        - Due reminders
         """
         logger.debug("Scheduler tick #%d", self._tick_count + 1)
 
