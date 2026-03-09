@@ -152,6 +152,13 @@ def format_for_signal(text: str) -> str:
 
     Example: **hello** → 𝗵𝗲𝗹𝗹𝗼
     Example: [click here](https://example.com) → https://example.com
+
+    Known limitations (simple regex-based approach):
+    - Nested formatting not supported (e.g., **bold *and italic***)
+    - Escaped asterisks not handled (\\*\\*not bold\\*\\*)
+    - Multi-line bold text may not convert correctly
+    - Only bold (**) is converted, not italic (*) or other markdown
+    - Non-ASCII characters inside bold are passed through unchanged
     """
     if not SIGNAL_FORMAT_ENABLED:
         return text
@@ -480,6 +487,7 @@ class Scheduler:
         # Low-priority maintenance tasks every 60 ticks (~1 hour with 60s interval)
         if self._tick_count % 60 == 0:
             self._cleanup_nonces()
+            self._check_fts_integrity()
 
         # Weekly HMAC rotation check once per day (1440 ticks with 60s interval)
         if self._tick_count % 1440 == 0 and self._tick_count > 0:
@@ -519,6 +527,28 @@ class Scheduler:
                     logger.info("Scheduler: cleaned up %d expired nonces", deleted)
             except Exception as e:
                 logger.warning("Scheduler: nonce cleanup failed: %s", e)
+
+    def _check_fts_integrity(self):
+        """Periodic check of FTS index integrity."""
+        try:
+            integrity = memory.check_fts_integrity()
+            issues = [
+                (name, status) for name, status in integrity.items()
+                if not status.get("ok", False)
+            ]
+            if issues:
+                for name, status in issues:
+                    if "error" in status:
+                        logger.warning("FTS index %s: error - %s", name, status["error"])
+                    else:
+                        logger.warning(
+                            "FTS index %s out of sync: FTS=%d, main=%d",
+                            name, status["fts_count"], status["main_count"]
+                        )
+            else:
+                logger.debug("Scheduler: FTS integrity check passed")
+        except Exception as e:
+            logger.warning("Scheduler: FTS integrity check failed: %s", e)
 
     def _check_ingestion(self):
         """Check for pending knowledge files to ingest."""
@@ -1251,6 +1281,14 @@ if HMAC_ENABLED:
         mesh_url=settings.mesh_url,
         policy_manager=policy_manager,
     )
+    # Check HMAC sync on startup to detect key mismatches early
+    sync_ok, sync_msg = hmac_rotator.check_mesh_sync()
+    if not sync_ok:
+        logger.warning(
+            "HMAC sync check failed on startup: %s. "
+            "Mesh may reject authenticated requests until keys are aligned.",
+            sync_msg
+        )
     config_push_client = ConfigPushClient(
         mesh_url=settings.mesh_url,
         policy=policy_manager,
@@ -1788,6 +1826,7 @@ def health():
         "outbound": outbound_limiter.get_stats(),
         "scheduler": scheduler.get_status() if scheduler else {"running": False},
         "config_sync": config_sync,
+        "hmac": hmac_rotator.get_rotation_status() if hmac_rotator else {"enabled": False},
     }
 
 
@@ -1966,6 +2005,58 @@ def admin_set_kill_switch(request: Request):
         "status": "ok",
         "kill_switch": active,
     }
+
+
+@app.get("/admin/fts/status")
+def admin_fts_status(request: Request):
+    """
+    Get FTS (Full-Text Search) index integrity status.
+
+    Returns counts for each FTS table and whether they're in sync with main tables.
+    """
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    integrity = memory.check_fts_integrity()
+    all_ok = all(status.get("ok", False) for status in integrity.values())
+
+    return {
+        "status": "ok" if all_ok else "degraded",
+        "indexes": integrity,
+    }
+
+
+@app.post("/admin/fts/rebuild")
+def admin_fts_rebuild(request: Request):
+    """
+    Rebuild FTS indexes.
+
+    Query params:
+        index: Specific index to rebuild (user_facts_fts, summaries_fts, knowledge_fts)
+               If not specified, rebuilds all indexes.
+    """
+    if not _is_local_request(request):
+        raise HTTPException(status_code=403, detail="Admin endpoints are local-only")
+
+    index_name = request.query_params.get("index")
+
+    if index_name:
+        # Rebuild specific index
+        success, message = memory.rebuild_fts_index(index_name)
+        if not success:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "error": message},
+            )
+        return {"status": "ok", "message": message}
+    else:
+        # Rebuild all
+        results = memory.rebuild_all_fts_indexes()
+        all_ok = all(r["success"] for r in results.values())
+        return {
+            "status": "ok" if all_ok else "partial",
+            "results": results,
+        }
 
 
 @app.get("/admin/routing/status")
