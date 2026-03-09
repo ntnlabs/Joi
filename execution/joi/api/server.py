@@ -53,6 +53,11 @@ from ingestion import run_auto_ingestion, INGESTION_DIR
 from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
 
+# Import Wind module at top level
+import sys
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add joi/ to path
+from wind import WindOrchestrator, WindConfig
+
 logger = logging.getLogger("joi.api")
 
 
@@ -485,9 +490,11 @@ class Scheduler:
         if self._tick_count % 15 == 0:
             self._refresh_membership()
 
+        # Wind proactive messaging check every tick
+        self._check_wind_impulse()
+
         # Placeholder for future implementation:
         # - self._check_reminders()
-        # - self._check_wind_impulse()
 
     def _check_tamper(self):
         """Check for config file tampering. Shuts down service if detected."""
@@ -580,6 +587,17 @@ class Scheduler:
                 logger.debug("Scheduler: membership cache refreshed")
         except Exception as e:
             logger.warning("Scheduler: membership refresh failed: %s", e)
+
+    def _check_wind_impulse(self):
+        """Check Wind proactive messaging impulse for all eligible conversations."""
+        try:
+            # Update config from policy manager (in case it changed)
+            wind_orchestrator.update_config(_get_wind_config())
+
+            # Run Wind tick
+            wind_orchestrator.tick()
+        except Exception as e:
+            logger.warning("Scheduler: Wind impulse check failed: %s", e)
 
     def _startup_config_push(self):
         """Push config to mesh on startup to ensure sync."""
@@ -719,6 +737,16 @@ _send_lock = threading.Lock()
 
 # Initialize policy manager for mesh config sync
 policy_manager = PolicyManager()
+
+# Initialize Wind orchestrator for proactive messaging
+def _get_wind_config() -> WindConfig:
+    """Get WindConfig from policy manager."""
+    return WindConfig.from_dict(policy_manager.get_wind_config())
+
+wind_orchestrator = WindOrchestrator(
+    db_connection_factory=memory._connect,
+    config=_get_wind_config(),
+)
 
 # Initialize memory consolidator
 consolidator = MemoryConsolidator(
@@ -1574,7 +1602,9 @@ def startup_event():
     scheduler_status = f"scheduler enabled (interval: {SCHEDULER_INTERVAL}s)" if scheduler else "scheduler disabled"
     time_status = f"time awareness enabled (tz: {TIME_AWARENESS_TIMEZONE})" if TIME_AWARENESS_ENABLED else "time awareness disabled"
     privacy_status = "privacy ON" if policy_manager.is_privacy_mode() else "privacy off"
-    logger.info("Joi API started: %s, %s, %s, %s", hmac_status, scheduler_status, time_status, privacy_status)
+    wind_config = _get_wind_config()
+    wind_status = f"wind {'shadow' if wind_config.shadow_mode else 'live'}" if wind_config.enabled else "wind disabled"
+    logger.info("Joi API started: %s, %s, %s, %s, %s", hmac_status, scheduler_status, time_status, privacy_status, wind_status)
     _init_fingerprints()
 
 

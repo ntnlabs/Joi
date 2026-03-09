@@ -50,6 +50,24 @@ DEFAULT_POLICY = {
         },
         "rules": []
     },
+    "wind": {
+        "enabled": False,
+        "shadow_mode": True,
+        "quiet_hours_start": 23,
+        "quiet_hours_end": 7,
+        "min_cooldown_seconds": 3600,
+        "daily_cap": 3,
+        "max_unanswered_streak": 2,
+        "min_silence_seconds": 1800,
+        "impulse_threshold": 0.6,
+        "base_impulse": 0.1,
+        "silence_weight": 0.3,
+        "silence_cap_hours": 24.0,
+        "topic_pressure_weight": 0.2,
+        "fatigue_weight": 0.3,
+        "allowlist": [],
+        "timezone": "Europe/Bratislava",
+    },
 }
 
 
@@ -420,3 +438,82 @@ class PolicyManager:
             self._update_hash_unlocked()
             self._save_unlocked()
         logger.info("Set backend: name=%s url=%s", name, url)
+
+    # --- Wind Section ---
+
+    def get_wind_config(self) -> Dict[str, Any]:
+        """Get Wind proactive messaging configuration."""
+        with self._lock:
+            return dict(self._config.get("wind", DEFAULT_POLICY.get("wind", {})))
+
+    def is_wind_enabled(self) -> bool:
+        """Check if Wind proactive messaging is enabled."""
+        with self._lock:
+            return bool(self._config.get("wind", {}).get("enabled", False))
+
+    def set_wind_enabled(self, enabled: bool) -> None:
+        """Enable or disable Wind proactive messaging."""
+        with self._lock:
+            if "wind" not in self._config:
+                self._config["wind"] = dict(DEFAULT_POLICY["wind"])
+            self._config["wind"]["enabled"] = enabled
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("Wind %s", "enabled" if enabled else "disabled")
+
+    def set_wind_shadow_mode(self, shadow: bool) -> None:
+        """Enable or disable Wind shadow mode (log only, no sends)."""
+        with self._lock:
+            if "wind" not in self._config:
+                self._config["wind"] = dict(DEFAULT_POLICY["wind"])
+            self._config["wind"]["shadow_mode"] = shadow
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("Wind shadow mode %s", "enabled" if shadow else "disabled")
+
+    def get_wind_allowlist(self) -> List[str]:
+        """Get Wind conversation allowlist."""
+        with self._lock:
+            return list(self._config.get("wind", {}).get("allowlist", []))
+
+    def add_wind_allowlist(self, conversation_id: str) -> bool:
+        """Add a conversation to Wind allowlist. Returns True if added."""
+        with self._lock:
+            if "wind" not in self._config:
+                self._config["wind"] = dict(DEFAULT_POLICY["wind"])
+            allowlist = self._config["wind"].get("allowlist", [])
+            if conversation_id not in allowlist:
+                allowlist.append(conversation_id)
+                self._config["wind"]["allowlist"] = allowlist
+                self._update_hash_unlocked()
+                self._save_unlocked()
+                logger.info("Added to Wind allowlist: %s", conversation_id)
+                return True
+            return False
+
+    def remove_wind_allowlist(self, conversation_id: str) -> bool:
+        """Remove a conversation from Wind allowlist. Returns True if removed."""
+        with self._lock:
+            if "wind" not in self._config:
+                return False
+            allowlist = self._config["wind"].get("allowlist", [])
+            if conversation_id in allowlist:
+                allowlist.remove(conversation_id)
+                self._config["wind"]["allowlist"] = allowlist
+                self._update_hash_unlocked()
+                self._save_unlocked()
+                logger.info("Removed from Wind allowlist: %s", conversation_id)
+                return True
+            return False
+
+    def update_wind_config(self, **updates) -> None:
+        """Update Wind configuration fields."""
+        with self._lock:
+            if "wind" not in self._config:
+                self._config["wind"] = dict(DEFAULT_POLICY["wind"])
+            for key, value in updates.items():
+                if key in DEFAULT_POLICY["wind"]:
+                    self._config["wind"][key] = value
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("Updated Wind config: %s", list(updates.keys()))
