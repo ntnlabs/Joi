@@ -895,7 +895,17 @@ TIME_AWARENESS_TIMEZONE = os.getenv("JOI_TIMEZONE", "Europe/Bratislava")  # User
 RESPONSE_COOLDOWN_DM_SECONDS = float(os.getenv("JOI_RESPONSE_COOLDOWN_SECONDS", "5.0"))
 RESPONSE_COOLDOWN_GROUP_SECONDS = float(os.getenv("JOI_RESPONSE_COOLDOWN_GROUP_SECONDS", "2.0"))
 _last_send_times: Dict[str, float] = {}  # conversation_id -> timestamp
-_send_lock = threading.Lock()
+_send_locks: Dict[str, threading.Lock] = {}  # per-conversation locks
+_send_locks_lock = threading.Lock()  # protects _send_locks dict creation
+
+
+def _get_send_lock(convo_id: str) -> threading.Lock:
+    """Get or create a lock for a specific conversation (thread-safe)."""
+    if convo_id not in _send_locks:
+        with _send_locks_lock:
+            if convo_id not in _send_locks:  # double-check after acquiring lock
+                _send_locks[convo_id] = threading.Lock()
+    return _send_locks[convo_id]
 
 # Initialize policy manager for mesh config sync
 policy_manager = PolicyManager()
@@ -1843,6 +1853,10 @@ def _is_local_request(request: Request) -> bool:
     Note: Previously trusted all 10.x.x.x (Nebula network), but that's too
     permissive - any host on the network could access admin endpoints.
     For remote admin access, use HMAC-authenticated endpoints instead.
+
+    IMPORTANT: This assumes no reverse proxy in front of Joi. If a reverse proxy
+    is added, client.host will be the proxy's IP (127.0.0.1), bypassing this check.
+    In that case, X-Forwarded-For handling would be needed (with proxy stripping/overwriting).
     """
     client_ip = request.client.host if request.client else ""
     return client_ip == "127.0.0.1"
@@ -2879,10 +2893,11 @@ def _send_to_mesh(
         return False
 
     # Enforce cooldown between sends to same conversation
+    # Uses per-conversation locks so different conversations don't block each other
     convo_id = conversation.id
     cooldown = RESPONSE_COOLDOWN_GROUP_SECONDS if conversation.type == "group" else RESPONSE_COOLDOWN_DM_SECONDS
     now = time.time()
-    with _send_lock:
+    with _get_send_lock(convo_id):
         last_send = _last_send_times.get(convo_id, 0)
         elapsed = now - last_send
         if elapsed < cooldown:
