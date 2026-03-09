@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS system_state (
 
 -- Initialize default system state if not exists
 INSERT OR IGNORE INTO system_state (key, value) VALUES
-    ('schema_version', '5'),
+    ('schema_version', '6'),
     ('last_interaction_at', '0'),
     ('last_impulse_check_at', '0'),
     ('messages_sent_this_hour', '0'),
@@ -522,38 +522,139 @@ class MemoryStore:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_topics_due ON pending_topics(due_at, status)")
                 conn.commit()
 
-        # Rebuild FTS indexes if empty but main tables have data
-        self._rebuild_fts_indexes_if_needed(conn)
+        # Check FTS integrity and rebuild if needed
+        self._check_and_repair_fts_indexes(conn)
 
-    def _rebuild_fts_indexes_if_needed(self, conn: sqlite3.Connection) -> None:
-        """Rebuild FTS indexes if they're empty but main tables have data (migration)."""
-        # Check user_facts_fts
-        try:
-            cursor = conn.execute("SELECT COUNT(*) FROM user_facts_fts")
-            fts_count = cursor.fetchone()[0]
-            cursor = conn.execute("SELECT COUNT(*) FROM user_facts WHERE active = 1")
-            facts_count = cursor.fetchone()[0]
-            if fts_count == 0 and facts_count > 0:
-                logger.info("Migration: Rebuilding user_facts_fts (%d facts)", facts_count)
-                conn.execute("INSERT INTO user_facts_fts(user_facts_fts) VALUES('rebuild')")
-                conn.commit()
-        except sqlite3.OperationalError as e:
-            # FTS table may not exist yet
-            logger.debug("user_facts_fts rebuild check skipped: %s", e)
+    def _check_and_repair_fts_indexes(self, conn: sqlite3.Connection) -> None:
+        """Check FTS index integrity and repair if out of sync."""
+        integrity = self._check_fts_integrity_internal(conn)
+        for index_name, status in integrity.items():
+            if not status["ok"]:
+                if status["fts_count"] == 0 and status["main_count"] > 0:
+                    # Empty FTS with data - rebuild
+                    logger.info(
+                        "FTS index %s is empty but main table has %d rows - rebuilding",
+                        index_name, status["main_count"]
+                    )
+                    self._rebuild_fts_index_internal(conn, index_name)
+                else:
+                    # Count mismatch - log warning, don't auto-rebuild (might lose data)
+                    logger.warning(
+                        "FTS index %s out of sync: FTS=%d, main=%d (diff=%d). "
+                        "Run rebuild_fts_index('%s') to repair.",
+                        index_name, status["fts_count"], status["main_count"],
+                        status["difference"], index_name
+                    )
 
-        # Check summaries_fts
+    def _check_fts_integrity_internal(self, conn: sqlite3.Connection) -> dict:
+        """Internal: Check FTS integrity without acquiring new connection."""
+        results = {}
+
+        # Define FTS tables and their corresponding main tables
+        fts_configs = [
+            ("user_facts_fts", "user_facts", "active = 1"),
+            ("summaries_fts", "context_summaries", None),
+            ("knowledge_fts", "knowledge_chunks", None),
+        ]
+
+        for fts_table, main_table, where_clause in fts_configs:
+            try:
+                # Count FTS rows
+                cursor = conn.execute(f"SELECT COUNT(*) FROM {fts_table}")
+                fts_count = cursor.fetchone()[0]
+
+                # Count main table rows
+                if where_clause:
+                    cursor = conn.execute(f"SELECT COUNT(*) FROM {main_table} WHERE {where_clause}")
+                else:
+                    cursor = conn.execute(f"SELECT COUNT(*) FROM {main_table}")
+                main_count = cursor.fetchone()[0]
+
+                difference = abs(fts_count - main_count)
+                results[fts_table] = {
+                    "ok": difference == 0,
+                    "fts_count": fts_count,
+                    "main_count": main_count,
+                    "difference": difference,
+                }
+            except sqlite3.OperationalError as e:
+                results[fts_table] = {
+                    "ok": False,
+                    "error": str(e),
+                    "fts_count": 0,
+                    "main_count": 0,
+                    "difference": 0,
+                }
+
+        return results
+
+    def _rebuild_fts_index_internal(self, conn: sqlite3.Connection, index_name: str) -> bool:
+        """Internal: Rebuild a specific FTS index."""
         try:
-            cursor = conn.execute("SELECT COUNT(*) FROM summaries_fts")
-            fts_count = cursor.fetchone()[0]
-            cursor = conn.execute("SELECT COUNT(*) FROM context_summaries")
-            summaries_count = cursor.fetchone()[0]
-            if fts_count == 0 and summaries_count > 0:
-                logger.info("Migration: Rebuilding summaries_fts (%d summaries)", summaries_count)
-                conn.execute("INSERT INTO summaries_fts(summaries_fts) VALUES('rebuild')")
-                conn.commit()
+            conn.execute(f"INSERT INTO {index_name}({index_name}) VALUES('rebuild')")
+            conn.commit()
+            logger.info("Rebuilt FTS index: %s", index_name)
+            return True
         except sqlite3.OperationalError as e:
-            # FTS table may not exist yet
-            logger.debug("summaries_fts rebuild check skipped: %s", e)
+            logger.error("Failed to rebuild FTS index %s: %s", index_name, e)
+            return False
+
+    def check_fts_integrity(self) -> dict:
+        """
+        Check integrity of all FTS indexes.
+
+        Returns dict with status for each FTS table:
+        {
+            "user_facts_fts": {"ok": True, "fts_count": 100, "main_count": 100, "difference": 0},
+            "summaries_fts": {"ok": False, "fts_count": 50, "main_count": 55, "difference": 5},
+            ...
+        }
+        """
+        conn = self._connect()
+        return self._check_fts_integrity_internal(conn)
+
+    def rebuild_fts_index(self, index_name: str) -> tuple[bool, str]:
+        """
+        Rebuild a specific FTS index.
+
+        Args:
+            index_name: One of 'user_facts_fts', 'summaries_fts', 'knowledge_fts'
+
+        Returns:
+            (success, message)
+        """
+        valid_indexes = ["user_facts_fts", "summaries_fts", "knowledge_fts"]
+        if index_name not in valid_indexes:
+            return False, f"Invalid index name. Must be one of: {valid_indexes}"
+
+        conn = self._connect()
+
+        # Get counts before rebuild
+        integrity_before = self._check_fts_integrity_internal(conn)
+        before = integrity_before.get(index_name, {})
+
+        # Rebuild
+        success = self._rebuild_fts_index_internal(conn, index_name)
+        if not success:
+            return False, "rebuild_failed"
+
+        # Get counts after rebuild
+        integrity_after = self._check_fts_integrity_internal(conn)
+        after = integrity_after.get(index_name, {})
+
+        return True, f"Rebuilt {index_name}: {before.get('fts_count', 0)} -> {after.get('fts_count', 0)} rows"
+
+    def rebuild_all_fts_indexes(self) -> dict:
+        """
+        Rebuild all FTS indexes.
+
+        Returns dict with results for each index.
+        """
+        results = {}
+        for index_name in ["user_facts_fts", "summaries_fts", "knowledge_fts"]:
+            success, message = self.rebuild_fts_index(index_name)
+            results[index_name] = {"success": success, "message": message}
+        return results
 
     def close(self) -> None:
         """Close the database connection for this thread."""
@@ -1680,8 +1781,7 @@ class MemoryStore:
                 params = [fts_query, limit]
             else:
                 # Filter by allowed scopes only - no global/legacy access
-                # NOTE: Empty scope ('') knowledge is orphaned and inaccessible
-                # TODO(v2): Add cleanup to delete orphaned empty-scope knowledge chunks
+                # NOTE: All knowledge is created with proper scope, no legacy cleanup needed
                 allowed = list(scopes)
                 placeholders = ','.join('?' * len(allowed))
                 scope_filter = f"AND k.scope IN ({placeholders})"

@@ -560,6 +560,7 @@ def _watchdog_loop():
 # --- Flask app for outbound API ---
 flask_app = Flask("mesh-outbound")
 flask_app.logger.setLevel(logging.WARNING)  # Quiet Flask logs
+logging.getLogger("werkzeug").setLevel(logging.WARNING)  # Quiet werkzeug request logs
 
 
 def _is_hmac_available() -> bool:
@@ -1275,12 +1276,12 @@ def _send_rate_limit_notice(payload: Dict[str, Any]) -> None:
 
 
 def run_http_server(port: int):
-    """Run Flask server in a thread."""
-    # Use werkzeug directly to avoid Flask dev server warnings
-    from werkzeug.serving import make_server
-    server = make_server("0.0.0.0", port, flask_app, threaded=True)
-    logger.info("HTTP server listening on port %d", port)
-    server.serve_forever()
+    """Run Flask server in a thread using waitress (production WSGI server)."""
+    from waitress import serve
+    logger.info("HTTP server (waitress) listening on port %d", port)
+    # waitress is production-ready: thread pool, proper HTTP parsing, no dev warnings
+    # threads=4 handles concurrent requests (e.g., multiple outbound sends)
+    serve(flask_app, host="0.0.0.0", port=port, threads=4, _quiet=True)
 
 
 def main() -> None:
