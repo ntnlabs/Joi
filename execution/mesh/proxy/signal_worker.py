@@ -1054,7 +1054,7 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
         "transport": "signal",
         "message_id": message_id,
         "sender": {
-            "id": "owner",
+            "id": source,  # Use actual transport_id, not hardcoded "owner"
             "transport_id": source,
             "display_name": envelope.get("sourceName"),
         },
@@ -1276,6 +1276,11 @@ def main() -> None:
                         logger.info("Forwarding message_id=%s to Joi (store_only, sender=%s)", payload.get("message_id"), sender)
                     else:
                         logger.info("Forwarding message_id=%s to Joi", payload.get("message_id"))
+
+                    # Add is_owner flag for priority handling
+                    # Owner = first entry in allowed_senders list
+                    sender_id = payload.get("sender", {}).get("transport_id", "")
+                    payload["is_owner"] = policy.is_owner(sender_id)
 
                     # Add group_names for @mention detection
                     convo = payload.get("conversation", {})

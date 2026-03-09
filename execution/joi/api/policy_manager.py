@@ -25,6 +25,7 @@ DEFAULT_POLICY = {
     "dm_group_knowledge": False,  # Only applies in business mode
     "identity": {
         "bot_name": "Joi",
+        "owner_id": None,  # Primary owner gets queue priority
         "allowed_senders": [],
         "groups": {},
     },
@@ -154,6 +155,21 @@ class PolicyManager:
             self._update_hash_unlocked()
             self._save_unlocked()
         logger.info("Updated bot_name to: %s", name)
+
+    def get_owner_id(self) -> Optional[str]:
+        """Get the owner ID (primary owner for queue priority)."""
+        with self._lock:
+            return self._config.get("identity", {}).get("owner_id")
+
+    def set_owner_id(self, owner_id: Optional[str]) -> None:
+        """Set the owner ID."""
+        with self._lock:
+            if "identity" not in self._config:
+                self._config["identity"] = {}
+            self._config["identity"]["owner_id"] = owner_id
+            self._update_hash_unlocked()
+            self._save_unlocked()
+        logger.info("Updated owner_id to: %s", owner_id)
 
     def get_allowed_senders(self) -> List[str]:
         """Get list of allowed senders."""

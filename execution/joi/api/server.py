@@ -1413,6 +1413,7 @@ class InboundMessage(BaseModel):
     store_only: bool = False  # If True, store for context but don't respond
     group_names: Optional[List[str]] = None  # Names Joi responds to in this group
     bot_mentioned: bool = False  # True if bot was @mentioned via Signal mention
+    is_owner: bool = False  # True if sender is the primary owner (first in allowed_senders)
 
 
 class InboundResponse(BaseModel):
@@ -2011,8 +2012,7 @@ def ingest_document(req: DocumentIngestRequest):
     # Log with privacy mode redaction
     if policy_manager.is_privacy_mode():
         logger.info(
-            "Received document: filename=%s content_type=%s scope=%s sender=%s [privacy]",
-            req.filename,
+            "Received document: filename=[redacted] content_type=%s scope=%s sender=%s [privacy]",
             req.content_type,
             _redact_filename_pii(req.scope),
             _redact_filename_pii(req.sender_id),
@@ -2106,17 +2106,29 @@ def receive_message(msg: InboundMessage):
     - store_only=True: Store for context but don't respond (non-allowed senders)
     - store_only=False: Check if Joi is addressed before responding
     """
-    # Check if sender is owner (id="owner" is set by mesh for allowed senders)
-    is_owner = msg.sender.id == "owner"
+    # Check if sender is owner (set by mesh based on first entry in allowed_senders)
+    is_owner = msg.is_owner
 
-    logger.info(
-        "Received message_id=%s from=%s type=%s convo=%s store_only=%s",
-        msg.message_id,
-        msg.sender.transport_id,
-        msg.content.type,
-        msg.conversation.type,
-        msg.store_only,
-    )
+    # Privacy-aware logging
+    if policy_manager.is_privacy_mode():
+        logger.info(
+            "Received message_id=%s from=[redacted] type=%s convo=%s store_only=%s is_owner=%s",
+            msg.message_id,
+            msg.content.type,
+            msg.conversation.type,
+            msg.store_only,
+            is_owner,
+        )
+    else:
+        logger.info(
+            "Received message_id=%s from=%s type=%s convo=%s store_only=%s is_owner=%s",
+            msg.message_id,
+            msg.sender.transport_id,
+            msg.content.type,
+            msg.conversation.type,
+            msg.store_only,
+            is_owner,
+        )
 
     # Handle reactions - store and respond briefly
     if msg.content.type == "reaction":
@@ -2136,25 +2148,42 @@ def receive_message(msg: InboundMessage):
         )
 
         # Generate brief reaction response (skip for store_only)
+        # Queue the LLM call to ensure all LLM access is serialized
         if not msg.store_only:
-            response_text = _generate_reaction_response(emoji, msg.conversation.id)
-            if response_text:
-                _send_to_mesh(
-                    recipient_id=msg.sender.id,
-                    recipient_transport_id=msg.sender.transport_id,
-                    conversation=msg.conversation,
-                    text=response_text,
-                    reply_to=None,
+            def process_reaction() -> InboundResponse:
+                response_text = _generate_reaction_response(emoji, msg.conversation.id)
+                if response_text:
+                    _send_to_mesh(
+                        recipient_id=msg.sender.id,
+                        recipient_transport_id=msg.sender.transport_id,
+                        conversation=msg.conversation,
+                        text=response_text,
+                        reply_to=None,
+                    )
+                    # Store outbound
+                    memory.store_message(
+                        message_id=str(uuid.uuid4()),
+                        direction="outbound",
+                        content_type="text",
+                        content_text=response_text,
+                        timestamp=int(time.time() * 1000),
+                        conversation_id=msg.conversation.id,
+                    )
+                return InboundResponse(status="ok", message_id=msg.message_id)
+
+            try:
+                return message_queue.enqueue(
+                    message_id=f"reaction-{msg.message_id}",
+                    handler=process_reaction,
+                    is_owner=is_owner,
+                    timeout=60.0,  # Shorter timeout for reactions
                 )
-                # Store outbound
-                memory.store_message(
-                    message_id=str(uuid.uuid4()),
-                    direction="outbound",
-                    content_type="text",
-                    content_text=response_text,
-                    timestamp=int(time.time() * 1000),
-                    conversation_id=msg.conversation.id,
-                )
+            except TimeoutError:
+                logger.warning("Reaction response timed out for %s", msg.message_id)
+                return InboundResponse(status="ok", message_id=msg.message_id)
+            except Exception as e:
+                logger.error("Reaction response failed: %s", e)
+                return InboundResponse(status="ok", message_id=msg.message_id)
 
         return InboundResponse(status="ok", message_id=msg.message_id)
 
@@ -2188,17 +2217,8 @@ def receive_message(msg: InboundMessage):
     # - Groups: group_id (group scope, facts include person names in key)
     fact_key = msg.conversation.id
 
-    # Check for "remember this" requests (only from allowed senders)
-    # Uses hybrid approach: keyword filter + LLM detection/extraction
-    saved_fact = None
-    if not msg.store_only:
-        saved_fact = _detect_and_extract_fact(
-            user_text,
-            conversation_id=fact_key,
-            sender_id=msg.sender.transport_id,
-            sender_name=msg.sender.display_name or "",
-            is_group=(msg.conversation.type == "group"),
-        )
+    # Note: Fact extraction moved into queued handler to ensure all LLM calls
+    # go through the queue (fixes concurrent LLM access issue)
 
     # Determine if we should respond
     should_respond = True
@@ -2234,6 +2254,18 @@ def receive_message(msg: InboundMessage):
 
     def process_with_llm() -> InboundResponse:
         """Process message with LLM - runs in queue worker thread."""
+        # Check for "remember this" requests (only from allowed senders)
+        # Uses hybrid approach: keyword filter + LLM detection/extraction
+        # Note: This is inside the queue to ensure all LLM calls are serialized
+        if not msg.store_only:
+            _detect_and_extract_fact(
+                user_text,
+                conversation_id=fact_key,
+                sender_id=msg.sender.transport_id,
+                sender_name=msg.sender.display_name or "",
+                is_group=(msg.conversation.type == "group"),
+            )
+
         # Get per-conversation context size (or use global default)
         custom_context = get_context_for_conversation(
             conversation_type=msg.conversation.type,

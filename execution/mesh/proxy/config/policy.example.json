@@ -1,6 +1,7 @@
 {
   "identity": {
     "bot_name": "Joi",
+    "owner_id": "+<OWNER_PHONE_NUMBER>",
     "allowed_senders": [
       "+<PHONE_NUMBER>"
     ],
