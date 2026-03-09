@@ -520,6 +520,9 @@ Corrected JSON:"""
             logger.error("Summarization failed for %s: %s", self._log_convo_id(conversation_id), e, exc_info=True)
             summary = None
 
+        # Fail-safe: only remove messages if summarization succeeded
+        # If summary fails, messages remain and will be retried next consolidation run
+        # (may cause duplicate fact extraction, but prevents data loss)
         if summary:
             results["messages_summarized"] = len(oldest_messages)
 
