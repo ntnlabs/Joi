@@ -123,7 +123,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # SQL for creating tables
 SCHEMA_SQL = """
@@ -253,12 +253,15 @@ CREATE TABLE IF NOT EXISTS pending_topics (
     status TEXT DEFAULT 'pending',
     created_at TEXT NOT NULL,
     expires_at TEXT,
+    due_at TEXT,
     mentioned_at TEXT,
     novelty_key TEXT,
     source_event_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_pending_topics_conv_status
     ON pending_topics(conversation_id, status);
+CREATE INDEX IF NOT EXISTS idx_pending_topics_due
+    ON pending_topics(due_at, status);
 
 -- Wind decision log table (observability)
 CREATE TABLE IF NOT EXISTS wind_decision_log (
@@ -506,6 +509,17 @@ class MemoryStore:
                 logger.info("Migration: Adding 'scope' column to knowledge_chunks table")
                 conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN scope TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_scope ON knowledge_chunks(scope)")
+                conn.commit()
+
+        # Check pending_topics table for due_at column (v6)
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_topics'")
+        if cursor.fetchone():
+            cursor = conn.execute("PRAGMA table_info(pending_topics)")
+            topic_columns = {row[1] for row in cursor.fetchall()}
+            if "due_at" not in topic_columns:
+                logger.info("Migration: Adding 'due_at' column to pending_topics table")
+                conn.execute("ALTER TABLE pending_topics ADD COLUMN due_at TEXT")
+                conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_topics_due ON pending_topics(due_at, status)")
                 conn.commit()
 
         # Rebuild FTS indexes if empty but main tables have data

@@ -25,7 +25,7 @@ class WindOrchestrator:
     - Impulse engine (gates + scoring)
     - Decision logger (observability)
 
-    Phase 0-1: Shadow mode only - runs full evaluation but skips actual sends.
+    Phase 2: Live sends enabled. Shadow mode available via config for testing.
     """
 
     def __init__(
