@@ -2396,29 +2396,14 @@ def _generate_proactive_message(
     """
     Generate a proactive message for Wind based on a topic.
 
-    Uses joi-brain with full context (facts, personality) to draft a natural message.
+    Uses joi-brain with facts and knowledge to draft a natural message.
+    No conversation history - proactive messages are fresh initiations.
     """
-    # Get Joi's base personality prompt
-    base_prompt = get_prompt_for_conversation_optional(conversation_id)
-    if not base_prompt:
-        base_prompt = "You are Joi, a warm and thoughtful AI companion."
+    # Simple base personality for Wind messages
+    base_prompt = "You are Joi, a warm and thoughtful AI companion."
 
     # Get user facts for this conversation
     facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
-
-    # Get recent context to make the message contextually relevant
-    recent = memory.get_recent_messages(limit=10, conversation_id=conversation_id)
-
-    # Build context summary
-    context_summary = ""
-    if recent:
-        recent_texts = []
-        for msg in recent[-5:]:  # Last 5 messages
-            direction = "User" if msg.direction == "inbound" else "Joi"
-            if msg.content_text:
-                recent_texts.append(f"{direction}: {msg.content_text[:100]}")
-        if recent_texts:
-            context_summary = "\n".join(recent_texts)
 
     # Build system prompt with personality and facts
     system_parts = [base_prompt]
@@ -2434,8 +2419,6 @@ def _generate_proactive_message(
     user_prompt = f"""You are reaching out proactively to start a conversation.
 
 Topic to bring up: {topic_info}
-
-{"Recent conversation context:" + chr(10) + context_summary if context_summary else "No recent conversation."}
 
 Write a brief, natural message to start a conversation about this topic.
 Rules:
