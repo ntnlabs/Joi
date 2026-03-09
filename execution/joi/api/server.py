@@ -210,9 +210,10 @@ class MessageQueue:
 
     PRIORITY_OWNER = 0  # Owner messages processed first
     PRIORITY_NORMAL = 1  # Other allowed senders
+    MAX_QUEUE_SIZE = 100  # Prevent unbounded memory growth
 
     def __init__(self):
-        self._queue: queue.PriorityQueue = queue.PriorityQueue()
+        self._queue: queue.PriorityQueue = queue.PriorityQueue(maxsize=self.MAX_QUEUE_SIZE)
         self._worker_thread: Optional[threading.Thread] = None
         self._running = False
         self._current_message_id: Optional[str] = None
@@ -270,7 +271,11 @@ class MessageQueue:
         priority_label = "owner" if priority == self.PRIORITY_OWNER else "normal"
         logger.info("Queue ADD: message_id=%s priority=%s queue_size=%d", message_id, priority_label, queue_size)
 
-        self._queue.put(msg)
+        try:
+            self._queue.put(msg, timeout=5.0)  # Wait up to 5s if queue is full
+        except queue.Full:
+            logger.error("Queue FULL: dropping message_id=%s (max_size=%d)", message_id, self.MAX_QUEUE_SIZE)
+            raise Exception("Message queue full, try again later")
 
         # Wait for processing to complete
         if not msg.done_event.wait(timeout=timeout):
@@ -2154,6 +2159,34 @@ def admin_rag_search(request: Request, q: str, scope: Optional[str] = None):
 
 # --- Document Ingestion Endpoint ---
 
+# Rate limiting for document ingestion (prevent DoS via disk exhaustion)
+_ingest_times: Dict[str, list] = {}  # scope -> list of timestamps
+_ingest_lock = threading.Lock()
+_INGEST_RATE_LIMIT = 10  # Max ingests per scope per minute
+_INGEST_RATE_WINDOW = 60  # Window in seconds
+
+
+def _check_ingest_rate_limit(scope: str) -> bool:
+    """Check if ingestion is allowed for this scope. Returns True if allowed."""
+    now = time.time()
+    cutoff = now - _INGEST_RATE_WINDOW
+
+    with _ingest_lock:
+        if scope not in _ingest_times:
+            _ingest_times[scope] = []
+
+        # Remove old timestamps
+        _ingest_times[scope] = [t for t in _ingest_times[scope] if t > cutoff]
+
+        # Check limit
+        if len(_ingest_times[scope]) >= _INGEST_RATE_LIMIT:
+            return False
+
+        # Record this request
+        _ingest_times[scope].append(now)
+        return True
+
+
 @app.post("/api/v1/document/ingest", response_model=DocumentIngestResponse)
 def ingest_document(req: DocumentIngestRequest):
     """
@@ -2162,7 +2195,16 @@ def ingest_document(req: DocumentIngestRequest):
     Documents are saved to the ingestion input directory for processing
     by the scheduler tick. The scope determines which conversations
     can access the knowledge.
+
+    Rate limited to 10 documents per scope per minute to prevent DoS.
     """
+    # Rate limit check
+    if not _check_ingest_rate_limit(req.scope):
+        logger.warning("Document ingestion rate limit exceeded for scope: %s", req.scope)
+        return DocumentIngestResponse(
+            status="error",
+            error="rate_limit_exceeded",
+        )
     # Log with privacy mode redaction
     if policy_manager.is_privacy_mode():
         logger.info(

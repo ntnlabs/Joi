@@ -418,7 +418,9 @@ class MemoryStore:
             if self._encrypted and self._encryption_key:
                 # PRAGMA doesn't support parameterized queries
                 # Use key as passphrase (matches migration script's ATTACH ... KEY 'passphrase')
-                conn.execute(f"PRAGMA key = '{self._encryption_key}';")
+                # Escape single quotes to prevent SQL injection
+                escaped_key = self._encryption_key.replace("'", "''")
+                conn.execute(f"PRAGMA key = '{escaped_key}';")
 
                 # Verify encryption is working by querying the database
                 try:
