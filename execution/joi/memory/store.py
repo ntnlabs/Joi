@@ -1105,13 +1105,15 @@ class MemoryStore:
         """
         conn = self._connect()
 
-        # Sanitize query for FTS5: extract words and wrap in quotes
+        # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
+        # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
         import re
         words = re.findall(r'\w+', query)
         if not words:
             return []
 
         # Join words with OR, each word quoted to treat as literal
+        # Safe because \w+ guarantees no double quotes in words
         fts_query = " OR ".join(f'"{word}"' for word in words[:20])
 
         try:
@@ -1397,7 +1399,8 @@ class MemoryStore:
         """
         conn = self._connect()
 
-        # Sanitize query for FTS5: extract words and wrap in quotes
+        # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
+        # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
         import re
         words = re.findall(r'\w+', query)
         if not words:
@@ -1408,6 +1411,7 @@ class MemoryStore:
         cutoff_ms = now_ms - (days * 24 * 60 * 60 * 1000)
 
         # Join words with OR, each word quoted to treat as literal
+        # Safe because \w+ guarantees no double quotes in words
         fts_query = " OR ".join(f'"{word}"' for word in words[:20])
 
         try:
@@ -1761,8 +1765,8 @@ class MemoryStore:
         """
         conn = self._connect()
 
-        # Sanitize query for FTS5: extract words and wrap in quotes
-        # This prevents FTS5 special syntax from breaking the query
+        # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
+        # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
         import re
         words = re.findall(r'\w+', query)
         if not words:
@@ -1773,6 +1777,7 @@ class MemoryStore:
             return []
 
         # Join words with OR, each word quoted to treat as literal
+        # Safe because \w+ guarantees no double quotes in words
         fts_query = " OR ".join(f'"{word}"' for word in words[:20])  # Limit to 20 words
 
         try:
