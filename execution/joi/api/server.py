@@ -2111,6 +2111,9 @@ def receive_message(msg: InboundMessage):
         sender_name=msg.sender.display_name,
     )
 
+    # Record user interaction for Wind (resets unanswered counter, updates silence timer)
+    wind_orchestrator.record_user_interaction(msg.conversation.id)
+
     # All facts (explicit and inferred) use conversation_id as key
     # - DMs: phone number (per-user scope)
     # - Groups: group_id (group scope, facts include person names in key)
@@ -2556,6 +2559,8 @@ def _send_to_mesh(
 
         if data.get("status") == "ok":
             logger.info("Sent response to mesh successfully")
+            # Record outbound for Wind state tracking
+            wind_orchestrator.record_outbound(conversation.id)
             return True
         else:
             logger.error("Mesh returned error: %s", data.get("error"))
