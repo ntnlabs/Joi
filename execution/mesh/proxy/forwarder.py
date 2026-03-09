@@ -122,7 +122,10 @@ def _get_config_hash() -> Optional[str]:
 def _forward_async(url: str, payload: Dict[str, Any]) -> None:
     """Forward message in background thread with HMAC signing (legacy - uses default secret)."""
     global _pending_tasks
-    try:
+    message_id = payload.get("message_id", "unknown")
+
+    def do_forward() -> bool:
+        """Attempt to forward. Returns True on success."""
         client = _get_client()
 
         # Serialize payload to JSON bytes
@@ -142,9 +145,20 @@ def _forward_async(url: str, payload: Dict[str, Any]) -> None:
 
         resp = client.post(url, content=body, headers=headers)
         resp.raise_for_status()
-        logger.debug("Forwarded message_id=%s to Joi", payload.get("message_id"))
+        return True
+
+    try:
+        do_forward()
+        logger.debug("Forwarded message_id=%s to Joi", message_id)
     except Exception as e:
-        logger.error("Forward to Joi failed: %s", e)
+        logger.warning("Forward to Joi failed (will retry in 10s): %s", e)
+        # Single retry after 10 seconds for transient network issues
+        time.sleep(10)
+        try:
+            do_forward()
+            logger.info("Forwarded message_id=%s to Joi (retry succeeded)", message_id)
+        except Exception as e2:
+            logger.error("Forward to Joi failed after retry, dropping message_id=%s: %s", message_id, e2)
     finally:
         with _pending_lock:
             _pending_tasks -= 1
@@ -153,22 +167,26 @@ def _forward_async(url: str, payload: Dict[str, Any]) -> None:
 def _forward_async_to_backend(url: str, payload: Dict[str, Any], backend_name: str) -> None:
     """Forward message to specified backend with backend-specific HMAC."""
     global _pending_tasks
-    try:
+    message_id = payload.get("message_id", "unknown")
+
+    # Fail-closed: reject if no secret configured for this backend
+    secret = get_shared_secret_for_backend(backend_name)
+    if not secret:
+        logger.error(
+            "Forward to %s REJECTED: no HMAC secret configured (fail-closed). "
+            "Set MESH_HMAC_SECRET_%s env var.",
+            backend_name, backend_name.upper()
+        )
+        with _pending_lock:
+            _pending_tasks -= 1
+        return  # Don't send unsigned traffic
+
+    def do_forward() -> bool:
+        """Attempt to forward. Returns True on success."""
         client = _get_client()
 
         # Serialize payload to JSON bytes
         body = json.dumps(payload).encode("utf-8")
-
-        # Build headers with backend-specific HMAC
-        # Fail-closed: reject if no secret configured for this backend
-        secret = get_shared_secret_for_backend(backend_name)
-        if not secret:
-            logger.error(
-                "Forward to %s REJECTED: no HMAC secret configured (fail-closed). "
-                "Set MESH_HMAC_SECRET_%s env var.",
-                backend_name, backend_name.upper()
-            )
-            return  # Don't send unsigned traffic
 
         headers = {"Content-Type": "application/json"}
         hmac_headers = create_request_headers(body, secret)
@@ -181,9 +199,20 @@ def _forward_async_to_backend(url: str, payload: Dict[str, Any], backend_name: s
 
         resp = client.post(url, content=body, headers=headers)
         resp.raise_for_status()
-        logger.debug("Forwarded to %s: message_id=%s", backend_name, payload.get("message_id"))
+        return True
+
+    try:
+        do_forward()
+        logger.debug("Forwarded to %s: message_id=%s", backend_name, message_id)
     except Exception as e:
-        logger.error("Forward to %s failed: %s", backend_name, e)
+        logger.warning("Forward to %s failed (will retry in 10s): %s", backend_name, e)
+        # Single retry after 10 seconds for transient network issues
+        time.sleep(10)
+        try:
+            do_forward()
+            logger.info("Forwarded to %s: message_id=%s (retry succeeded)", backend_name, message_id)
+        except Exception as e2:
+            logger.error("Forward to %s failed after retry, dropping message_id=%s: %s", backend_name, message_id, e2)
     finally:
         with _pending_lock:
             _pending_tasks -= 1
