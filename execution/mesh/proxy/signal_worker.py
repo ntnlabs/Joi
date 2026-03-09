@@ -427,7 +427,134 @@ _config_state.set_routing_state(_routing_state)
 _rpc: Optional[JsonRpcStdioClient] = None
 _rpc_lock = threading.Lock()
 _account: str = ""
+_account_uuid: str = ""
 _dedupe_cache = MessageDedupeCache()
+
+# Signal-cli config for restart capability
+_signal_cli_bin: str = ""
+_signal_cli_config_dir: str = ""
+_rpc_restart_count: int = 0
+_rpc_last_health_check: float = 0.0
+_rpc_healthy: bool = True
+
+# Watchdog settings
+WATCHDOG_INTERVAL_SECONDS = 60  # Check health every 60 seconds
+WATCHDOG_TIMEOUT_SECONDS = 10  # Health check timeout
+MAX_RESTART_ATTEMPTS = 5  # Max restarts before giving up
+RESTART_COOLDOWN_SECONDS = 30  # Wait between restart attempts
+
+
+def _start_signal_cli() -> JsonRpcStdioClient:
+    """Start signal-cli subprocess and return RPC client."""
+    global _rpc_healthy
+    logger.info("Starting signal-cli subprocess...")
+    rpc = JsonRpcStdioClient(
+        [
+            _signal_cli_bin,
+            "--config",
+            _signal_cli_config_dir,
+            "jsonRpc",
+            "--receive-mode=on-connection",
+        ]
+    )
+    _rpc_healthy = True
+    logger.info("signal-cli started (pid=%s)", rpc.get_pid())
+    return rpc
+
+
+def _restart_signal_cli() -> bool:
+    """
+    Restart signal-cli subprocess.
+
+    Returns True if restart succeeded, False otherwise.
+    """
+    global _rpc, _rpc_restart_count, _rpc_healthy
+
+    with _rpc_lock:
+        _rpc_restart_count += 1
+
+        if _rpc_restart_count > MAX_RESTART_ATTEMPTS:
+            logger.critical(
+                "signal-cli restart failed: max attempts (%d) exceeded. "
+                "Manual intervention required.",
+                MAX_RESTART_ATTEMPTS
+            )
+            return False
+
+        logger.warning(
+            "Restarting signal-cli (attempt %d/%d)...",
+            _rpc_restart_count, MAX_RESTART_ATTEMPTS
+        )
+
+        # Close old client if exists
+        if _rpc:
+            try:
+                _rpc.close()
+            except Exception as e:
+                logger.warning("Error closing old signal-cli: %s", e)
+
+        # Wait before restart
+        time.sleep(RESTART_COOLDOWN_SECONDS)
+
+        try:
+            _rpc = _start_signal_cli()
+
+            # Verify it's responding
+            result = _rpc.call("listAccounts", {}, timeout=10.0)
+            if "error" in result:
+                logger.error("signal-cli restart failed health check: %s", result["error"])
+                _rpc_healthy = False
+                return False
+
+            logger.info("signal-cli restarted successfully")
+            _rpc_healthy = True
+            return True
+
+        except Exception as e:
+            logger.error("signal-cli restart failed: %s", e)
+            _rpc_healthy = False
+            return False
+
+
+def _watchdog_loop():
+    """
+    Watchdog thread that monitors signal-cli health.
+
+    Periodically checks if signal-cli is alive and responding.
+    Triggers restart if unhealthy.
+    """
+    global _rpc_last_health_check, _rpc_healthy
+
+    logger.info("Watchdog started (interval=%ds)", WATCHDOG_INTERVAL_SECONDS)
+
+    while True:
+        time.sleep(WATCHDOG_INTERVAL_SECONDS)
+
+        try:
+            with _rpc_lock:
+                if not _rpc:
+                    continue
+
+                # Check if process is alive
+                if not _rpc.is_alive():
+                    logger.error("Watchdog: signal-cli process died")
+                    _rpc_healthy = False
+                    _restart_signal_cli()
+                    continue
+
+                # Do active health check
+                _rpc_last_health_check = time.time()
+                if not _rpc.health_check(timeout=WATCHDOG_TIMEOUT_SECONDS):
+                    logger.error("Watchdog: signal-cli not responding to health check")
+                    _rpc_healthy = False
+                    _restart_signal_cli()
+                    continue
+
+                _rpc_healthy = True
+                logger.debug("Watchdog: signal-cli healthy (pid=%s)", _rpc.get_pid())
+
+        except Exception as e:
+            logger.error("Watchdog error: %s", e)
 
 
 # --- Flask app for outbound API ---
@@ -517,7 +644,22 @@ def verify_hmac_auth():
 @flask_app.route("/health", methods=["GET"])
 def health():
     hmac_status = "enabled" if _is_hmac_available() else "disabled"
-    return jsonify({"status": "ok", "mode": "worker", "hmac": hmac_status})
+    signal_status = "healthy" if _rpc_healthy else "unhealthy"
+    signal_pid = _rpc.get_pid() if _rpc else None
+
+    # Overall status depends on signal-cli health
+    overall_status = "ok" if _rpc_healthy else "degraded"
+
+    return jsonify({
+        "status": overall_status,
+        "mode": "worker",
+        "hmac": hmac_status,
+        "signal_cli": {
+            "status": signal_status,
+            "pid": signal_pid,
+            "restart_count": _rpc_restart_count,
+        }
+    })
 
 
 @flask_app.route("/api/v1/delivery/status", methods=["GET"])
@@ -1141,11 +1283,8 @@ def run_http_server(port: int):
     server.serve_forever()
 
 
-_account_uuid: str = ""  # Bot's UUID, fetched at startup
-
-
 def main() -> None:
-    global _rpc, _account, _account_uuid
+    global _rpc, _account, _account_uuid, _signal_cli_bin, _signal_cli_config_dir
 
     log_level = os.getenv("MESH_LOG_LEVEL", "INFO").upper()
     logging.basicConfig(level=getattr(logging, log_level, logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -1157,12 +1296,14 @@ def main() -> None:
 
     http_port = int(os.getenv("MESH_WORKER_HTTP_PORT", "8444"))
     notification_wait_seconds = float(os.getenv("MESH_SIGNAL_POLL_SECONDS", "5"))
-    signal_cli_bin = os.getenv("SIGNAL_CLI_BIN", "/usr/local/bin/signal-cli")
-    signal_cli_config_dir = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/var/lib/signal-cli")
-    if not Path(signal_cli_bin).exists():
-        raise SystemExit(f"SIGNAL_CLI_BIN not found: {signal_cli_bin}")
-    if not Path(signal_cli_config_dir).exists():
-        raise SystemExit(f"SIGNAL_CLI_CONFIG_DIR not found: {signal_cli_config_dir}")
+
+    # Store signal-cli config for restart capability
+    _signal_cli_bin = os.getenv("SIGNAL_CLI_BIN", "/usr/local/bin/signal-cli")
+    _signal_cli_config_dir = os.getenv("SIGNAL_CLI_CONFIG_DIR", "/var/lib/signal-cli")
+    if not Path(_signal_cli_bin).exists():
+        raise SystemExit(f"SIGNAL_CLI_BIN not found: {_signal_cli_bin}")
+    if not Path(_signal_cli_config_dir).exists():
+        raise SystemExit(f"SIGNAL_CLI_CONFIG_DIR not found: {_signal_cli_config_dir}")
 
     # Mesh is stateless - always start with empty policy, wait for Joi push
     policy = MeshPolicy()
@@ -1172,15 +1313,8 @@ def main() -> None:
     set_config_state(_config_state)  # Share with forwarder to avoid module import issues
     set_routing_state(_routing_state)  # Share routing state for multi-backend forwarding
 
-    _rpc = JsonRpcStdioClient(
-        [
-            signal_cli_bin,
-            "--config",
-            signal_cli_config_dir,
-            "jsonRpc",
-            "--receive-mode=on-connection",
-        ]
-    )
+    # Start signal-cli subprocess
+    _rpc = _start_signal_cli()
 
     # Startup health check - verify signal-cli is responding
     logger.info("Testing signal-cli connection...")
@@ -1226,9 +1360,19 @@ def main() -> None:
     http_thread = threading.Thread(target=run_http_server, args=(http_port,), daemon=True)
     http_thread.start()
 
+    # Start watchdog thread to monitor signal-cli health
+    watchdog_thread = threading.Thread(target=_watchdog_loop, daemon=True)
+    watchdog_thread.start()
+
     try:
         while True:
             try:
+                # Check if RPC is healthy before polling
+                if not _rpc_healthy or _rpc is None:
+                    logger.warning("RPC unhealthy, waiting for watchdog to restart...")
+                    time.sleep(5)
+                    continue
+
                 notification = _rpc.pop_notification(timeout=notification_wait_seconds)
                 if notification is None:
                     continue
