@@ -1272,21 +1272,42 @@ Success criteria:
 - Improve topic ranking and dedupe
 - Relax caps toward intended companion defaults
 
-### Phase 4: Full Companion Wind
-- **Tension extraction** (joi-tension model): mine unfinished threads from conversation
-- **Curiosity/discovery** (joi-curiosity model): generate exploratory probes
-- **Topic Affinity Model**: learn user interests, recurring vs one-shot topics
-- **Pursuit state machine**: bounded stubbornness, multi-attempt topics
-- **Topic types**: tension (resolves), affinity (recurs), discovery (converts or dies)
-- **Adaptive quiet hours**: learn activity patterns like Windows Update
-- **Negative feedback memory**: persist rejection signals
+### Phase 4a: Engagement Foundation
 - **Topic engagement tracking**: detect if user engaged, ignored, or deflected after proactive send
   - Mark topic outcome: `engaged`, `ignored`, `deflected`
   - Re-queue ignored topics for later retry (with decay)
-  - Feed engagement signals into affinity model
   - Deflection handling: decide whether to gently return or let it go
+- **Topic types**: tension (resolves), affinity (recurs), discovery (converts or dies)
+  - Different lifecycle behaviors per type
+  - Type-specific expiry and retry rules
+- **Negative feedback memory**: persist rejection signals across sessions
 
-This phase transforms Wind from "queue-based reminders" to "genuine companion initiative."
+### Phase 4b: Learning & Pursuit
+*Depends on: Phase 4a (needs engagement data)*
+
+- **Pursuit state machine**: bounded stubbornness, multi-attempt topics
+  - Track attempt count per topic
+  - Configurable max attempts before giving up
+  - Back-off timing between attempts
+- **Topic Affinity Model**: learn user interests from engagement patterns
+  - Feed engagement signals from 4a
+  - Weight future topic selection by affinity scores
+  - Recurring topics for high-affinity subjects
+
+### Phase 4c: Intelligence
+*Depends on: Phase 4b (benefits from affinity data)*
+
+- **Tension extraction** (joi-tension model): mine unfinished threads from conversation
+  - Detect open questions, unresolved topics, pending plans
+  - Auto-generate tension topics from conversation history
+- **Curiosity/discovery** (joi-curiosity model): generate exploratory probes
+  - Low-frequency probing for new interests
+  - Convert successful discoveries to affinity topics
+- **Adaptive quiet hours**: learn activity patterns like Windows Update
+  - Track when user typically responds
+  - Shift quiet windows based on observed patterns
+
+Together, Phase 4a-4c transform Wind from "queue-based reminders" to "genuine companion initiative."
 
 ## Integration Points (Current Codebase)
 
