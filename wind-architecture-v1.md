@@ -1238,36 +1238,50 @@ Wind must produce structured logs for every evaluation.
 - Topic expiration rate
 - Proactive reply rate (future)
 
-## Rollout Plan (Best Practice)
+## Rollout Plan
 
-### Phase 0: Data + Logging Only
-- Build per-conversation Wind state
-- Build topic queue ingestion
-- No proactive sends
-
-### Phase 1: Shadow Mode
-- Run full Wind evaluation
-- Select topic + draft message
-- Log everything
-- Do not send
+### Phase 0-1: Foundation + Shadow Mode ✅
+- Per-conversation Wind state (wind_state table)
+- Topic queue (pending_topics table)
+- Decision logging (wind_decision_log table)
+- Hard gates + impulse scoring
+- Shadow mode: full evaluation, log decisions, no sends
 
 Success criteria:
 - Decision logs look sensible
 - No obvious spammy drafts
 - Topic selection quality is acceptable
 
-### Phase 2: Low-Risk Live Mode
-- Enable sends with strict caps (e.g., very low daily limit)
+### Phase 2: Basic Live Mode
+- Enable actual sends via `_send_to_mesh()`
+- Strict caps (low daily limit, 1-2 per day)
 - Limited recipient allowlist
 - Aggressive cooldowns
+- Simple topic lifecycle: pending → mentioned → done
+- LLM message generation (joi-brain drafts proactive message)
+
+Success criteria:
+- Messages feel natural, not robotic
+- No spam complaints
+- User engagement on some topics
 
 ### Phase 3: Tuning
-- Adjust factor weights, thresholds, dampers, quiet windows
+- Observe real behavior patterns
+- Adjust factor weights, thresholds, dampers
+- Tune quiet windows based on activity patterns
 - Improve topic ranking and dedupe
+- Relax caps toward intended companion defaults
 
-### Phase 4: Normal Companion Wind
-- Relax caps to intended companion defaults
-- Continue monitoring and feedback tuning
+### Phase 4: Full Companion Wind
+- **Tension extraction** (joi-tension model): mine unfinished threads from conversation
+- **Curiosity/discovery** (joi-curiosity model): generate exploratory probes
+- **Topic Affinity Model**: learn user interests, recurring vs one-shot topics
+- **Pursuit state machine**: bounded stubbornness, multi-attempt topics
+- **Topic types**: tension (resolves), affinity (recurs), discovery (converts or dies)
+- **Adaptive quiet hours**: learn activity patterns like Windows Update
+- **Negative feedback memory**: persist rejection signals
+
+This phase transforms Wind from "queue-based reminders" to "genuine companion initiative."
 
 ## Integration Points (Current Codebase)
 
