@@ -2396,8 +2396,16 @@ def _generate_proactive_message(
     """
     Generate a proactive message for Wind based on a topic.
 
-    Uses joi-brain to draft a natural, conversational message.
+    Uses joi-brain with full context (facts, personality) to draft a natural message.
     """
+    # Get Joi's base personality prompt
+    base_prompt = get_prompt_for_conversation_optional(conversation_id)
+    if not base_prompt:
+        base_prompt = "You are Joi, a warm and thoughtful AI companion."
+
+    # Get user facts for this conversation
+    facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
+
     # Get recent context to make the message contextually relevant
     recent = memory.get_recent_messages(limit=10, conversation_id=conversation_id)
 
@@ -2412,12 +2420,18 @@ def _generate_proactive_message(
         if recent_texts:
             context_summary = "\n".join(recent_texts)
 
-    # Build the prompt
+    # Build system prompt with personality and facts
+    system_parts = [base_prompt]
+    if facts_text:
+        system_parts.append(f"\n\n{facts_text}")
+    system_prompt = "".join(system_parts)
+
+    # Build the user prompt (task)
     topic_info = topic_title
     if topic_content:
         topic_info += f"\nDetails: {topic_content}"
 
-    prompt = f"""You are Joi, reaching out proactively to the user.
+    user_prompt = f"""You are reaching out proactively to start a conversation.
 
 Topic to bring up: {topic_info}
 
@@ -2425,16 +2439,22 @@ Topic to bring up: {topic_info}
 
 Write a brief, natural message to start a conversation about this topic.
 Rules:
+- Stay in character as Joi
 - Be warm but not overly enthusiastic
 - Keep it short (1-3 sentences)
 - Don't be pushy or demanding
 - Sound natural, like you just thought of it
 - No greetings like "Hey!" or "Hi there!" - just get into it naturally
+- Use what you know about the user to make it personal
 
 Just the message, nothing else."""
 
     try:
-        response = llm.generate(prompt=prompt)
+        # Use chat with system prompt for better personality consistency
+        response = llm.chat(
+            messages=[{"role": "user", "content": user_prompt}],
+            system=system_prompt,
+        )
         if response.error or not response.text:
             logger.warning("Wind: LLM generation failed: %s", response.error)
             return None
@@ -2452,6 +2472,7 @@ Just the message, nothing else."""
             logger.warning("Wind: generated message too long (%d chars), truncating", len(text))
             text = text[:500]
 
+        logger.info("Wind: generated message (%d chars) for topic '%s'", len(text), topic_title[:30])
         return text
 
     except Exception as e:
