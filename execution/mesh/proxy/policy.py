@@ -26,6 +26,7 @@ class MeshPolicy:
     def _init_empty(self) -> None:
         """Initialize with empty policy - deny all until Joi pushes config."""
         self.allowed_senders: Set[str] = set()
+        self.owner_id: Optional[str] = None  # Explicit owner from policy
         self.bot_name: Optional[str] = None
         self.group_participants: Dict[str, Set[str]] = {}
         self.group_names: Dict[str, List[str]] = {}
@@ -44,6 +45,7 @@ class MeshPolicy:
         """Apply self._config to internal state. Caller should hold lock."""
         identity = self._config.get("identity", {})
         self.allowed_senders = set(identity.get("allowed_senders", []))
+        self.owner_id = identity.get("owner_id")  # Explicit owner from config
         self.bot_name = identity.get("bot_name")
 
         groups = identity.get("groups", {})
@@ -125,6 +127,12 @@ class MeshPolicy:
     def get_bot_name(self) -> Optional[str]:
         """Get the bot's display name for @mention detection."""
         return self.bot_name
+
+    def is_owner(self, sender: str) -> bool:
+        """Check if sender is the owner (explicit owner_id from policy)."""
+        if not self.owner_id:
+            return False
+        return sender == self.owner_id
 
     @staticmethod
     def _sender_transport_id(payload: Dict[str, Any]) -> Optional[str]:
