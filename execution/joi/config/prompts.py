@@ -276,7 +276,12 @@ def _read_context_file(path: Path) -> Optional[int]:
         if path.exists():
             content = path.read_text(encoding="utf-8").strip()
             if content:
-                return int(content)
+                value = int(content)
+                # Bounds check: reasonable range for context messages
+                if value < 10 or value > 10000:
+                    logger.warning("Context size %d in %s out of bounds (10-10000), ignoring", value, path)
+                    return None
+                return value
     except ValueError:
         logger.warning("Invalid context size in %s (not a number)", path)
     except Exception as e:
@@ -351,7 +356,12 @@ def _read_compact_window_file(path: Path) -> Optional[int]:
         if path.exists():
             content = path.read_text(encoding="utf-8").strip()
             if content:
-                return int(content)
+                value = int(content)
+                # Bounds check: reasonable range for compact batch size
+                if value < 5 or value > 1000:
+                    logger.warning("Compact window %d in %s out of bounds (5-1000), ignoring", value, path)
+                    return None
+                return value
     except ValueError:
         logger.warning("Invalid compact window in %s (not a number)", path)
     except Exception as e:

@@ -39,11 +39,12 @@ _client: httpx.Client = None
 _client_lock = threading.Lock()
 
 # Bounded thread pool for async forwarding (prevents unbounded thread spawning)
-# Max 4 concurrent + 16 queued = 20 total in-flight before dropping
-_executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="forward")
+# Configurable via environment for high-traffic scenarios
+_FORWARD_WORKERS = int(os.getenv("MESH_FORWARD_WORKERS", "4"))
+_MAX_PENDING = int(os.getenv("MESH_FORWARD_MAX_PENDING", "20"))
+_executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=_FORWARD_WORKERS, thread_name_prefix="forward")
 _pending_tasks = 0
 _pending_lock = threading.Lock()
-_MAX_PENDING = 20  # Max tasks in flight (workers + queue)
 atexit.register(_executor.shutdown, wait=False)
 
 
