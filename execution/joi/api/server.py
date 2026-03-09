@@ -1737,7 +1737,7 @@ def _is_local_request(request: Request) -> bool:
     For remote admin access, use HMAC-authenticated endpoints instead.
     """
     client_ip = request.client.host if request.client else ""
-    return client_ip in ("127.0.0.1", "::1")
+    return client_ip == "127.0.0.1"
 
 
 @app.get("/admin/config/status")
