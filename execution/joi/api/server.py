@@ -594,8 +594,72 @@ class Scheduler:
             # Update config from policy manager (in case it changed)
             wind_orchestrator.update_config(_get_wind_config())
 
-            # Run Wind tick
-            wind_orchestrator.tick()
+            # Run Wind tick - returns list of (conv_id, should_send, skip_reason, topic, score)
+            results = wind_orchestrator.tick()
+
+            # Process any conversations that should receive proactive messages
+            for conv_id, should_send, skip_reason, topic, score in results:
+                if not should_send or not topic:
+                    continue
+
+                # Generate proactive message
+                message_text = _generate_proactive_message(
+                    topic_title=topic.title,
+                    topic_content=topic.content,
+                    conversation_id=conv_id,
+                )
+
+                if not message_text:
+                    logger.warning("Wind: failed to generate message for %s", conv_id)
+                    continue
+
+                # Determine conversation type (DMs start with +, groups are base64)
+                is_group = not conv_id.startswith("+")
+                conv_type = "group" if is_group else "direct"
+
+                # Create conversation object for _send_to_mesh
+                conversation = InboundConversation(type=conv_type, id=conv_id)
+
+                # For DMs, recipient is the conversation_id (phone number)
+                # For groups, we'd need to handle differently (not supported yet)
+                if is_group:
+                    logger.warning("Wind: group proactive sends not yet supported")
+                    continue
+
+                recipient_id = "owner"  # Proactive sends go to allowlisted users
+                recipient_transport_id = conv_id
+
+                # Send the message
+                success = _send_to_mesh(
+                    recipient_id=recipient_id,
+                    recipient_transport_id=recipient_transport_id,
+                    conversation=conversation,
+                    text=message_text,
+                    reply_to=None,
+                    is_critical=False,
+                )
+
+                if success:
+                    # Record successful send
+                    wind_orchestrator.record_proactive_sent(
+                        conversation_id=conv_id,
+                        topic=topic,
+                        impulse_score=score,
+                        message_text=message_text,
+                    )
+
+                    # Store outbound message in memory
+                    memory.store_message(
+                        message_id=str(uuid.uuid4()),
+                        direction="outbound",
+                        content_type="text",
+                        content_text=f"[JOI-WIND] {message_text}",
+                        timestamp=int(time.time() * 1000),
+                        conversation_id=conv_id,
+                    )
+                else:
+                    logger.error("Wind: failed to send to %s", conv_id)
+
         except Exception as e:
             logger.warning("Scheduler: Wind impulse check failed: %s", e)
 
@@ -2322,6 +2386,77 @@ def receive_message(msg: InboundMessage):
             message_id=msg.message_id,
             error=str(e),
         )
+
+
+def _generate_proactive_message(
+    topic_title: str,
+    topic_content: Optional[str],
+    conversation_id: str,
+) -> Optional[str]:
+    """
+    Generate a proactive message for Wind based on a topic.
+
+    Uses joi-brain to draft a natural, conversational message.
+    """
+    # Get recent context to make the message contextually relevant
+    recent = memory.get_recent_messages(limit=10, conversation_id=conversation_id)
+
+    # Build context summary
+    context_summary = ""
+    if recent:
+        recent_texts = []
+        for msg in recent[-5:]:  # Last 5 messages
+            direction = "User" if msg.direction == "inbound" else "Joi"
+            if msg.content_text:
+                recent_texts.append(f"{direction}: {msg.content_text[:100]}")
+        if recent_texts:
+            context_summary = "\n".join(recent_texts)
+
+    # Build the prompt
+    topic_info = topic_title
+    if topic_content:
+        topic_info += f"\nDetails: {topic_content}"
+
+    prompt = f"""You are Joi, reaching out proactively to the user.
+
+Topic to bring up: {topic_info}
+
+{"Recent conversation context:" + chr(10) + context_summary if context_summary else "No recent conversation."}
+
+Write a brief, natural message to start a conversation about this topic.
+Rules:
+- Be warm but not overly enthusiastic
+- Keep it short (1-3 sentences)
+- Don't be pushy or demanding
+- Sound natural, like you just thought of it
+- No greetings like "Hey!" or "Hi there!" - just get into it naturally
+
+Just the message, nothing else."""
+
+    try:
+        response = llm.generate(prompt=prompt)
+        if response.error or not response.text:
+            logger.warning("Wind: LLM generation failed: %s", response.error)
+            return None
+
+        text = response.text.strip()
+
+        # Validate output
+        is_valid, text = validate_output(text)
+        if not is_valid:
+            logger.warning("Wind: generated message failed validation")
+            return None
+
+        # Length check (proactive messages should be short)
+        if len(text) > 500:
+            logger.warning("Wind: generated message too long (%d chars), truncating", len(text))
+            text = text[:500]
+
+        return text
+
+    except Exception as e:
+        logger.error("Wind: message generation error: %s", e)
+        return None
 
 
 def _generate_reaction_response(emoji: str, conversation_id: str) -> Optional[str]:

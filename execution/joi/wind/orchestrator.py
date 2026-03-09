@@ -137,32 +137,25 @@ class WindOrchestrator:
             )
             return False, "shadow_mode", topic
 
-        # Phase 2+: Would actually send here
-        # For now, treat as shadow mode
-        self.decision_logger.log_decision(
-            conversation_id=conversation_id,
-            eligible=True,
-            decision="shadow_logged",
-            gate_result=result.gate_result.to_dict(),
-            impulse_score=result.score,
-            threshold=result.threshold,
-            factor_breakdown=result.factors,
-            selected_topic_id=topic.id,
-            draft_message=f"[Shadow] Would send topic: {topic.title}",
+        # Live mode: signal that we should send
+        # Caller (scheduler) handles actual LLM generation and sending
+        logger.info(
+            "Wind live: triggering send to %s (score=%.2f, topic=#%d: %s)",
+            conversation_id, result.score, topic.id, topic.title
         )
-        return False, "shadow_mode", topic
+        return True, None, topic
 
     def check_impulse_all(
         self,
         now: Optional[datetime] = None,
-    ) -> List[Tuple[str, bool, Optional[str]]]:
+    ) -> List[Tuple[str, bool, Optional[str], Optional[PendingTopic], float]]:
         """
         Check impulse for all eligible conversations.
 
         Only processes conversations in the allowlist.
 
         Returns:
-            List of (conversation_id, should_send, skip_reason)
+            List of (conversation_id, should_send, skip_reason, topic, impulse_score)
         """
         if now is None:
             now = datetime.now()
@@ -176,31 +169,41 @@ class WindOrchestrator:
         # Only check conversations in allowlist
         for conversation_id in self.config.allowlist:
             try:
-                should_send, skip_reason, _ = self.check_impulse(conversation_id, now)
-                results.append((conversation_id, should_send, skip_reason))
+                should_send, skip_reason, topic = self.check_impulse(conversation_id, now)
+                # Get the impulse score for logging/generation
+                impulse_result = self.impulse_engine.calculate_impulse(conversation_id, now)
+                score = impulse_result.score if impulse_result.eligible else 0.0
+                results.append((conversation_id, should_send, skip_reason, topic, score))
             except Exception as e:
                 logger.error(
                     "Error checking impulse for %s: %s",
                     conversation_id, e
                 )
-                results.append((conversation_id, False, f"error: {e}"))
+                results.append((conversation_id, False, f"error: {e}", None, 0.0))
 
         # Expire stale topics while we're at it
         self.topic_manager.expire_stale_topics()
 
         return results
 
-    def tick(self, now: Optional[datetime] = None) -> None:
+    def tick(
+        self,
+        now: Optional[datetime] = None,
+    ) -> List[Tuple[str, bool, Optional[str], Optional[PendingTopic], float]]:
         """
         Scheduler tick entry point.
 
         Called by the scheduler every interval (default 60s).
+
+        Returns:
+            List of (conversation_id, should_send, skip_reason, topic, impulse_score)
+            Caller (scheduler) handles actual sends for should_send=True.
         """
         if now is None:
             now = datetime.now()
 
         if not self.config.enabled:
-            return
+            return []
 
         logger.debug("Wind tick at %s", now.isoformat())
 
@@ -208,13 +211,15 @@ class WindOrchestrator:
 
         # Log summary
         checked = len(results)
-        would_send = sum(1 for _, should_send, _ in results if should_send)
+        to_send = sum(1 for _, should_send, _, _, _ in results if should_send)
 
         if checked > 0:
             logger.info(
-                "Wind tick: checked %d conversations, %d would send",
-                checked, would_send
+                "Wind tick: checked %d conversations, %d to send",
+                checked, to_send
             )
+
+        return results
 
     # --- Utility methods for external use ---
 
@@ -260,3 +265,38 @@ class WindOrchestrator:
     def clear_snooze(self, conversation_id: str) -> None:
         """Clear Wind snooze for a conversation."""
         self.state_manager.clear_snooze(conversation_id)
+
+    def record_proactive_sent(
+        self,
+        conversation_id: str,
+        topic: PendingTopic,
+        impulse_score: float,
+        message_text: str,
+    ) -> None:
+        """
+        Record that a proactive message was successfully sent.
+
+        Called by scheduler after successful _send_to_mesh().
+        Updates state and marks topic as mentioned.
+        """
+        # Log the successful send
+        self.decision_logger.log_decision(
+            conversation_id=conversation_id,
+            eligible=True,
+            decision="send",
+            impulse_score=impulse_score,
+            threshold=self.config.impulse_threshold,
+            selected_topic_id=topic.id,
+            draft_message=message_text,
+        )
+
+        # Mark topic as mentioned
+        self.topic_manager.mark_mentioned(topic.id)
+
+        # Update proactive state
+        self.state_manager.record_proactive_sent(conversation_id)
+
+        logger.info(
+            "Wind sent to %s: topic=#%d '%s'",
+            conversation_id, topic.id, topic.title
+        )
