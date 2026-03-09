@@ -137,6 +137,28 @@ class JsonRpcStdioClient:
                 return messages
             messages.append(message)
 
+    def is_alive(self) -> bool:
+        """Check if the subprocess is still running."""
+        return self._proc.poll() is None
+
+    def get_pid(self) -> Optional[int]:
+        """Get the subprocess PID."""
+        return self._proc.pid if self._proc else None
+
+    def health_check(self, method: str = "listAccounts", timeout: float = 5.0) -> bool:
+        """
+        Perform a health check by calling a simple method.
+
+        Returns True if the process responds, False otherwise.
+        """
+        if not self.is_alive():
+            return False
+        try:
+            result = self.call(method, {}, timeout=timeout)
+            return "error" not in result
+        except Exception:
+            return False
+
     def close(self) -> None:
         if self._proc.poll() is None:
             self._proc.terminate()
