@@ -1280,6 +1280,11 @@ Success criteria:
 - **Topic types**: tension (resolves), affinity (recurs), discovery (converts or dies)
 - **Adaptive quiet hours**: learn activity patterns like Windows Update
 - **Negative feedback memory**: persist rejection signals
+- **Topic engagement tracking**: detect if user engaged, ignored, or deflected after proactive send
+  - Mark topic outcome: `engaged`, `ignored`, `deflected`
+  - Re-queue ignored topics for later retry (with decay)
+  - Feed engagement signals into affinity model
+  - Deflection handling: decide whether to gently return or let it go
 
 This phase transforms Wind from "queue-based reminders" to "genuine companion initiative."
 
