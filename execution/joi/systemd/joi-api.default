@@ -3,7 +3,9 @@
 # Copy to /etc/default/joi-api and adjust as needed
 
 # --- Core ---
-JOI_BIND_HOST=0.0.0.0
+# Bind to Nebula IP only (more secure than 0.0.0.0)
+# Replace with your Joi VM's Nebula IP (e.g., 10.42.0.10)
+JOI_BIND_HOST=10.42.0.10
 JOI_BIND_PORT=8443
 #JOI_LOG_LEVEL=DEBUG
 
