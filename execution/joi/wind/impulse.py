@@ -1,0 +1,337 @@
+"""
+Impulse engine for Wind proactive messaging.
+
+Handles hard gates (fast fail) and impulse score calculation.
+"""
+
+import logging
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
+
+from .config import WindConfig
+from .state import WindStateManager, WindState
+from .topics import TopicManager
+
+logger = logging.getLogger("joi.wind.impulse")
+
+
+@dataclass
+class GateResult:
+    """Result of hard gate checks."""
+
+    passed: bool
+    failed_gate: Optional[str] = None
+    gate_details: Dict[str, bool] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for logging."""
+        return {
+            "passed": self.passed,
+            "failed_gate": self.failed_gate,
+            "gate_details": self.gate_details,
+        }
+
+
+@dataclass
+class ImpulseResult:
+    """Result of impulse calculation."""
+
+    eligible: bool  # Passed all gates
+    gate_result: GateResult
+    score: float = 0.0
+    threshold: float = 0.6
+    above_threshold: bool = False
+    factors: Dict[str, float] = field(default_factory=dict)
+
+    @property
+    def should_send(self) -> bool:
+        """Whether we should send a proactive message."""
+        return self.eligible and self.above_threshold
+
+
+class ImpulseEngine:
+    """
+    Engine for calculating Wind impulse and checking hard gates.
+
+    Hard gates (fast fail order):
+    1. Wind globally enabled?
+    2. Conversation in allowlist?
+    3. Not snoozed?
+    4. Not in quiet hours?
+    5. Cooldown satisfied?
+    6. Daily cap not exceeded?
+    7. Unanswered streak OK?
+    8. Sufficient silence since last user interaction?
+    """
+
+    def __init__(
+        self,
+        config: WindConfig,
+        state_manager: WindStateManager,
+        topic_manager: TopicManager,
+    ):
+        """
+        Initialize ImpulseEngine.
+
+        Args:
+            config: Wind configuration
+            state_manager: Wind state manager
+            topic_manager: Topic manager
+        """
+        self.config = config
+        self.state_manager = state_manager
+        self.topic_manager = topic_manager
+
+    def check_gates(
+        self,
+        conversation_id: str,
+        now: Optional[datetime] = None,
+    ) -> GateResult:
+        """
+        Check all hard gates for a conversation.
+
+        Returns GateResult with pass/fail status and details.
+        """
+        if now is None:
+            now = datetime.now()
+
+        gates: Dict[str, bool] = {}
+
+        # Gate 1: Wind globally enabled
+        gates["wind_enabled"] = self.config.enabled
+        if not gates["wind_enabled"]:
+            return GateResult(
+                passed=False,
+                failed_gate="wind_disabled",
+                gate_details=gates,
+            )
+
+        # Gate 2: Conversation in allowlist
+        gates["in_allowlist"] = conversation_id in self.config.allowlist
+        if not gates["in_allowlist"]:
+            return GateResult(
+                passed=False,
+                failed_gate="not_in_allowlist",
+                gate_details=gates,
+            )
+
+        # Get conversation state
+        state = self.state_manager.get_state(conversation_id)
+
+        # Gate 3: Not snoozed
+        if state and state.wind_snooze_until:
+            gates["not_snoozed"] = now > state.wind_snooze_until
+        else:
+            gates["not_snoozed"] = True
+        if not gates["not_snoozed"]:
+            return GateResult(
+                passed=False,
+                failed_gate="snoozed",
+                gate_details=gates,
+            )
+
+        # Gate 4: Not in quiet hours
+        gates["not_quiet_hours"] = self._check_not_quiet_hours(now)
+        if not gates["not_quiet_hours"]:
+            return GateResult(
+                passed=False,
+                failed_gate="quiet_hours",
+                gate_details=gates,
+            )
+
+        # Gate 5: Cooldown satisfied
+        gates["cooldown_ok"] = self._check_cooldown(state, now)
+        if not gates["cooldown_ok"]:
+            return GateResult(
+                passed=False,
+                failed_gate="cooldown",
+                gate_details=gates,
+            )
+
+        # Gate 6: Daily cap not exceeded
+        gates["daily_cap_ok"] = self._check_daily_cap(state, now)
+        if not gates["daily_cap_ok"]:
+            return GateResult(
+                passed=False,
+                failed_gate="daily_cap_exceeded",
+                gate_details=gates,
+            )
+
+        # Gate 7: Unanswered streak OK
+        if state:
+            gates["unanswered_ok"] = state.unanswered_proactive_count < self.config.max_unanswered_streak
+        else:
+            gates["unanswered_ok"] = True
+        if not gates["unanswered_ok"]:
+            return GateResult(
+                passed=False,
+                failed_gate="unanswered_streak",
+                gate_details=gates,
+            )
+
+        # Gate 8: Sufficient silence since last user interaction
+        gates["silence_ok"] = self._check_silence(state, now)
+        if not gates["silence_ok"]:
+            return GateResult(
+                passed=False,
+                failed_gate="insufficient_silence",
+                gate_details=gates,
+            )
+
+        # All gates passed
+        return GateResult(passed=True, gate_details=gates)
+
+    def _check_not_quiet_hours(self, now: datetime) -> bool:
+        """Check if we're outside quiet hours."""
+        try:
+            tz = ZoneInfo(self.config.timezone)
+            local_now = now.astimezone(tz)
+        except Exception:
+            # Fallback to naive datetime hour
+            local_now = now
+
+        hour = local_now.hour
+        start = self.config.quiet_hours_start
+        end = self.config.quiet_hours_end
+
+        # Handle overnight quiet hours (e.g., 23:00 to 07:00)
+        if start > end:
+            # Quiet if hour >= start OR hour < end
+            in_quiet = hour >= start or hour < end
+        else:
+            # Quiet if hour >= start AND hour < end
+            in_quiet = start <= hour < end
+
+        return not in_quiet
+
+    def _check_cooldown(self, state: Optional[WindState], now: datetime) -> bool:
+        """Check if cooldown since last proactive is satisfied."""
+        if not state or not state.last_proactive_sent_at:
+            return True
+
+        elapsed = (now - state.last_proactive_sent_at).total_seconds()
+        return elapsed >= self.config.min_cooldown_seconds
+
+    def _check_daily_cap(self, state: Optional[WindState], now: datetime) -> bool:
+        """Check if daily cap is not exceeded."""
+        if not state:
+            return True
+
+        today_bucket = now.strftime("%Y-%m-%d")
+
+        # Reset count if different day
+        if state.proactive_day_bucket != today_bucket:
+            return True
+
+        return state.proactive_sent_today < self.config.daily_cap
+
+    def _check_silence(self, state: Optional[WindState], now: datetime) -> bool:
+        """Check if sufficient silence since last user interaction."""
+        if not state or not state.last_user_interaction_at:
+            # No recorded interaction - assume enough silence
+            return True
+
+        elapsed = (now - state.last_user_interaction_at).total_seconds()
+        return elapsed >= self.config.min_silence_seconds
+
+    def calculate_impulse(
+        self,
+        conversation_id: str,
+        now: Optional[datetime] = None,
+    ) -> ImpulseResult:
+        """
+        Calculate full impulse result for a conversation.
+
+        Checks gates first, then calculates score if eligible.
+        """
+        if now is None:
+            now = datetime.now()
+
+        # Check hard gates first
+        gate_result = self.check_gates(conversation_id, now)
+
+        if not gate_result.passed:
+            return ImpulseResult(
+                eligible=False,
+                gate_result=gate_result,
+                score=0.0,
+                threshold=self.config.impulse_threshold,
+                above_threshold=False,
+                factors={},
+            )
+
+        # Calculate impulse score
+        state = self.state_manager.get_state(conversation_id)
+        factors = self._calculate_factors(state, conversation_id, now)
+
+        score = sum(factors.values())
+        score = max(0.0, min(1.0, score))  # Clamp to [0, 1]
+
+        above_threshold = score >= self.config.impulse_threshold
+
+        # Record impulse check
+        self.state_manager.record_impulse_check(conversation_id)
+
+        return ImpulseResult(
+            eligible=True,
+            gate_result=gate_result,
+            score=score,
+            threshold=self.config.impulse_threshold,
+            above_threshold=above_threshold,
+            factors=factors,
+        )
+
+    def _calculate_factors(
+        self,
+        state: Optional[WindState],
+        conversation_id: str,
+        now: datetime,
+    ) -> Dict[str, float]:
+        """
+        Calculate individual factor contributions to impulse score.
+
+        Returns dict of factor name -> contribution.
+        """
+        factors: Dict[str, float] = {}
+
+        # Base impulse
+        factors["base"] = self.config.base_impulse
+
+        # Silence factor (increases with time since last user msg)
+        silence_contribution = 0.0
+        if state and state.last_user_interaction_at:
+            elapsed_hours = (now - state.last_user_interaction_at).total_seconds() / 3600
+            # Cap at configured max
+            capped_hours = min(elapsed_hours, self.config.silence_cap_hours)
+            # Linear scale: 0 at min_silence, 1.0 at silence_cap_hours
+            min_hours = self.config.min_silence_seconds / 3600
+            if capped_hours > min_hours:
+                silence_contribution = (
+                    (capped_hours - min_hours) / (self.config.silence_cap_hours - min_hours)
+                ) * self.config.silence_weight
+        factors["silence"] = silence_contribution
+
+        # Topic pressure factor
+        topic_pressure = self.topic_manager.get_topic_pressure(conversation_id)
+        factors["topic_pressure"] = topic_pressure * self.config.topic_pressure_weight
+
+        # Fatigue damper (negative, based on recent proactives)
+        fatigue_damper = 0.0
+        if state and state.proactive_sent_today > 0:
+            # More proactives today = more fatigue
+            fatigue_ratio = state.proactive_sent_today / self.config.daily_cap
+            fatigue_damper = -fatigue_ratio * self.config.fatigue_weight
+        factors["fatigue"] = fatigue_damper
+
+        logger.debug(
+            "Impulse factors for %s: base=%.2f silence=%.2f pressure=%.2f fatigue=%.2f",
+            conversation_id,
+            factors["base"],
+            factors["silence"],
+            factors["topic_pressure"],
+            factors["fatigue"],
+        )
+
+        return factors

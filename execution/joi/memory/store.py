@@ -123,7 +123,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # SQL for creating tables
 SCHEMA_SQL = """
@@ -162,7 +162,7 @@ CREATE TABLE IF NOT EXISTS system_state (
 
 -- Initialize default system state if not exists
 INSERT OR IGNORE INTO system_state (key, value) VALUES
-    ('schema_version', '4'),
+    ('schema_version', '5'),
     ('last_interaction_at', '0'),
     ('last_impulse_check_at', '0'),
     ('messages_sent_this_hour', '0'),
@@ -227,6 +227,56 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_source ON knowledge_chunks(source);
 CREATE INDEX IF NOT EXISTS idx_knowledge_scope ON knowledge_chunks(scope);
+
+-- Wind state table (per-conversation proactive messaging state)
+CREATE TABLE IF NOT EXISTS wind_state (
+    conversation_id TEXT PRIMARY KEY,
+    last_user_interaction_at TEXT,
+    last_outbound_at TEXT,
+    last_proactive_sent_at TEXT,
+    last_impulse_check_at TEXT,
+    proactive_sent_today INTEGER DEFAULT 0,
+    proactive_day_bucket TEXT,
+    unanswered_proactive_count INTEGER DEFAULT 0,
+    wind_snooze_until TEXT,
+    updated_at TEXT NOT NULL
+);
+
+-- Pending topics table (topic queue for Wind)
+CREATE TABLE IF NOT EXISTS pending_topics (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    topic_type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT,
+    priority INTEGER DEFAULT 50,
+    status TEXT DEFAULT 'pending',
+    created_at TEXT NOT NULL,
+    expires_at TEXT,
+    mentioned_at TEXT,
+    novelty_key TEXT,
+    source_event_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pending_topics_conv_status
+    ON pending_topics(conversation_id, status);
+
+-- Wind decision log table (observability)
+CREATE TABLE IF NOT EXISTS wind_decision_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    timestamp TEXT NOT NULL,
+    eligible INTEGER,
+    gate_result TEXT,
+    impulse_score REAL,
+    threshold REAL,
+    factor_breakdown TEXT,
+    selected_topic_id INTEGER,
+    decision TEXT NOT NULL,
+    skip_reason TEXT,
+    draft_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_wind_log_conv_ts
+    ON wind_decision_log(conversation_id, timestamp);
 
 -- FTS5 virtual table for full-text search
 CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
