@@ -13,6 +13,7 @@ EnvironmentFile=-/etc/default/joi-api
 ExecStart=/usr/bin/python3 -m api.server
 Restart=always
 RestartSec=3
+RestartPreventExitStatus=78
 
 # Security hardening
 NoNewPrivileges=true
