@@ -1791,10 +1791,11 @@ def startup_event():
 
 @app.on_event("shutdown")
 def shutdown_event():
-    """Stop the message queue worker and scheduler on app shutdown."""
+    """Stop the message queue worker, scheduler, and close connections on app shutdown."""
     if scheduler:
         scheduler.stop()
     message_queue.stop()
+    memory.close()
     logger.info("Joi API shutting down")
 
 
