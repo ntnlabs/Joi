@@ -1,7 +1,7 @@
 """
 Wind - Joi's proactive messaging capability.
 
-Phase 0-1: Shadow mode (data model + logging, no actual sends).
+Phase 2: Live proactive sends enabled. Shadow mode available via config.
 """
 
 from .config import WindConfig
