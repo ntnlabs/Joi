@@ -146,11 +146,19 @@ def _forward_async_to_backend(url: str, payload: Dict[str, Any], backend_name: s
         body = json.dumps(payload).encode("utf-8")
 
         # Build headers with backend-specific HMAC
-        headers = {"Content-Type": "application/json"}
+        # Fail-closed: reject if no secret configured for this backend
         secret = get_shared_secret_for_backend(backend_name)
-        if secret:
-            hmac_headers = create_request_headers(body, secret)
-            headers.update(hmac_headers)
+        if not secret:
+            logger.error(
+                "Forward to %s REJECTED: no HMAC secret configured (fail-closed). "
+                "Set MESH_HMAC_SECRET_%s env var.",
+                backend_name, backend_name.upper()
+            )
+            return  # Don't send unsigned traffic
+
+        headers = {"Content-Type": "application/json"}
+        hmac_headers = create_request_headers(body, secret)
+        headers.update(hmac_headers)
 
         # Add config hash for sync verification
         config_hash = _get_config_hash()

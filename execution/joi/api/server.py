@@ -1730,9 +1730,14 @@ def health():
 # --- Admin Endpoints ---
 
 def _is_local_request(request: Request) -> bool:
-    """Check if request is from localhost or Nebula network (10.x.x.x)."""
+    """Check if request is from localhost only.
+
+    Note: Previously trusted all 10.x.x.x (Nebula network), but that's too
+    permissive - any host on the network could access admin endpoints.
+    For remote admin access, use HMAC-authenticated endpoints instead.
+    """
     client_ip = request.client.host if request.client else ""
-    return client_ip in ("127.0.0.1", "::1") or client_ip.startswith("10.")
+    return client_ip in ("127.0.0.1", "::1")
 
 
 @app.get("/admin/config/status")
