@@ -47,6 +47,20 @@ _MAX_PENDING = 20  # Max tasks in flight (workers + queue)
 atexit.register(_executor.shutdown, wait=False)
 
 
+def _cleanup_client():
+    """Cleanup HTTP client on shutdown."""
+    global _client
+    if _client is not None:
+        try:
+            _client.close()
+        except Exception:
+            pass
+        _client = None
+
+
+atexit.register(_cleanup_client)
+
+
 def set_config_state(config_state) -> None:
     """Set reference to ConfigState from worker (avoids module import issues)."""
     global _config_state_ref
