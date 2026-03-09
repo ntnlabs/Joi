@@ -493,8 +493,8 @@ class Scheduler:
         # Wind proactive messaging check every tick
         self._check_wind_impulse()
 
-        # Placeholder for future implementation:
-        # - self._check_reminders()
+        # Check for due reminders every tick
+        self._check_reminders()
 
     def _check_tamper(self):
         """Check for config file tampering. Shuts down service if detected."""
@@ -662,6 +662,69 @@ class Scheduler:
 
         except Exception as e:
             logger.warning("Scheduler: Wind impulse check failed: %s", e)
+
+    def _check_reminders(self):
+        """Check for due reminders and send them."""
+        try:
+            # Get reminders that are due
+            due_reminders = wind_orchestrator.topic_manager.get_due_reminders()
+
+            for topic in due_reminders:
+                # Generate reminder message
+                message_text = _generate_proactive_message(
+                    topic_title=topic.title,
+                    topic_content=topic.content,
+                    conversation_id=topic.conversation_id,
+                )
+
+                if not message_text:
+                    logger.warning("Reminder: failed to generate message for topic #%d", topic.id)
+                    # Mark as mentioned anyway to avoid retrying forever
+                    wind_orchestrator.topic_manager.mark_mentioned(topic.id)
+                    continue
+
+                # Determine conversation type
+                is_group = not topic.conversation_id.startswith("+")
+                conv_type = "group" if is_group else "direct"
+                conversation = InboundConversation(type=conv_type, id=topic.conversation_id)
+
+                if is_group:
+                    logger.warning("Reminder: group sends not yet supported, skipping topic #%d", topic.id)
+                    wind_orchestrator.topic_manager.mark_mentioned(topic.id)
+                    continue
+
+                # Send the reminder
+                success = _send_to_mesh(
+                    recipient_id="owner",
+                    recipient_transport_id=topic.conversation_id,
+                    conversation=conversation,
+                    text=message_text,
+                    reply_to=None,
+                    is_critical=False,
+                )
+
+                if success:
+                    # Mark topic as mentioned
+                    wind_orchestrator.topic_manager.mark_mentioned(topic.id)
+
+                    # Store outbound message
+                    memory.store_message(
+                        message_id=str(uuid.uuid4()),
+                        direction="outbound",
+                        content_type="text",
+                        content_text=f"[REMINDER] {message_text}",
+                        timestamp=int(time.time() * 1000),
+                        conversation_id=topic.conversation_id,
+                    )
+
+                    logger.info("Reminder sent: topic #%d '%s' to %s",
+                               topic.id, topic.title[:30], topic.conversation_id)
+                else:
+                    logger.error("Reminder: failed to send topic #%d to %s",
+                                topic.id, topic.conversation_id)
+
+        except Exception as e:
+            logger.warning("Scheduler: reminder check failed: %s", e)
 
     def _startup_config_push(self):
         """Push config to mesh on startup to ensure sync."""
