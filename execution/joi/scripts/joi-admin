@@ -51,6 +51,7 @@ COMMANDS:
     purge       Purge memory data and/or regenerate keys
     rag         Inspect and manage RAG knowledge sources/scopes
     summaries   Read-only context summary inspection
+    fts         Check and rebuild FTS (full-text search) indexes
 
 PURGE USAGE:
     joi-admin purge [FLAGS]
@@ -104,6 +105,7 @@ RAG SUBCOMMANDS:
     stats               Show RAG totals
     delete              Delete a RAG source (optionally within one scope)
     rescope             Move RAG chunks from one scope to another
+    orphans             Check/clean orphaned chunks (empty scope)
 
 RAG EXAMPLES:
     joi-admin rag list
@@ -111,6 +113,8 @@ RAG EXAMPLES:
     joi-admin rag stats
     joi-admin rag delete --source '+123456789/diary.txt' --scope -123456789
     joi-admin rag rescope --from +123456789 --to -123456789
+    joi-admin rag orphans                     # Check for orphaned chunks
+    joi-admin rag orphans --clean             # Delete orphaned chunks
 
 SUMMARIES USAGE:
     joi-admin summaries list [--conversation ID] [--limit N]
@@ -123,6 +127,20 @@ SUMMARIES EXAMPLES:
     joi-admin summaries list --conversation group_id_here --limit 20
     joi-admin summaries show --id 42
     joi-admin summaries delete --id 42
+
+FTS USAGE:
+    joi-admin fts status              Check FTS index integrity
+    joi-admin fts rebuild [--index NAME]  Rebuild FTS indexes
+
+FTS INDEXES:
+    knowledge_fts     RAG knowledge chunks
+    user_facts_fts    User facts
+    summaries_fts     Context summaries
+
+FTS EXAMPLES:
+    joi-admin fts status                        # Check all FTS indexes
+    joi-admin fts rebuild                       # Rebuild all FTS indexes
+    joi-admin fts rebuild --index knowledge_fts # Rebuild specific index
 
 EOF
     exit 0
@@ -789,6 +807,65 @@ SQL
             info "Rescoped $chunk_count chunks: '$from_scope' -> '$to_scope'"
             ;;
 
+        orphans)
+            local do_clean=false
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --clean)
+                        do_clean=true
+                        shift
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin rag orphans [--clean]"
+                        echo "Check for orphaned knowledge chunks (empty or NULL scope)."
+                        echo "These chunks are inaccessible since the system filters by scope."
+                        echo ""
+                        echo "Options:"
+                        echo "  --clean    Delete orphaned chunks (requires confirmation)"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'rag orphans': $1"
+                        ;;
+                esac
+            done
+
+            local orphan_count source_list
+            orphan_count=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks WHERE scope = '' OR scope IS NULL;")
+
+            if [[ "${orphan_count:-0}" == "0" ]]; then
+                info "No orphaned knowledge chunks found."
+                exit 0
+            fi
+
+            source_list=$(db_exec "SELECT DISTINCT source FROM knowledge_chunks WHERE scope = '' OR scope IS NULL;" | awk 'NF && $0 != "ok"')
+
+            echo "Orphaned knowledge chunks (empty/NULL scope)"
+            echo "============================================"
+            echo "  Count:   $orphan_count"
+            echo "  Sources:"
+            while IFS= read -r src; do
+                [[ -z "$src" ]] && continue
+                echo "    - $src"
+            done <<< "$source_list"
+            echo ""
+
+            if ! $do_clean; then
+                warn "These chunks are inaccessible. Run with --clean to delete them."
+                exit 0
+            fi
+
+            read -p "Delete $orphan_count orphaned chunks? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            db_exec "DELETE FROM knowledge_chunks WHERE scope = '' OR scope IS NULL;"
+            info "Deleted $orphan_count orphaned chunks."
+            ;;
+
         --help|-h)
             usage
             ;;
@@ -1025,6 +1102,137 @@ SQL
     esac
 }
 
+cmd_fts() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    local subcommand="${1:-}"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin fts <status|rebuild> [OPTIONS]"
+    shift || true
+
+    case "$subcommand" in
+        status)
+            echo "FTS Index Integrity Check"
+            echo "========================="
+            echo ""
+
+            local all_ok=true
+
+            # Check knowledge_fts
+            local knowledge_fts_count knowledge_main_count
+            knowledge_fts_count=$(db_scalar "SELECT COUNT(*) FROM knowledge_fts;" 2>/dev/null || echo "error")
+            knowledge_main_count=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks;" 2>/dev/null || echo "error")
+
+            if [[ "$knowledge_fts_count" == "error" ]]; then
+                echo "knowledge_fts:   ERROR (table may not exist)"
+                all_ok=false
+            elif [[ "$knowledge_fts_count" == "$knowledge_main_count" ]]; then
+                info "knowledge_fts:   OK ($knowledge_fts_count rows)"
+            else
+                warn "knowledge_fts:   OUT OF SYNC (FTS=$knowledge_fts_count, main=$knowledge_main_count)"
+                all_ok=false
+            fi
+
+            # Check user_facts_fts
+            local facts_fts_count facts_main_count
+            facts_fts_count=$(db_scalar "SELECT COUNT(*) FROM user_facts_fts;" 2>/dev/null || echo "error")
+            facts_main_count=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE active = 1;" 2>/dev/null || echo "error")
+
+            if [[ "$facts_fts_count" == "error" ]]; then
+                echo "user_facts_fts:  ERROR (table may not exist)"
+                all_ok=false
+            elif [[ "$facts_fts_count" == "$facts_main_count" ]]; then
+                info "user_facts_fts:  OK ($facts_fts_count rows)"
+            else
+                warn "user_facts_fts:  OUT OF SYNC (FTS=$facts_fts_count, main=$facts_main_count)"
+                all_ok=false
+            fi
+
+            # Check summaries_fts
+            local summaries_fts_count summaries_main_count
+            summaries_fts_count=$(db_scalar "SELECT COUNT(*) FROM summaries_fts;" 2>/dev/null || echo "error")
+            summaries_main_count=$(db_scalar "SELECT COUNT(*) FROM context_summaries;" 2>/dev/null || echo "error")
+
+            if [[ "$summaries_fts_count" == "error" ]]; then
+                echo "summaries_fts:   ERROR (table may not exist)"
+                all_ok=false
+            elif [[ "$summaries_fts_count" == "$summaries_main_count" ]]; then
+                info "summaries_fts:   OK ($summaries_fts_count rows)"
+            else
+                warn "summaries_fts:   OUT OF SYNC (FTS=$summaries_fts_count, main=$summaries_main_count)"
+                all_ok=false
+            fi
+
+            echo ""
+            if $all_ok; then
+                info "All FTS indexes are in sync."
+            else
+                warn "Some FTS indexes need attention. Run 'joi-admin fts rebuild' to repair."
+            fi
+            ;;
+
+        rebuild)
+            local index_name=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --index)
+                        [[ -z "${2:-}" ]] && error "--index requires a value"
+                        index_name="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin fts rebuild [--index NAME]"
+                        echo "Indexes: knowledge_fts, user_facts_fts, summaries_fts"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'fts rebuild': $1"
+                        ;;
+                esac
+            done
+
+            local indexes_to_rebuild=()
+            if [[ -n "$index_name" ]]; then
+                case "$index_name" in
+                    knowledge_fts|user_facts_fts|summaries_fts)
+                        indexes_to_rebuild+=("$index_name")
+                        ;;
+                    *)
+                        error "Unknown index: $index_name. Valid: knowledge_fts, user_facts_fts, summaries_fts"
+                        ;;
+                esac
+            else
+                indexes_to_rebuild=("knowledge_fts" "user_facts_fts" "summaries_fts")
+            fi
+
+            echo "Rebuilding FTS indexes: ${indexes_to_rebuild[*]}"
+            echo ""
+
+            for idx in "${indexes_to_rebuild[@]}"; do
+                echo -n "Rebuilding $idx... "
+                if db_exec "INSERT INTO ${idx}(${idx}) VALUES('rebuild');" 2>/dev/null; then
+                    info "OK"
+                else
+                    warn "FAILED (FTS5 module may not be available)"
+                fi
+            done
+
+            echo ""
+            info "FTS rebuild complete. Run 'joi-admin fts status' to verify."
+            ;;
+
+        --help|-h)
+            echo "Usage: joi-admin fts <status|rebuild> [OPTIONS]"
+            exit 0
+            ;;
+
+        *)
+            error "Unknown fts subcommand: $subcommand"
+            ;;
+    esac
+}
+
 # Main purge command
 cmd_purge() {
     local do_contexts=false
@@ -1236,6 +1444,10 @@ main() {
         summaries)
             check_root
             cmd_summaries "$@"
+            ;;
+        fts)
+            check_root
+            cmd_fts "$@"
             ;;
         --help|-h)
             usage
