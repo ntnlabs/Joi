@@ -78,7 +78,7 @@ def _read_prompt_file(path: Path) -> Optional[str]:
             if content:
                 return content
     except Exception as e:
-        logger.warning("Failed to read prompt from %s: %s", path, e)
+        logger.warning("Failed to read prompt", extra={"path": str(path), "error": str(e)})
     return None
 
 
@@ -102,7 +102,7 @@ def get_user_prompt(user_id: str) -> str:
     user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.txt"
     prompt = _read_prompt_file(user_file)
     if prompt:
-        logger.debug("Using user-specific prompt for %s", user_id)
+        logger.debug("Using user-specific prompt", extra={"user_id": user_id})
         return prompt
     return get_default_prompt()
 
@@ -117,7 +117,7 @@ def get_group_prompt(group_id: str) -> str:
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.txt"
     prompt = _read_prompt_file(group_file)
     if prompt:
-        logger.debug("Using group-specific prompt for %s", group_id)
+        logger.debug("Using group-specific prompt", extra={"group_id": group_id})
         return prompt
     return get_default_prompt()
 
@@ -147,7 +147,7 @@ def ensure_prompts_dir() -> None:
         (PROMPTS_DIR / "users").mkdir(parents=True, exist_ok=True)
         (PROMPTS_DIR / "groups").mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        logger.warning("Failed to create prompts directory: %s", e)
+        logger.warning("Failed to create prompts directory", extra={"error": str(e)})
 
 
 # --- Model Configuration ---
@@ -160,7 +160,7 @@ def _read_model_file(path: Path) -> Optional[str]:
             if content:
                 return content
     except Exception as e:
-        logger.warning("Failed to read model from %s: %s", path, e)
+        logger.warning("Failed to read model", extra={"path": str(path), "error": str(e)})
     return None
 
 
@@ -176,7 +176,7 @@ def get_user_model(user_id: str) -> Optional[str]:
     user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.model"
     model = _read_model_file(user_file)
     if model:
-        logger.debug("Using user-specific model for %s: %s", user_id, model)
+        logger.debug("Using user-specific model", extra={"user_id": user_id, "model": model})
         return model
     return get_default_model()
 
@@ -187,7 +187,7 @@ def get_group_model(group_id: str) -> Optional[str]:
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.model"
     model = _read_model_file(group_file)
     if model:
-        logger.debug("Using group-specific model for %s: %s", group_id, model)
+        logger.debug("Using group-specific model", extra={"group_id": group_id, "model": model})
         return model
     return get_default_model()
 
@@ -279,13 +279,13 @@ def _read_context_file(path: Path) -> Optional[int]:
                 value = int(content)
                 # Bounds check: reasonable range for context messages
                 if value < 10 or value > 10000:
-                    logger.warning("Context size %d in %s out of bounds (10-10000), ignoring", value, path)
+                    logger.warning("Context size out of bounds (10-10000), ignoring", extra={"value": value, "path": str(path)})
                     return None
                 return value
     except ValueError:
-        logger.warning("Invalid context size in %s (not a number)", path)
+        logger.warning("Invalid context size (not a number)", extra={"path": str(path)})
     except Exception as e:
-        logger.warning("Failed to read context from %s: %s", path, e)
+        logger.warning("Failed to read context", extra={"path": str(path), "error": str(e)})
     return None
 
 
@@ -301,7 +301,7 @@ def get_user_context(user_id: str) -> Optional[int]:
     user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.context"
     context = _read_context_file(user_file)
     if context is not None:
-        logger.debug("Using user-specific context for %s: %d", user_id, context)
+        logger.debug("Using user-specific context", extra={"user_id": user_id, "context": context})
         return context
     return get_default_context()
 
@@ -312,7 +312,7 @@ def get_group_context(group_id: str) -> Optional[int]:
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.context"
     context = _read_context_file(group_file)
     if context is not None:
-        logger.debug("Using group-specific context for %s: %d", group_id, context)
+        logger.debug("Using group-specific context", extra={"group_id": group_id, "context": context})
         return context
     return get_default_context()
 
@@ -359,13 +359,13 @@ def _read_compact_window_file(path: Path) -> Optional[int]:
                 value = int(content)
                 # Bounds check: reasonable range for compact batch size
                 if value < 5 or value > 1000:
-                    logger.warning("Compact window %d in %s out of bounds (5-1000), ignoring", value, path)
+                    logger.warning("Compact window out of bounds (5-1000), ignoring", extra={"value": value, "path": str(path)})
                     return None
                 return value
     except ValueError:
-        logger.warning("Invalid compact window in %s (not a number)", path)
+        logger.warning("Invalid compact window (not a number)", extra={"path": str(path)})
     except Exception as e:
-        logger.warning("Failed to read compact window from %s: %s", path, e)
+        logger.warning("Failed to read compact window", extra={"path": str(path), "error": str(e)})
     return None
 
 
@@ -381,7 +381,7 @@ def get_user_compact_window(user_id: str) -> Optional[int]:
     user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.compact_window"
     compact = _read_compact_window_file(user_file)
     if compact is not None:
-        logger.debug("Using user-specific compact window for %s: %d", user_id, compact)
+        logger.debug("Using user-specific compact window", extra={"user_id": user_id, "compact": compact})
         return compact
     return get_default_compact_window()
 
@@ -392,7 +392,7 @@ def get_group_compact_window(group_id: str) -> Optional[int]:
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.compact_window"
     compact = _read_compact_window_file(group_file)
     if compact is not None:
-        logger.debug("Using group-specific compact window for %s: %d", group_id, compact)
+        logger.debug("Using group-specific compact window", extra={"group_id": group_id, "compact": compact})
         return compact
     return get_default_compact_window()
 
@@ -430,7 +430,7 @@ def get_user_consolidation_model(user_id: str) -> Optional[str]:
     user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.consolidation"
     model = _read_model_file(user_file)
     if model:
-        logger.debug("Using user-specific consolidation model for %s: %s", user_id, model)
+        logger.debug("Using user-specific consolidation model", extra={"user_id": user_id, "model": model})
         return model
     return get_default_consolidation_model()
 
@@ -441,7 +441,7 @@ def get_group_consolidation_model(group_id: str) -> Optional[str]:
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.consolidation"
     model = _read_model_file(group_file)
     if model:
-        logger.debug("Using group-specific consolidation model for %s: %s", group_id, model)
+        logger.debug("Using group-specific consolidation model", extra={"group_id": group_id, "model": model})
         return model
     return get_default_consolidation_model()
 
@@ -531,7 +531,7 @@ def _read_consolidation_prompt_file(path: Path) -> Optional[str]:
             if content:
                 return content
     except Exception as e:
-        logger.warning("Failed to read consolidation prompt from %s: %s", path, e)
+        logger.warning("Failed to read consolidation prompt", extra={"path": str(path), "error": str(e)})
     return None
 
 
@@ -559,7 +559,7 @@ def get_user_fact_extraction_prompt(user_id: str) -> str:
     user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.fact_prompt"
     prompt = _read_consolidation_prompt_file(user_file)
     if prompt:
-        logger.debug("Using user-specific fact extraction prompt for %s", user_id)
+        logger.debug("Using user-specific fact extraction prompt", extra={"user_id": user_id})
         return prompt
     return get_default_fact_extraction_prompt()
 
@@ -570,7 +570,7 @@ def get_group_fact_extraction_prompt(group_id: str) -> str:
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.fact_prompt"
     prompt = _read_consolidation_prompt_file(group_file)
     if prompt:
-        logger.debug("Using group-specific fact extraction prompt for %s", group_id)
+        logger.debug("Using group-specific fact extraction prompt", extra={"group_id": group_id})
         return prompt
     return get_default_fact_extraction_prompt()
 
@@ -581,7 +581,7 @@ def get_user_summarization_prompt(user_id: str) -> str:
     user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.summary_prompt"
     prompt = _read_consolidation_prompt_file(user_file)
     if prompt:
-        logger.debug("Using user-specific summarization prompt for %s", user_id)
+        logger.debug("Using user-specific summarization prompt", extra={"user_id": user_id})
         return prompt
     return get_default_summarization_prompt()
 
@@ -592,7 +592,7 @@ def get_group_summarization_prompt(group_id: str) -> str:
     group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.summary_prompt"
     prompt = _read_consolidation_prompt_file(group_file)
     if prompt:
-        logger.debug("Using group-specific summarization prompt for %s", group_id)
+        logger.debug("Using group-specific summarization prompt", extra={"group_id": group_id})
         return prompt
     return get_default_summarization_prompt()
 
@@ -644,7 +644,7 @@ def _read_knowledge_file(path: Path) -> List[str]:
                 # One scope per line, strip whitespace, ignore empty lines
                 return [line.strip() for line in content.splitlines() if line.strip()]
     except Exception as e:
-        logger.warning("Failed to read knowledge scopes from %s: %s", path, e)
+        logger.warning("Failed to read knowledge scopes", extra={"path": str(path), "error": str(e)})
     return []
 
 

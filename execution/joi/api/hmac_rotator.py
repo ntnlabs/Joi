@@ -78,7 +78,7 @@ class HMACRotator:
                 self._failed_rotation_count = state.get("failed_rotation_count", 0)
                 self._last_failed_rotation = state.get("last_failed_rotation")
             except Exception as e:
-                logger.warning("Failed to load rotation state: %s", e)
+                logger.warning("Failed to load rotation state", extra={"error": str(e)})
 
     def _save_state(self) -> None:
         """Save rotation state to disk."""
@@ -91,7 +91,7 @@ class HMACRotator:
                     "last_failed_rotation": self._last_failed_rotation,
                 }, f)
         except Exception as e:
-            logger.error("Failed to save rotation state: %s", e)
+            logger.error("Failed to save rotation state", extra={"error": str(e)})
 
     def rotate(self, use_grace_period: bool = True) -> tuple[bool, str]:
         """
@@ -112,7 +112,10 @@ class HMACRotator:
             (success, message)
         """
         with self._lock:
-            logger.info("Starting HMAC key rotation (grace_period=%s)", use_grace_period)
+            logger.info("Starting HMAC key rotation", extra={
+                "action": "rotation_start",
+                "grace_period": use_grace_period
+            })
 
             # Generate new secret
             new_secret = secrets.token_bytes(32)
@@ -159,14 +162,24 @@ class HMACRotator:
                     push_success = True
                 else:
                     push_error = data.get("error", "unknown")
-                    logger.error("Mesh rejected rotation: %s", push_error)
+                    logger.error("Mesh rejected rotation", extra={
+                        "action": "rotation_rejected",
+                        "error": push_error
+                    })
 
             except httpx.HTTPStatusError as e:
                 push_error = f"http_error_{e.response.status_code}"
-                logger.error("Rotation HTTP error: %s", e)
+                logger.error("Rotation HTTP error", extra={
+                    "action": "rotation_failed",
+                    "status_code": e.response.status_code,
+                    "error": str(e)
+                })
             except Exception as e:
                 push_error = str(e)
-                logger.error("Rotation push failed: %s", e)
+                logger.error("Rotation push failed", extra={
+                    "action": "rotation_failed",
+                    "error": str(e)
+                })
 
             # Phase 3: Commit or rollback
             if not push_success:
@@ -184,7 +197,10 @@ class HMACRotator:
             if use_grace_period:
                 self._old_secret = current_secret
                 self._old_secret_expires = time.time() + (grace_ms / 1000)
-                logger.info("Old key valid until: %s", time.ctime(self._old_secret_expires))
+                logger.info("Old key valid during grace period", extra={
+                    "action": "grace_period_active",
+                    "expires_at": self._old_secret_expires
+                })
 
             # Store new secret in memory for immediate use
             self._current_secret = new_secret
@@ -200,7 +216,7 @@ class HMACRotator:
             # Clean up backup file
             self._cleanup_backup()
 
-            logger.info("HMAC rotation complete, new key active")
+            logger.info("HMAC rotation complete", extra={"action": "rotation_complete", "status": "success"})
             return True, "ok"
 
     def _record_failed_rotation(self, reason: str) -> None:
@@ -208,10 +224,11 @@ class HMACRotator:
         self._failed_rotation_count += 1
         self._last_failed_rotation = time.time()
         self._save_state()
-        logger.warning(
-            "Rotation failed (attempt %d): %s",
-            self._failed_rotation_count, reason
-        )
+        logger.warning("Rotation failed", extra={
+            "action": "rotation_failed",
+            "attempt": self._failed_rotation_count,
+            "reason": reason
+        })
 
     def _backup_secret_file(self) -> bool:
         """Create backup of current secret file."""
@@ -222,7 +239,7 @@ class HMACRotator:
                 shutil.copy2(HMAC_SECRET_FILE, backup_path)
                 return True
         except Exception as e:
-            logger.warning("Failed to backup secret file: %s", e)
+            logger.warning("Failed to backup secret file", extra={"error": str(e)})
         return False
 
     def _restore_secret_file(self) -> bool:
@@ -232,10 +249,10 @@ class HMACRotator:
             if backup_path.exists():
                 import shutil
                 shutil.copy2(backup_path, HMAC_SECRET_FILE)
-                logger.info("Restored secret file from backup")
+                logger.info("Restored secret file from backup", extra={"action": "backup_restored"})
                 return True
         except Exception as e:
-            logger.error("Failed to restore secret file: %s", e)
+            logger.error("Failed to restore secret file", extra={"error": str(e)})
         return False
 
     def _cleanup_backup(self) -> None:
@@ -245,7 +262,7 @@ class HMACRotator:
             if backup_path.exists():
                 backup_path.unlink()
         except Exception as e:
-            logger.warning("Failed to cleanup backup file: %s", e)
+            logger.warning("Failed to cleanup backup file", extra={"error": str(e)})
 
     def _update_secret_file(self, new_secret_hex: str) -> bool:
         """Update HMAC secret in writable secret file.
@@ -265,11 +282,17 @@ class HMACRotator:
             # Set restrictive permissions (owner read/write only)
             HMAC_SECRET_FILE.chmod(0o600)
 
-            logger.info("Updated HMAC secret in %s", HMAC_SECRET_FILE)
+            logger.info("Updated HMAC secret", extra={
+                "action": "secret_updated",
+                "path": str(HMAC_SECRET_FILE)
+            })
             return True
 
         except Exception as e:
-            logger.error("Failed to update secret file %s: %s", HMAC_SECRET_FILE, e)
+            logger.error("Failed to update secret file", extra={
+                "path": str(HMAC_SECRET_FILE),
+                "error": str(e)
+            })
             return False
 
     def get_current_secret(self) -> Optional[bytes]:
@@ -323,10 +346,11 @@ class HMACRotator:
             backoff_multiplier = min(2 ** (self._failed_rotation_count - 1), 24)
             retry_after = retry_interval_seconds * backoff_multiplier
             if (time.time() - self._last_failed_rotation) >= retry_after:
-                logger.info(
-                    "Rotation retry due (attempt %d, backoff %ds)",
-                    self._failed_rotation_count + 1, retry_after
-                )
+                logger.info("Rotation retry due", extra={
+                    "action": "rotation_retry",
+                    "attempt": self._failed_rotation_count + 1,
+                    "backoff_seconds": retry_after
+                })
                 return True
 
         # Normal interval-based rotation
@@ -361,19 +385,28 @@ class HMACRotator:
                 resp = client.get(url, headers=headers)
 
                 if resp.status_code == 401:
-                    logger.error("HMAC sync check failed: mesh rejected our secret")
+                    logger.error("HMAC sync check failed", extra={
+                        "action": "sync_check",
+                        "status": "hmac_mismatch"
+                    })
                     return False, "hmac_mismatch"
 
                 if resp.status_code == 200:
-                    logger.debug("HMAC sync check passed")
+                    logger.debug("HMAC sync check passed", extra={"action": "sync_check", "status": "ok"})
                     return True, "ok"
 
                 # Other errors might be network issues, not HMAC
-                logger.warning("HMAC sync check: unexpected status %d", resp.status_code)
+                logger.warning("HMAC sync check: unexpected status", extra={
+                    "action": "sync_check",
+                    "status_code": resp.status_code
+                })
                 return True, f"status_{resp.status_code}"  # Assume OK if not 401
 
         except Exception as e:
-            logger.warning("HMAC sync check failed: %s", e)
+            logger.warning("HMAC sync check failed", extra={
+                "action": "sync_check",
+                "error": str(e)
+            })
             return False, f"network_error: {e}"
 
     def get_rotation_status(self) -> dict:

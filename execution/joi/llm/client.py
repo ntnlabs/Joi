@@ -18,11 +18,19 @@ class LLMResponse:
 class OllamaClient:
     """Simple Ollama API client."""
 
-    def __init__(self, base_url: str, model: str, timeout: float = 60.0, num_ctx: int = 0):
+    def __init__(
+        self,
+        base_url: str,
+        model: str,
+        timeout: float = 60.0,
+        num_ctx: int = 0,
+        keep_alive: str = "30m",
+    ):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.num_ctx = num_ctx  # 0 = use model default
+        self.keep_alive = keep_alive  # How long to keep model in VRAM after request
 
     def generate(
         self,
@@ -48,6 +56,7 @@ class OllamaClient:
             "model": use_model,
             "prompt": prompt,
             "stream": False,
+            "keep_alive": self.keep_alive,
         }
 
         if system:
@@ -77,7 +86,7 @@ class OllamaClient:
                 error="timeout",
             )
         except httpx.HTTPStatusError as exc:
-            logger.error("Ollama HTTP error: %s", exc)
+            logger.error("Ollama HTTP error", extra={"error": str(exc), "status_code": exc.response.status_code})
             return LLMResponse(
                 text="",
                 model=use_model,
@@ -85,7 +94,7 @@ class OllamaClient:
                 error=f"http_error: {exc.response.status_code}",
             )
         except Exception as exc:
-            logger.error("Ollama error: %s", exc)
+            logger.error("Ollama error", extra={"error": str(exc)})
             return LLMResponse(
                 text="",
                 model=use_model,
@@ -112,6 +121,7 @@ class OllamaClient:
             "model": use_model,
             "messages": messages,
             "stream": False,
+            "keep_alive": self.keep_alive,
         }
 
         if system:
@@ -143,7 +153,7 @@ class OllamaClient:
                 error="timeout",
             )
         except httpx.HTTPStatusError as exc:
-            logger.error("Ollama chat HTTP error: %s", exc)
+            logger.error("Ollama chat HTTP error", extra={"error": str(exc), "status_code": exc.response.status_code})
             return LLMResponse(
                 text="",
                 model=use_model,
@@ -151,7 +161,7 @@ class OllamaClient:
                 error=f"http_error: {exc.response.status_code}",
             )
         except Exception as exc:
-            logger.error("Ollama chat error: %s", exc)
+            logger.error("Ollama chat error", extra={"error": str(exc)})
             return LLMResponse(
                 text="",
                 model=use_model,

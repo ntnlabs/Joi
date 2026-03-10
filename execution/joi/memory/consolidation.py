@@ -73,7 +73,7 @@ def parse_facts_json(response: str) -> List[Dict[str, Any]]:
             pass
 
     clean = response.replace("\r", "").replace("\n", " ")[:30] if response else "(empty)"
-    logger.warning("Could not parse facts from LLM response: %s...", clean)
+    logger.warning("Could not parse facts from LLM response", extra={"preview": clean})
     return []
 
 
@@ -135,7 +135,7 @@ def validate_summary(summary: str) -> tuple[bool, str]:
 
     for pattern in suspicious_patterns:
         if re.search(pattern, summary, re.IGNORECASE):
-            logger.warning("Suspicious pattern in summary: %s", pattern)
+            logger.warning("Suspicious pattern in summary", extra={"pattern": pattern})
             return False, ""
 
     return True, summary.strip()
@@ -236,31 +236,34 @@ class MemoryConsolidator:
         try:
             response = self.llm.generate(prompt=prompt, model=model)
         except Exception as e:
-            logger.error("LLM generate failed: %s", e)
+            logger.error("LLM generate failed", extra={"error": str(e)})
             return []
 
         if response.error:
-            logger.error("LLM error during fact extraction: %s", response.error)
+            logger.error("LLM error during fact extraction", extra={"error": response.error})
             return []
 
-        logger.debug("LLM response for facts (len=%d): %s", len(response.text) if response.text else 0, response.text[:300] if response.text else "(empty)")
+        logger.debug("LLM response for facts", extra={
+            "length": len(response.text) if response.text else 0,
+            "preview": response.text[:300] if response.text else "(empty)"
+        })
 
         try:
             facts = parse_facts_json(response.text)
         except Exception as e:
-            logger.error("parse_facts_json failed: %s", e)
+            logger.error("parse_facts_json failed", extra={"error": str(e)})
             return []
 
         # Log what happened at INFO level for visibility
         if facts:
-            logger.info("Fact extraction found %d facts", len(facts))
+            logger.info("Fact extraction found facts", extra={"count": len(facts)})
         elif response.text and response.text.strip() == "[]":
             logger.info("Fact extraction: LLM returned empty array (no facts found in conversation)")
         else:
             # Single line preview: strip newlines first, then truncate
             clean = response.text.replace("\r", "").replace("\n", " ").strip() if response.text else ""
             preview = (clean[:30] + "...") if len(clean) > 30 else (clean or "(empty)")
-            logger.info("Fact extraction: LLM response didn't parse: %s", preview)
+            logger.info("Fact extraction: LLM response didn't parse", extra={"preview": preview})
 
         # Retry once if parsing failed but we got a response
         if not facts and response.text and len(response.text.strip()) > 10:
@@ -283,9 +286,9 @@ Corrected JSON:"""
                 if retry_response.text and not retry_response.error:
                     facts = parse_facts_json(retry_response.text)
                     if facts:
-                        logger.info("Fact extraction retry succeeded: %d facts", len(facts))
+                        logger.info("Fact extraction retry succeeded", extra={"count": len(facts)})
             except Exception as e:
-                logger.warning("Fact extraction retry failed: %s", e)
+                logger.warning("Fact extraction retry failed", extra={"error": str(e)})
 
         valid_facts = []
         for f in facts:
@@ -293,7 +296,7 @@ Corrected JSON:"""
                 if validate_fact(f):
                     valid_facts.append(f)
             except Exception as e:
-                logger.warning("validate_fact error for %s: %s", f, e)
+                logger.warning("validate_fact error", extra={"fact": str(f), "error": str(e)})
 
         if store and valid_facts:
             # Store facts under conversation_id (works for both DMs and groups)
@@ -334,12 +337,13 @@ Corrected JSON:"""
                     )
                     stored_count += 1
                 except (KeyError, TypeError, ValueError) as e:
-                    logger.warning("Skipping malformed fact %s: %s", fact, e)
+                    logger.warning("Skipping malformed fact", extra={"fact": str(fact), "error": str(e)})
             if stored_count:
-                if important_count:
-                    logger.info("Extracted and stored %d facts (%d core) for %s", stored_count, important_count, self._log_convo_id(convo_id))
-                else:
-                    logger.info("Extracted and stored %d facts for %s", stored_count, self._log_convo_id(convo_id))
+                logger.info("Extracted and stored facts", extra={
+                    "count": stored_count,
+                    "core_count": important_count if important_count else None,
+                    "conversation_id": self._log_convo_id(convo_id)
+                })
 
         return valid_facts
 
@@ -371,7 +375,7 @@ Corrected JSON:"""
 
         response = self.llm.generate(prompt=prompt, model=model)
         if response.error:
-            logger.error("LLM error during summarization: %s", response.error)
+            logger.error("LLM error during summarization", extra={"error": response.error})
             return None
 
         is_valid, summary = validate_summary(response.text)
@@ -448,7 +452,12 @@ Corrected JSON:"""
                 results["conversations_processed"] += 1
 
         if results["ran"]:
-            logger.info("Consolidation complete: %s", results)
+            logger.info("Consolidation complete", extra={
+                "facts_extracted": results["facts_extracted"],
+                "messages_summarized": results["messages_summarized"],
+                "messages_removed": results["messages_removed"],
+                "conversations_processed": results["conversations_processed"]
+            })
         return results
 
     def _consolidate_conversation(
@@ -500,24 +509,32 @@ Corrected JSON:"""
         if not oldest_messages:
             return results
 
-        logger.info(
-            "Compacting %d oldest messages for conversation %s (total: %d, context: %d)",
-            len(oldest_messages), self._log_convo_id(conversation_id), message_count, context_messages
-        )
+        logger.info("Compacting oldest messages", extra={
+            "count": len(oldest_messages),
+            "conversation_id": self._log_convo_id(conversation_id),
+            "total_messages": message_count,
+            "context_size": context_messages
+        })
 
         # Extract facts (with error handling)
         try:
             facts = self.extract_facts_from_messages(oldest_messages, store=True)
             results["facts_extracted"] = len(facts)
         except Exception as e:
-            logger.error("Fact extraction failed for %s: %s", self._log_convo_id(conversation_id), e, exc_info=True)
+            logger.error("Fact extraction failed", extra={
+                "conversation_id": self._log_convo_id(conversation_id),
+                "error": str(e)
+            }, exc_info=True)
             results["facts_extracted"] = 0
 
         # Summarize (with error handling)
         try:
             summary = self.summarize_messages(oldest_messages, store=True)
         except Exception as e:
-            logger.error("Summarization failed for %s: %s", self._log_convo_id(conversation_id), e, exc_info=True)
+            logger.error("Summarization failed", extra={
+                "conversation_id": self._log_convo_id(conversation_id),
+                "error": str(e)
+            }, exc_info=True)
             summary = None
 
         # Fail-safe: only remove messages if summarization succeeded

@@ -160,7 +160,7 @@ class WindStateManager:
             params
         )
         conn.commit()
-        logger.debug("Updated wind_state for %s: %s", conversation_id, list(updates.keys()))
+        logger.debug("Updated wind_state", extra={"conversation_id": conversation_id, "keys": list(updates.keys())})
 
     def record_proactive_sent(self, conversation_id: str) -> None:
         """
@@ -210,7 +210,7 @@ class WindStateManager:
             last_user_interaction_at=now,
             unanswered_proactive_count=0,
         )
-        logger.debug("Recorded user interaction for %s", conversation_id)
+        logger.debug("Recorded user interaction", extra={"conversation_id": conversation_id})
 
     def record_outbound(self, conversation_id: str) -> None:
         """
@@ -250,7 +250,7 @@ class WindStateManager:
             proactive_sent_today=0,
             proactive_day_bucket=today_bucket,
         )
-        logger.debug("Reset daily counters for %s", conversation_id)
+        logger.debug("Reset daily counters", extra={"conversation_id": conversation_id})
 
     def set_snooze(self, conversation_id: str, until: datetime) -> None:
         """
@@ -260,7 +260,7 @@ class WindStateManager:
             conversation_id,
             wind_snooze_until=until,
         )
-        logger.info("Snoozed Wind for %s until %s", conversation_id, until)
+        logger.info("Snoozed Wind", extra={"conversation_id": conversation_id, "until": str(until)})
 
     def clear_snooze(self, conversation_id: str) -> None:
         """
@@ -270,7 +270,7 @@ class WindStateManager:
             conversation_id,
             wind_snooze_until=None,
         )
-        logger.debug("Cleared Wind snooze for %s", conversation_id)
+        logger.debug("Cleared Wind snooze", extra={"conversation_id": conversation_id})
 
     def get_all_conversation_ids(self) -> list[str]:
         """

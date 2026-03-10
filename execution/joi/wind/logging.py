@@ -272,5 +272,5 @@ class WindDecisionLogger:
 
         deleted = cursor.rowcount
         if deleted > 0:
-            logger.info("Cleaned up %d wind decision logs older than %d days", deleted, days)
+            logger.info("Cleaned up wind decision logs", extra={"count": deleted, "days": days})
         return deleted

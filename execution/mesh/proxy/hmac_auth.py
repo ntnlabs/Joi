@@ -44,7 +44,7 @@ def get_shared_secret() -> Optional[bytes]:
             if secret:
                 return bytes.fromhex(secret)
         except Exception as e:
-            logger.warning("Failed to read HMAC secret file: %s", e)
+            logger.warning("Failed to read HMAC secret file", extra={"error": str(e)})
 
     # Fall back to environment
     secret = os.getenv("MESH_HMAC_SECRET")
@@ -77,7 +77,10 @@ def get_shared_secret_for_backend(backend_name: str) -> Optional[bytes]:
             return secret.encode("utf-8")
 
     # No fallback - fail-closed for security
-    logger.warning("No HMAC secret for backend %s (set %s)", backend_name, env_name)
+    logger.warning("No HMAC secret for backend", extra={
+        "backend": backend_name,
+        "env_var": env_name
+    })
     return None
 
 
@@ -93,10 +96,13 @@ def save_shared_secret(secret_hex: str) -> bool:
         temp_file.write_text(secret_hex + "\n")
         temp_file.rename(HMAC_SECRET_FILE)
         HMAC_SECRET_FILE.chmod(0o600)
-        logger.info("Persisted rotated HMAC secret to %s", HMAC_SECRET_FILE)
+        logger.info("Persisted rotated HMAC secret", extra={
+            "action": "secret_persisted",
+            "path": str(HMAC_SECRET_FILE)
+        })
         return True
     except Exception as e:
-        logger.error("Failed to persist HMAC secret: %s", e)
+        logger.error("Failed to persist HMAC secret", extra={"error": str(e)})
         return False
 
 
@@ -219,7 +225,11 @@ class InMemoryNonceStore:
                 self._last_cleanup = now
 
             if nonce in self._nonces:
-                logger.warning("Replay detected: nonce=%s source=%s", nonce[:8], source)
+                logger.warning("Replay detected", extra={
+                    "nonce": nonce[:8],
+                    "source": source,
+                    "action": "replay_blocked"
+                })
                 return False, "replay_detected"
 
             self._nonces[nonce] = expires_at
