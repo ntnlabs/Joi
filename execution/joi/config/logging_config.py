@@ -5,7 +5,7 @@ Provides JSON-formatted logs for production (machine-parseable) with
 fallback to text format for development.
 
 Environment variables:
-    JOI_LOG_JSON: "1" for JSON format (default), "0" for text
+    JOI_LOG_JSON: "1" for JSON format, "0" for text (default)
     JOI_LOG_LEVEL: Log level (default: INFO)
 """
 
@@ -37,12 +37,12 @@ def configure_logging(level: str = None, use_json: bool = None):
 
     Args:
         level: Log level (default: from JOI_LOG_LEVEL env or INFO)
-        use_json: Use JSON format (default: from JOI_LOG_JSON env or True)
+        use_json: Use JSON format (default: from JOI_LOG_JSON env or False)
     """
     if level is None:
         level = os.getenv("JOI_LOG_LEVEL", "INFO")
     if use_json is None:
-        use_json = os.getenv("JOI_LOG_JSON", "1") == "1"
+        use_json = os.getenv("JOI_LOG_JSON", "0") == "1"
 
     handler = logging.StreamHandler(sys.stdout)
 
