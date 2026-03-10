@@ -9,6 +9,12 @@ from typing import Callable, Optional
 
 logger = logging.getLogger("joi.api.scheduler")
 
+# Tick intervals (assuming 60s base interval)
+_TICKS_CONFIG_SYNC = 10      # Config sync every ~10 minutes
+_TICKS_HOURLY = 60           # Maintenance tasks every ~1 hour
+_TICKS_DAILY = 1440          # Daily tasks (24 hours)
+_TICKS_MEMBERSHIP = 15       # Membership cache check every ~15 minutes
+
 
 class Scheduler:
     """
@@ -160,26 +166,25 @@ class Scheduler:
         # Auto-ingestion check every tick (cheap if no files)
         self._check_ingestion()
 
-        # Config sync check every 10 ticks (~10 min with 60s interval)
-        if self._tick_count % 10 == 0:
+        # Config sync check every ~10 minutes
+        if self._tick_count % _TICKS_CONFIG_SYNC == 0:
             self._check_config_sync()
 
         # Tamper detection every tick (SHA256 is cheap)
         self._check_tamper()
 
-        # Low-priority maintenance tasks every 60 ticks (~1 hour with 60s interval)
-        if self._tick_count % 60 == 0:
+        # Low-priority maintenance tasks every ~1 hour
+        if self._tick_count % _TICKS_HOURLY == 0:
             self._cleanup_nonces()
             self._cleanup_send_cache()
             self._check_fts_integrity()
 
-        # Weekly HMAC rotation check once per day (1440 ticks with 60s interval)
-        if self._tick_count % 1440 == 0 and self._tick_count > 0:
+        # HMAC rotation check once per day
+        if self._tick_count % _TICKS_DAILY == 0 and self._tick_count > 0:
             self._check_hmac_rotation()
 
         # Refresh membership cache (only runs if business mode + dm_group_knowledge)
-        # Check every 15 ticks (~15 min with 60s interval) but actual refresh is controlled by cache
-        if self._tick_count % 15 == 0:
+        if self._tick_count % _TICKS_MEMBERSHIP == 0:
             self._refresh_membership()
 
         # Wind proactive messaging check every tick
