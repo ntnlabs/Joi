@@ -42,6 +42,12 @@ cd /opt/Joi/execution/mesh/proxy
 pip install -r requirements.txt --break-system-packages --ignore-installed
 ```
 
+Install the shared package (HMAC core, used by both Joi and Mesh):
+
+```bash
+pip install -e /opt/Joi/execution/shared --break-system-packages
+```
+
 Close the update window if you do not need it for the next steps:
 
 ```bash

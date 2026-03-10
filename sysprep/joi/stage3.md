@@ -60,6 +60,12 @@ cd /opt/Joi/execution/joi
 pip install -r requirements.txt --break-system-packages --ignore-installed
 ```
 
+Install the shared package (HMAC core, used by both Joi and Mesh):
+
+```bash
+pip install -e /opt/Joi/execution/shared --break-system-packages
+```
+
 Install SQLCipher CLI/dev libs used by Joi memory/admin tooling, then install the Python SQLCipher binding if your current runtime still requires it:
 
 ```bash
