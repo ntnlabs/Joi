@@ -31,6 +31,34 @@ class CustomJsonFormatter(jsonlogger.JsonFormatter):
             log_record['source'] = f"{record.filename}:{record.lineno}"
 
 
+class CustomTextFormatter(logging.Formatter):
+    """Text formatter that includes extra fields inline."""
+
+    # Fields that are part of standard LogRecord, not user-provided extras
+    _BUILTIN_ATTRS = {
+        'name', 'msg', 'args', 'created', 'filename', 'funcName', 'levelname',
+        'levelno', 'lineno', 'module', 'msecs', 'pathname', 'process',
+        'processName', 'relativeCreated', 'stack_info', 'exc_info', 'exc_text',
+        'thread', 'threadName', 'taskName', 'message',
+    }
+
+    def format(self, record):
+        # Get the base formatted message
+        base = super().format(record)
+
+        # Extract extra fields (anything not in standard LogRecord)
+        extras = {
+            k: v for k, v in record.__dict__.items()
+            if k not in self._BUILTIN_ATTRS and not k.startswith('_')
+        }
+
+        if extras:
+            # Format extras as key=value pairs
+            extra_str = ' '.join(f"{k}={v}" for k, v in extras.items())
+            return f"{base} [{extra_str}]"
+        return base
+
+
 def configure_logging(level: str = None, use_json: bool = None):
     """
     Configure logging for Mesh Proxy.
@@ -51,7 +79,7 @@ def configure_logging(level: str = None, use_json: bool = None):
             '%(timestamp)s %(level)s %(logger)s %(message)s'
         )
     else:
-        formatter = logging.Formatter(
+        formatter = CustomTextFormatter(
             '%(asctime)s %(levelname)s %(name)s: %(message)s'
         )
 
