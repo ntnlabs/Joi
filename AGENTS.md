@@ -1,39 +1,121 @@
 # Repository Guidelines
 
-This repository currently contains early architecture notes for the Joi project. Use this guide to keep contributions consistent as the codebase grows.
+Guidelines for AI agents and contributors working on the Joi codebase.
 
-## Project Structure & Module Organization
-- `Joi-architecture-v2.md`: **Current authoritative architecture** (security-hardened, Nebula mesh, Proxmox VM).
-- `Joi-architecture.md`: Original high-level architecture (superseded by v2).
-- `Joi-threat-model.md`: Threat model, risks, and mitigations.
-- `PROJECT_SUMMARY.md`: Quick reference for project overview.
-- Future code should live under `src/` (runtime, adapters, and agents) and `tests/` (unit/integration).
-- If you add assets or diagrams, use `assets/` and keep filenames descriptive (e.g., `assets/proxy-flow.png`).
+## Project Structure
 
-## Build, Test, and Development Commands
-There are no build or test scripts yet. If you add tooling, document it here with examples, for instance:
-- `make dev` — run the local dev loop.
-- `npm test` — execute unit tests.
-- `pytest` — run Python test suite.
+```
+execution/
+├── joi/                    # Joi VM - AI assistant service
+│   ├── api/                # FastAPI server + modules
+│   │   ├── server.py       # Main API (~2000 lines)
+│   │   ├── scheduler.py    # Background tasks
+│   │   ├── admin_routes.py # Admin endpoints
+│   │   ├── message_queue.py # Queue + rate limiter
+│   │   ├── group_cache.py  # Membership cache
+│   │   ├── hmac_auth.py    # HMAC authentication
+│   │   ├── hmac_rotator.py # Key rotation
+│   │   └── policy_manager.py # Policy storage
+│   ├── config/             # Configuration + logging
+│   ├── memory/             # SQLCipher database
+│   ├── llm/                # Ollama client
+│   ├── wind/               # Proactive messaging
+│   └── systemd/            # Service files
+│
+├── mesh/                   # Mesh VM - Signal proxy
+│   └── proxy/              # Flask proxy service
+│
+└── shared/                 # Shared package (pip install -e)
+    └── hmac_core.py        # Common HMAC functions
 
-## Coding Style & Naming Conventions
-No enforced style yet. When adding code:
-- Use 2 spaces for YAML/JSON and 4 spaces for Python (if used).
-- Prefer clear, descriptive names (e.g., `openhab_event_adapter.py`, `signal_proxy.go`).
-- Add minimal comments only where behavior is non-obvious.
+sysprep/                    # Deployment scripts (stage1-4)
+```
 
-## Testing Guidelines
-No test framework is configured. When tests are introduced:
-- Place them under `tests/`.
-- Name files to mirror sources (e.g., `tests/test_openhab_events.py`).
-- Document how to run tests in the section above.
+## Architecture Docs
 
-## Commit & Pull Request Guidelines
-No commit conventions are established in this repo yet. Until then:
-- Use concise, imperative messages (e.g., “Add proxy webhook spec”).
-- PRs should include: purpose, scope, and any design decisions or tradeoffs.
+| Document | Description |
+|----------|-------------|
+| `Joi-architecture-v3.md` | **Current** - stateless mesh, config push |
+| `Joi-threat-model.md` | Threat model and mitigations |
+| `api-contracts.md` | API specifications |
+| `policy-engine.md` | Security policy rules |
 
-## Security & Configuration Tips
-- Do not store secrets in this repo.
-- For config, prefer local `.env` files (not committed) or documented placeholders.
-- Maintain the security boundaries described in `Joi-architecture.md`.
+## Development
+
+### Running Locally
+
+```bash
+# Joi API
+cd execution/joi
+pip install -r requirements.txt
+pip install -e ../shared
+python -m api.server
+
+# Mesh proxy
+cd execution/mesh
+pip install -r requirements.txt
+pip install -e ../shared
+python -m proxy.signal_worker
+```
+
+### Environment Files
+
+- `/etc/default/joi-api` - Joi configuration
+- `/etc/default/mesh-signal-worker` - Mesh configuration
+
+### Testing
+
+```bash
+# Syntax check
+python -m py_compile execution/joi/api/server.py
+
+# No test framework yet - manual testing via Signal
+```
+
+## Coding Style
+
+- **Python**: 4 spaces, type hints encouraged
+- **Logging**: Use structured logging with `extra={}` fields
+  ```python
+  logger.info("Message received", extra={"sender": sender_id, "length": len(text)})
+  ```
+- **Dependencies**: Use dependency injection (`set_dependencies()`) for modules
+- **Naming**: snake_case for files/functions, PascalCase for classes
+
+## Commit Guidelines
+
+- Imperative mood: "Add feature" not "Added feature"
+- Co-author tag for AI assistance:
+  ```
+  Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+  ```
+
+## Security
+
+- No secrets in repo (use env files)
+- HMAC authentication between joi ↔ mesh
+- SQLCipher encryption for memory database
+- Privacy mode redacts PII in logs
+- Fail-closed design (deny on error)
+
+## Key Patterns
+
+### Dependency Injection
+Modules use `set_dependencies()` to avoid circular imports:
+```python
+class Scheduler:
+    def set_dependencies(self, memory, policy_manager, ...):
+        self._memory = memory
+        self._policy_manager = policy_manager
+```
+
+### Structured Logging
+```python
+# Text mode shows: "Event [key=value key2=value2]"
+# JSON mode outputs full structured records
+logger.info("Event", extra={"key": "value", "key2": "value2"})
+```
+
+### Admin Endpoints
+Read-only endpoints use IP check (localhost only).
+Sensitive endpoints (rotate, kill-switch) require HMAC auth.
