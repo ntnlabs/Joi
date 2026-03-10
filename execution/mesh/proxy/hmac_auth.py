@@ -1,37 +1,49 @@
-"""HMAC authentication for mesh ↔ joi requests.
+"""HMAC authentication for joi → mesh and mesh → backend requests.
 
 Defense-in-depth layer over Nebula VPN. See api-contracts.md for spec.
-
-Header format:
-    X-Nonce: <uuid4>
-    X-Timestamp: <unix-epoch-ms>
-    X-HMAC-SHA256: HMAC-SHA256(nonce + timestamp + body, shared_secret)
 """
-import hashlib
-import hmac
 import logging
 import os
 import threading
-import time
-import uuid
 from pathlib import Path
 from typing import Optional, Tuple
 
+from shared.hmac_core import (
+    DEFAULT_TIMESTAMP_TOLERANCE_MS,
+    NONCE_RETENTION_MS,
+    compute_hmac,
+    create_request_headers,
+    generate_nonce,
+    get_timestamp_ms,
+    verify_hmac,
+    verify_timestamp,
+)
+
 logger = logging.getLogger("mesh.hmac_auth")
-
-# Default timestamp tolerance: 5 minutes (300,000 ms)
-DEFAULT_TIMESTAMP_TOLERANCE_MS = 300_000
-
-# Nonce retention: 15 minutes
-NONCE_RETENTION_MS = 15 * 60 * 1000
 
 # Writable secret file (for rotation persistence across restart)
 HMAC_SECRET_FILE = Path(os.getenv("MESH_HMAC_SECRET_FILE", "/var/lib/signal-cli/hmac.secret"))
 
+# Re-export for convenience
+__all__ = [
+    "DEFAULT_TIMESTAMP_TOLERANCE_MS",
+    "NONCE_RETENTION_MS",
+    "compute_hmac",
+    "create_request_headers",
+    "generate_nonce",
+    "get_timestamp_ms",
+    "verify_hmac",
+    "verify_timestamp",
+    "get_shared_secret",
+    "get_shared_secret_for_backend",
+    "save_shared_secret",
+    "InMemoryNonceStore",
+    "HMAC_SECRET_FILE",
+]
+
 
 def get_shared_secret() -> Optional[bytes]:
-    """
-    Get the shared secret from file or environment.
+    """Get the shared secret from file or environment.
 
     Priority:
     1. Secret file (persisted after rotation)
@@ -85,8 +97,7 @@ def get_shared_secret_for_backend(backend_name: str) -> Optional[bytes]:
 
 
 def save_shared_secret(secret_hex: str) -> bool:
-    """
-    Persist rotated secret to file for restart recovery.
+    """Persist rotated secret to file for restart recovery.
 
     Called by ConfigState when receiving HMAC rotation from Joi.
     """
@@ -104,91 +115,6 @@ def save_shared_secret(secret_hex: str) -> bool:
     except Exception as e:
         logger.error("Failed to persist HMAC secret", extra={"error": str(e)})
         return False
-
-
-def generate_nonce() -> str:
-    """Generate a new UUID v4 nonce."""
-    return str(uuid.uuid4())
-
-
-def get_timestamp_ms() -> int:
-    """Get current timestamp in milliseconds."""
-    return int(time.time() * 1000)
-
-
-def compute_hmac(nonce: str, timestamp: int, body: bytes, secret: bytes) -> str:
-    """Compute HMAC-SHA256 for request signing.
-
-    Args:
-        nonce: UUID v4 nonce string
-        timestamp: Unix timestamp in milliseconds
-        body: Raw request body bytes
-        secret: Shared secret bytes
-
-    Returns:
-        Hex-encoded HMAC signature
-    """
-    message = f"{nonce}{timestamp}".encode("utf-8") + body
-    signature = hmac.new(secret, message, hashlib.sha256)
-    return signature.hexdigest()
-
-
-def create_request_headers(body: bytes, secret: bytes) -> dict:
-    """Create HMAC authentication headers for a request.
-
-    Args:
-        body: Request body bytes
-        secret: Shared secret bytes
-
-    Returns:
-        Dict with X-Nonce, X-Timestamp, X-HMAC-SHA256 headers
-    """
-    nonce = generate_nonce()
-    timestamp = get_timestamp_ms()
-    signature = compute_hmac(nonce, timestamp, body, secret)
-
-    return {
-        "X-Nonce": nonce,
-        "X-Timestamp": str(timestamp),
-        "X-HMAC-SHA256": signature,
-    }
-
-
-def verify_hmac(nonce: str, timestamp: int, body: bytes, signature: str, secret: bytes) -> bool:
-    """Verify HMAC signature.
-
-    Args:
-        nonce: UUID v4 nonce from X-Nonce header
-        timestamp: Timestamp from X-Timestamp header
-        body: Raw request body bytes
-        signature: HMAC from X-HMAC-SHA256 header
-        secret: Shared secret bytes
-
-    Returns:
-        True if signature is valid
-    """
-    expected = compute_hmac(nonce, timestamp, body, secret)
-    return hmac.compare_digest(expected, signature)
-
-
-def verify_timestamp(timestamp: int, tolerance_ms: int = DEFAULT_TIMESTAMP_TOLERANCE_MS) -> Tuple[bool, str]:
-    """Verify timestamp is within tolerance.
-
-    Args:
-        timestamp: Timestamp from X-Timestamp header (ms)
-        tolerance_ms: Maximum allowed skew in milliseconds
-
-    Returns:
-        Tuple of (is_valid, error_reason)
-    """
-    now = get_timestamp_ms()
-    skew = abs(now - timestamp)
-
-    if skew > tolerance_ms:
-        direction = "future" if timestamp > now else "past"
-        return False, f"timestamp_skew_{direction}"
-
-    return True, ""
 
 
 class InMemoryNonceStore:
