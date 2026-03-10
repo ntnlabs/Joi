@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "joi-shared"
+version = "0.1.0"
+description = "Shared utilities for Joi ecosystem services"
+requires-python = ">=3.10"
+
+[tool.setuptools]
+# Map package name "shared" to current directory
+package-dir = {"shared" = "."}
+packages = ["shared"]
