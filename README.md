@@ -39,6 +39,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Per-user and per-group system prompts
 - ✅ Reaction responses (contextual acknowledgments)
 - ✅ Response cooldown (5s DMs, 2s groups - configurable)
+- ✅ Wind proactive messaging (impulse loop with topic management)
 
 ### Memory
 - ✅ Conversation context (configurable window)
@@ -57,9 +58,9 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Privacy mode (PII redaction in logs)
 - ✅ Kill switch (emergency message halt)
 - ✅ Tamper detection (config file monitoring)
+- ✅ Structured logging with JSON/text modes
 
 ### Pending
-- ⏳ Wind behavior (proactive companion-mode behavior / impulse loop)
 - ⏳ System Channel integration
 
 ### Nice to Have
