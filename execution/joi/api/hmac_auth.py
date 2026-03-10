@@ -72,6 +72,8 @@ class NonceStore:
 
     Nonces are stored for 15 minutes to prevent replay attacks.
     Cleanup runs periodically to remove expired entries.
+
+    Thread-safe: All database operations are serialized via lock.
     """
 
     def __init__(self, db_path: str):
@@ -81,6 +83,8 @@ class NonceStore:
             db_path: Path to SQLite database file
         """
         import sqlite3
+        import threading
+        self._lock = threading.Lock()
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._ensure_table()
 
@@ -103,7 +107,7 @@ class NonceStore:
         self._conn.commit()
 
     def check_and_store(self, nonce: str, source: str = "mesh") -> Tuple[bool, str]:
-        """Check if nonce is new and store it.
+        """Check if nonce is new and store it atomically.
 
         Args:
             nonce: The nonce to check
@@ -117,37 +121,30 @@ class NonceStore:
         now = get_timestamp_ms()
         expires_at = now + NONCE_RETENTION_MS
 
-        # First, cleanup expired nonces (every call, lightweight)
-        self._cleanup_expired(now)
+        with self._lock:
+            # First, cleanup expired nonces (every call, lightweight)
+            self._cleanup_expired(now)
 
-        # Check if nonce exists
-        cursor = self._conn.execute(
-            "SELECT 1 FROM replay_nonces WHERE nonce = ?",
-            (nonce,)
-        )
-        if cursor.fetchone() is not None:
-            logger.warning("Replay detected", extra={
-                "nonce": nonce[:8],
-                "source": source,
-                "action": "replay_blocked"
-            })
-            return False, "replay_detected"
-
-        # Store new nonce
-        try:
-            self._conn.execute(
-                "INSERT INTO replay_nonces (nonce, source, received_at, expires_at) VALUES (?, ?, ?, ?)",
+            # Atomic check-and-store: INSERT OR IGNORE returns 0 rows if duplicate
+            cursor = self._conn.execute(
+                "INSERT OR IGNORE INTO replay_nonces (nonce, source, received_at, expires_at) VALUES (?, ?, ?, ?)",
                 (nonce, source, now, expires_at)
             )
             self._conn.commit()
+
+            if cursor.rowcount == 0:
+                # Nonce already existed - replay attack
+                logger.warning("Replay detected", extra={
+                    "nonce": nonce[:8],
+                    "source": source,
+                    "action": "replay_blocked"
+                })
+                return False, "replay_detected"
+
             return True, ""
-        except Exception as e:
-            # Race condition: another thread may have inserted
-            logger.warning("Nonce insert failed (possible race)", extra={"error": str(e)})
-            return False, "replay_detected"
 
     def _cleanup_expired(self, now_ms: int):
-        """Remove expired nonces."""
+        """Remove expired nonces. Caller must hold lock."""
         self._conn.execute(
             "DELETE FROM replay_nonces WHERE expires_at < ?",
             (now_ms,)
@@ -157,12 +154,18 @@ class NonceStore:
     def cleanup_expired(self) -> int:
         """Public method to cleanup expired nonces. Returns count deleted."""
         now = get_timestamp_ms()
-        cursor = self._conn.execute(
-            "DELETE FROM replay_nonces WHERE expires_at < ?",
-            (now,)
-        )
-        deleted = cursor.rowcount
-        self._conn.commit()
+        with self._lock:
+            cursor = self._conn.execute(
+                "DELETE FROM replay_nonces WHERE expires_at < ?",
+                (now,)
+            )
+            deleted = cursor.rowcount
+            self._conn.commit()
         if deleted > 0:
             logger.debug("Cleaned up expired nonces", extra={"count": deleted})
         return deleted
+
+    def close(self):
+        """Close the database connection."""
+        with self._lock:
+            self._conn.close()

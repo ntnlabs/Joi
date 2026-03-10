@@ -81,15 +81,18 @@ class HMACRotator:
                 logger.warning("Failed to load rotation state", extra={"error": str(e)})
 
     def _save_state(self) -> None:
-        """Save rotation state to disk."""
+        """Save rotation state to disk atomically."""
         try:
             self._state_file.parent.mkdir(parents=True, exist_ok=True)
-            with open(self._state_file, "w") as f:
+            # Atomic write: write to temp file, then rename
+            tmp_file = self._state_file.with_suffix(".tmp")
+            with open(tmp_file, "w") as f:
                 json.dump({
                     "last_rotation_time": self._last_rotation_time,
                     "failed_rotation_count": self._failed_rotation_count,
                     "last_failed_rotation": self._last_failed_rotation,
                 }, f)
+            tmp_file.rename(self._state_file)
         except Exception as e:
             logger.error("Failed to save rotation state", extra={"error": str(e)})
 
