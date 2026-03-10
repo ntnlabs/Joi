@@ -60,9 +60,7 @@ from ingestion import run_auto_ingestion, INGESTION_DIR
 from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
 
-# Import Wind module at top level
-import sys
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # Add joi/ to path
+# Import Wind module (path already set above)
 from wind import WindOrchestrator, WindConfig
 
 logger = logging.getLogger("joi.api")
@@ -318,15 +316,34 @@ RESPONSE_COOLDOWN_GROUP_SECONDS = float(os.getenv("JOI_RESPONSE_COOLDOWN_GROUP_S
 _last_send_times: Dict[str, float] = {}  # conversation_id -> timestamp
 _send_locks: Dict[str, threading.Lock] = {}  # per-conversation locks
 _send_locks_lock = threading.Lock()  # protects _send_locks dict creation
+_SEND_CACHE_MAX_SIZE = 1000  # Max conversations to track
+_SEND_CACHE_CLEANUP_AGE = 3600  # Remove entries older than 1 hour
+
+
+def _cleanup_send_caches():
+    """Remove old entries from send caches to prevent unbounded growth."""
+    now = time.time()
+    cutoff = now - _SEND_CACHE_CLEANUP_AGE
+    with _send_locks_lock:
+        # Find stale conversation IDs
+        stale_ids = [cid for cid, ts in _last_send_times.items() if ts < cutoff]
+        for cid in stale_ids:
+            _last_send_times.pop(cid, None)
+            _send_locks.pop(cid, None)
+        # If still too large, remove oldest entries
+        if len(_last_send_times) > _SEND_CACHE_MAX_SIZE:
+            sorted_ids = sorted(_last_send_times.items(), key=lambda x: x[1])
+            for cid, _ in sorted_ids[:len(sorted_ids) - _SEND_CACHE_MAX_SIZE]:
+                _last_send_times.pop(cid, None)
+                _send_locks.pop(cid, None)
 
 
 def _get_send_lock(convo_id: str) -> threading.Lock:
     """Get or create a lock for a specific conversation (thread-safe)."""
-    if convo_id not in _send_locks:
-        with _send_locks_lock:
-            if convo_id not in _send_locks:  # double-check after acquiring lock
-                _send_locks[convo_id] = threading.Lock()
-    return _send_locks[convo_id]
+    with _send_locks_lock:
+        if convo_id not in _send_locks:
+            _send_locks[convo_id] = threading.Lock()
+        return _send_locks[convo_id]
 
 # Initialize policy manager for mesh config sync
 policy_manager = PolicyManager()
@@ -1076,6 +1093,7 @@ def startup_event():
             generate_proactive_message=_generate_proactive_message,
             send_to_mesh=_send_to_mesh,
             run_auto_ingestion=run_auto_ingestion,
+            cleanup_send_caches=_cleanup_send_caches,
             InboundConversation=InboundConversation,
         )
         scheduler.start()

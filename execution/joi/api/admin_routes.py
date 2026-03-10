@@ -40,7 +40,7 @@ def _is_local_request(request: Request) -> bool:
     In that case, X-Forwarded-For handling would be needed (with proxy stripping/overwriting).
     """
     client_ip = request.client.host if request.client else ""
-    return client_ip == "127.0.0.1"
+    return client_ip in ("127.0.0.1", "::1")
 
 
 @router.get("/config/status")

@@ -174,8 +174,9 @@ class GroupMembershipCache:
             if refresh_success:
                 return self._find_user_groups_unlocked(user_id)
 
-            # Refresh failed
-            if has_cache:
+            # Refresh failed - re-check cache state (may have changed during HTTP call)
+            current_has_cache = len(self._cache) > 0
+            if current_has_cache:
                 logger.warning("Using stale membership cache (refresh failed)", extra={"action": "cache_stale"})
                 return self._find_user_groups_unlocked(user_id)
             else:
