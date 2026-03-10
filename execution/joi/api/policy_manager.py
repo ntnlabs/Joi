@@ -94,12 +94,12 @@ class PolicyManager:
                 try:
                     with open(self._path, "r", encoding="utf-8") as f:
                         self._config = json.load(f)
-                    logger.info("Loaded policy from %s", self._path)
+                    logger.info("Loaded policy", extra={"path": str(self._path)})
                 except (json.JSONDecodeError, IOError) as e:
-                    logger.error("Failed to load policy from %s: %s", self._path, e)
+                    logger.error("Failed to load policy", extra={"path": str(self._path), "error": str(e)})
                     self._config = copy.deepcopy(DEFAULT_POLICY)
             else:
-                logger.warning("Policy file not found at %s, using defaults", self._path)
+                logger.warning("Policy file not found, using defaults", extra={"path": str(self._path)})
                 self._config = copy.deepcopy(DEFAULT_POLICY)
                 self._save_unlocked()
 
@@ -110,7 +110,7 @@ class PolicyManager:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._path, "w", encoding="utf-8") as f:
             json.dump(self._config, f, indent=2)
-        logger.info("Saved policy to %s", self._path)
+        logger.info("Saved policy", extra={"path": str(self._path)})
 
     def _save(self) -> None:
         """Save policy to disk."""
@@ -154,7 +154,7 @@ class PolicyManager:
             self._config["identity"]["bot_name"] = name
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Updated bot_name to: %s", name)
+        logger.info("Updated bot_name", extra={"name": name})
 
     def get_owner_id(self) -> Optional[str]:
         """Get the owner ID (primary owner for queue priority)."""
@@ -169,7 +169,7 @@ class PolicyManager:
             self._config["identity"]["owner_id"] = owner_id
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Updated owner_id to: %s", owner_id)
+        logger.info("Updated owner_id", extra={"owner_id": owner_id})
 
     def get_allowed_senders(self) -> List[str]:
         """Get list of allowed senders."""
@@ -184,7 +184,7 @@ class PolicyManager:
             self._config["identity"]["allowed_senders"] = list(senders)
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Updated allowed_senders: %d entries", len(senders))
+        logger.info("Updated allowed_senders", extra={"count": len(senders)})
 
     def add_allowed_sender(self, sender: str) -> bool:
         """Add a sender to allowed list. Returns True if added (wasn't already present)."""
@@ -197,7 +197,7 @@ class PolicyManager:
                 self._config["identity"]["allowed_senders"] = senders
                 self._update_hash_unlocked()
                 self._save_unlocked()
-                logger.info("Added allowed sender: %s", sender)
+                logger.info("Added allowed sender", extra={"sender": sender})
                 return True
             return False
 
@@ -212,7 +212,7 @@ class PolicyManager:
                 self._config["identity"]["allowed_senders"] = senders
                 self._update_hash_unlocked()
                 self._save_unlocked()
-                logger.info("Removed allowed sender: %s", sender)
+                logger.info("Removed allowed sender", extra={"sender": sender})
                 return True
             return False
 
@@ -241,7 +241,7 @@ class PolicyManager:
             }
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Updated group: %s (%d participants)", group_id[:16], len(participants))
+        logger.info("Updated group", extra={"group_id": group_id[:16], "participant_count": len(participants)})
 
     def remove_group(self, group_id: str) -> bool:
         """Remove a group. Returns True if removed."""
@@ -251,7 +251,7 @@ class PolicyManager:
                 del groups[group_id]
                 self._update_hash_unlocked()
                 self._save_unlocked()
-                logger.info("Removed group: %s", group_id[:16])
+                logger.info("Removed group", extra={"group_id": group_id[:16]})
                 return True
             return False
 
@@ -277,7 +277,7 @@ class PolicyManager:
             }
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Updated rate limits: %d/hour, %d/minute", max_per_hour, max_per_minute)
+        logger.info("Updated rate limits", extra={"max_per_hour": max_per_hour, "max_per_minute": max_per_minute})
 
     # --- Validation Section ---
 
@@ -336,7 +336,7 @@ class PolicyManager:
             self._config["security"]["privacy_mode"] = enabled
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Privacy mode %s", "enabled" if enabled else "disabled")
+        logger.info("Privacy mode changed", extra={"enabled": enabled})
 
     def set_kill_switch(self, active: bool) -> None:
         """
@@ -405,7 +405,7 @@ class PolicyManager:
             self._config["mode"] = mode
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Mode set to: %s", mode)
+        logger.info("Mode set", extra={"mode": mode})
 
     def set_dm_group_knowledge(self, enabled: bool) -> None:
         """Enable or disable DM group knowledge access (only effective in business mode)."""
@@ -413,7 +413,7 @@ class PolicyManager:
             self._config["dm_group_knowledge"] = enabled
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("DM group knowledge %s", "enabled" if enabled else "disabled")
+        logger.info("DM group knowledge changed", extra={"enabled": enabled})
 
     # --- Routing Section ---
 
@@ -430,7 +430,7 @@ class PolicyManager:
             self._config["routing"]["enabled"] = enabled
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Routing %s", "enabled" if enabled else "disabled")
+        logger.info("Routing changed", extra={"enabled": enabled})
 
     def add_routing_rule(self, match: Dict[str, str], backend: str) -> None:
         """Add a routing rule."""
@@ -443,7 +443,7 @@ class PolicyManager:
             })
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Added routing rule: match=%s backend=%s", match, backend)
+        logger.info("Added routing rule", extra={"match": match, "backend": backend})
 
     def set_backend(self, name: str, url: str) -> None:
         """Add or update a backend."""
@@ -453,7 +453,7 @@ class PolicyManager:
             self._config["routing"]["backends"][name] = {"url": url}
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Set backend: name=%s url=%s", name, url)
+        logger.info("Set backend", extra={"name": name, "url": url})
 
     # --- Wind Section ---
 
@@ -475,7 +475,7 @@ class PolicyManager:
             self._config["wind"]["enabled"] = enabled
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Wind %s", "enabled" if enabled else "disabled")
+        logger.info("Wind changed", extra={"enabled": enabled})
 
     def set_wind_shadow_mode(self, shadow: bool) -> None:
         """Enable or disable Wind shadow mode (log only, no sends)."""
@@ -485,7 +485,7 @@ class PolicyManager:
             self._config["wind"]["shadow_mode"] = shadow
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Wind shadow mode %s", "enabled" if shadow else "disabled")
+        logger.info("Wind shadow mode changed", extra={"enabled": shadow})
 
     def get_wind_allowlist(self) -> List[str]:
         """Get Wind conversation allowlist."""
@@ -503,7 +503,7 @@ class PolicyManager:
                 self._config["wind"]["allowlist"] = allowlist
                 self._update_hash_unlocked()
                 self._save_unlocked()
-                logger.info("Added to Wind allowlist: %s", conversation_id)
+                logger.info("Added to Wind allowlist", extra={"conversation_id": conversation_id})
                 return True
             return False
 
@@ -518,7 +518,7 @@ class PolicyManager:
                 self._config["wind"]["allowlist"] = allowlist
                 self._update_hash_unlocked()
                 self._save_unlocked()
-                logger.info("Removed from Wind allowlist: %s", conversation_id)
+                logger.info("Removed from Wind allowlist", extra={"conversation_id": conversation_id})
                 return True
             return False
 
@@ -532,4 +532,4 @@ class PolicyManager:
                     self._config["wind"][key] = value
             self._update_hash_unlocked()
             self._save_unlocked()
-        logger.info("Updated Wind config: %s", list(updates.keys()))
+        logger.info("Updated Wind config", extra={"keys": list(updates.keys())})

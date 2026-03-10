@@ -141,11 +141,11 @@ def ingest_file(
     try:
         text = filepath.read_text(encoding='utf-8')
     except Exception as e:
-        logger.error("Failed to read %s: %s", filepath, e)
+        logger.error("Failed to read file", extra={"path": str(filepath), "error": str(e)})
         return 0
 
     if not text.strip():
-        logger.warning("Skipping empty file: %s", filepath)
+        logger.warning("Skipping empty file", extra={"path": str(filepath)})
         return 0
 
     # Create source identifier (relative path)
@@ -164,7 +164,7 @@ def ingest_file(
     chunks = chunk_text(text, chunk_size, overlap)
 
     if not chunks:
-        logger.warning("No chunks generated from: %s", filepath)
+        logger.warning("No chunks generated from file", extra={"path": str(filepath)})
         return 0
 
     # Store chunks
@@ -177,8 +177,7 @@ def ingest_file(
             scope=scope,
         )
 
-    scope_info = f" (scope: {scope})" if scope else " (global)"
-    logger.info("Ingested %s: %d chunks%s", source, len(chunks), scope_info)
+    logger.info("Ingested file", extra={"source": source, "chunks": len(chunks), "scope": scope or "global"})
     return len(chunks)
 
 
@@ -261,7 +260,7 @@ def main():
     path = Path(args.path)
 
     if not path.exists():
-        logger.error("Path does not exist: %s", path)
+        logger.error("Path does not exist", extra={"path": str(path)})
         sys.exit(1)
 
     # Warn if no scope - knowledge will be orphaned
@@ -282,7 +281,7 @@ def main():
         files, chunks = ingest_directory(path, memory, args.chunk_size, args.overlap, args.scope)
         print(f"Ingested {files} files, {chunks} chunks{scope_info}")
     else:
-        logger.error("Path is not a file or directory: %s", path)
+        logger.error("Path is not a file or directory", extra={"path": str(path)})
         sys.exit(1)
 
 

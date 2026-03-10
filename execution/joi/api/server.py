@@ -49,6 +49,10 @@ from config import (
     ensure_prompts_dir,
     sanitize_scope,
 )
+from config.logging_config import configure_logging
+
+# Configure structured logging early
+configure_logging()
 from ingestion import run_auto_ingestion, INGESTION_DIR
 from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
@@ -130,13 +134,19 @@ def validate_output(response: str) -> Tuple[bool, str]:
     if len(response) > MAX_OUTPUT_LENGTH:
         original_len = len(response)
         response = response[:MAX_OUTPUT_LENGTH]
-        logger.info("Output truncated: %d -> %d chars", original_len, MAX_OUTPUT_LENGTH)
+        logger.info("Output truncated", extra={
+            "original_length": original_len,
+            "truncated_length": MAX_OUTPUT_LENGTH
+        })
 
     # Check for leaked system prompt markers
     response_lower = response.lower()
     for marker in OUTPUT_LEAK_MARKERS:
         if marker.lower() in response_lower:
-            logger.warning("Output validation failed: leaked marker '%s'", marker)
+            logger.warning("Output validation failed: leaked marker", extra={
+                "marker": marker,
+                "action": "output_blocked"
+            })
             return False, "I had trouble formulating a response. Could you rephrase that?"
 
     return True, response
@@ -225,7 +235,7 @@ class MessageQueue:
         self._running = True
         self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._worker_thread.start()
-        logger.info("Message queue worker started")
+        logger.info("Message queue worker started", extra={"action": "queue_start"})
 
     def stop(self):
         """Stop the worker thread."""
@@ -240,7 +250,7 @@ class MessageQueue:
         if self._worker_thread:
             self._worker_thread.join(timeout=5.0)
             self._worker_thread = None
-        logger.info("Message queue worker stopped")
+        logger.info("Message queue worker stopped", extra={"action": "queue_stop"})
 
     def enqueue(self, message_id: str, handler: Callable, is_owner: bool = False, timeout: float = 300.0) -> Any:
         """
@@ -269,12 +279,21 @@ class MessageQueue:
 
         queue_size = self._queue.qsize()
         priority_label = "owner" if priority == self.PRIORITY_OWNER else "normal"
-        logger.info("Queue ADD: message_id=%s priority=%s queue_size=%d", message_id, priority_label, queue_size)
+        logger.info("Queue ADD", extra={
+            "message_id": message_id,
+            "priority": priority_label,
+            "queue_size": queue_size,
+            "action": "queue_add"
+        })
 
         try:
             self._queue.put(msg, timeout=5.0)  # Wait up to 5s if queue is full
         except queue.Full:
-            logger.error("Queue FULL: dropping message_id=%s (max_size=%d)", message_id, self.MAX_QUEUE_SIZE)
+            logger.error("Queue FULL: dropping message", extra={
+                "message_id": message_id,
+                "max_size": self.MAX_QUEUE_SIZE,
+                "action": "queue_full"
+            })
             raise Exception("Message queue full, try again later")
 
         # Wait for processing to complete
@@ -300,16 +319,28 @@ class MessageQueue:
             self._current_message_id = msg.message_id
             start_time = time.time()
             priority_label = "owner" if msg.priority == self.PRIORITY_OWNER else "normal"
-            logger.info("Queue START: message_id=%s priority=%s", msg.message_id, priority_label)
+            logger.info("Queue START", extra={
+                "message_id": msg.message_id,
+                "priority": priority_label,
+                "action": "queue_process_start"
+            })
 
             try:
                 msg.result = msg.handler()
             except Exception as e:
-                logger.error("Queue ERROR: message_id=%s error=%s", msg.message_id, e)
+                logger.error("Queue ERROR", extra={
+                    "message_id": msg.message_id,
+                    "error": str(e),
+                    "action": "queue_error"
+                })
                 msg.error = str(e)
             finally:
                 elapsed = time.time() - start_time
-                logger.info("Queue DONE: message_id=%s elapsed=%.2fs", msg.message_id, elapsed)
+                logger.info("Queue DONE", extra={
+                    "message_id": msg.message_id,
+                    "duration_ms": int(elapsed * 1000),
+                    "action": "queue_process_done"
+                })
                 self._current_message_id = None
                 msg.done_event.set()
 
@@ -369,10 +400,12 @@ class OutboundRateLimiter:
             # Check rate limit
             if current_count >= self._max_per_hour:
                 self._blocked_count += 1
-                logger.warning(
-                    "Outbound rate limit: %d/%d per hour (blocked %d total)",
-                    current_count, self._max_per_hour, self._blocked_count
-                )
+                logger.warning("Outbound rate limit", extra={
+                    "current_count": current_count,
+                    "max_per_hour": self._max_per_hour,
+                    "blocked_total": self._blocked_count,
+                    "action": "rate_limited"
+                })
                 return False, "rate_limited"
 
             self._timestamps.append(now)
@@ -422,8 +455,11 @@ class Scheduler:
         self._running = True
         self._thread = threading.Thread(target=self._scheduler_loop, daemon=True)
         self._thread.start()
-        logger.info("Scheduler started (interval: %.1fs, startup delay: %.1fs)",
-                    self._interval, self._startup_delay)
+        logger.info("Scheduler started", extra={
+            "interval_seconds": self._interval,
+            "startup_delay_seconds": self._startup_delay,
+            "action": "scheduler_start"
+        })
 
     def stop(self):
         """Stop the scheduler thread gracefully."""
@@ -434,21 +470,24 @@ class Scheduler:
         if self._thread:
             self._thread.join(timeout=5.0)
             self._thread = None
-        logger.info("Scheduler stopped (ticks: %d, errors: %d)",
-                    self._tick_count, self._error_count)
+        logger.info("Scheduler stopped", extra={
+            "tick_count": self._tick_count,
+            "error_count": self._error_count,
+            "action": "scheduler_stop"
+        })
 
     def _scheduler_loop(self):
         """Main scheduler loop."""
         # Wait for startup delay to let service stabilize
         if self._startup_delay > 0:
-            logger.debug("Scheduler waiting %.1fs for startup...", self._startup_delay)
+            logger.debug("Scheduler waiting for startup", extra={"delay_seconds": self._startup_delay})
             if self._stop_event.wait(self._startup_delay):
                 return  # Stop requested during startup delay
 
         # Push config to mesh on startup
         self._startup_config_push()
 
-        logger.info("Scheduler active, first tick in %.1fs", self._interval)
+        logger.info("Scheduler active", extra={"first_tick_in_seconds": self._interval})
 
         while self._running:
             # Wait for interval (or stop signal)
@@ -465,7 +504,10 @@ class Scheduler:
                 self._last_tick = time.time()
             except Exception as e:
                 self._error_count += 1
-                logger.error("Scheduler tick error (%d total): %s", self._error_count, e)
+                logger.error("Scheduler tick error", extra={
+                    "error_count": self._error_count,
+                    "error": str(e)
+                })
                 # Continue running - don't let errors kill the scheduler
 
     def _tick(self):
@@ -480,7 +522,7 @@ class Scheduler:
         - Wind proactive messaging
         - Due reminders
         """
-        logger.debug("Scheduler tick #%d", self._tick_count + 1)
+        logger.debug("Scheduler tick", extra={"tick_number": self._tick_count + 1})
 
         # Auto-ingestion check every tick (cheap if no files)
         self._check_ingestion()
@@ -517,14 +559,17 @@ class Scheduler:
         try:
             changed = _check_fingerprints()
             if changed:
-                logger.critical("SECURITY: %d config file(s) tampered - SHUTTING DOWN", len(changed))
+                logger.critical("SECURITY: config files tampered - SHUTTING DOWN", extra={
+                    "tampered_count": len(changed),
+                    "action": "tamper_detected"
+                })
                 for path in changed:
-                    logger.critical("SECURITY: Tampered file: %s", path)
+                    logger.critical("SECURITY: Tampered file", extra={"path": path})
                 # Give logs time to flush
                 time.sleep(1)
                 os._exit(78)  # EX_CONFIG - configuration error
         except Exception as e:
-            logger.warning("Scheduler: tamper check failed: %s", e)
+            logger.warning("Scheduler: tamper check failed", extra={"error": str(e)})
 
     def _cleanup_nonces(self):
         """Cleanup expired nonces from the replay protection store."""
@@ -532,9 +577,9 @@ class Scheduler:
             try:
                 deleted = nonce_store.cleanup_expired()
                 if deleted > 0:
-                    logger.info("Scheduler: cleaned up %d expired nonces", deleted)
+                    logger.info("Scheduler: cleaned up expired nonces", extra={"count": deleted})
             except Exception as e:
-                logger.warning("Scheduler: nonce cleanup failed: %s", e)
+                logger.warning("Scheduler: nonce cleanup failed", extra={"error": str(e)})
 
     def _check_fts_integrity(self):
         """Periodic check of FTS index integrity."""
@@ -547,23 +592,27 @@ class Scheduler:
             if issues:
                 for name, status in issues:
                     if "error" in status:
-                        logger.warning("FTS index %s: error - %s", name, status["error"])
+                        logger.warning("FTS index error", extra={
+                            "index": name,
+                            "error": status["error"]
+                        })
                     else:
-                        logger.warning(
-                            "FTS index %s out of sync: FTS=%d, main=%d",
-                            name, status["fts_count"], status["main_count"]
-                        )
+                        logger.warning("FTS index out of sync", extra={
+                            "index": name,
+                            "fts_count": status["fts_count"],
+                            "main_count": status["main_count"]
+                        })
             else:
                 logger.debug("Scheduler: FTS integrity check passed")
         except Exception as e:
-            logger.warning("Scheduler: FTS integrity check failed: %s", e)
+            logger.warning("Scheduler: FTS integrity check failed", extra={"error": str(e)})
 
     def _check_ingestion(self):
         """Check for pending knowledge files to ingest."""
         try:
             run_auto_ingestion(memory)
         except Exception as e:
-            logger.warning("Scheduler: auto-ingestion failed: %s", e)
+            logger.warning("Scheduler: auto-ingestion failed", extra={"error": str(e)})
 
     def _check_config_sync(self):
         """Check if config needs to be pushed to mesh."""
@@ -572,35 +621,35 @@ class Scheduler:
         try:
             # First check: did local config change?
             if config_push_client.needs_push():
-                logger.info("Scheduler: local config changed, pushing to mesh")
+                logger.info("Scheduler: local config changed, pushing to mesh", extra={"action": "config_push"})
                 success, result = config_push_client.push_config()
                 if success:
-                    logger.info("Scheduler: config push successful, hash=%s", result[:16])
+                    logger.info("Scheduler: config push successful", extra={"config_hash": result[:16]})
                 else:
-                    logger.warning("Scheduler: config push failed: %s", result)
+                    logger.warning("Scheduler: config push failed", extra={"error": result})
                 return  # Done for this tick
 
             # Second check: does mesh have what we expect?
             in_sync, reason = config_push_client.check_mesh_sync()
             if not in_sync:
                 if reason == "mesh_unreachable":
-                    logger.debug("Scheduler: mesh unreachable, will retry next tick")
+                    logger.debug("Scheduler: mesh unreachable, will retry next tick", extra={"reason": reason})
                 elif reason == "mesh_empty":
-                    logger.info("Scheduler: mesh has no config (restart?), pushing...")
+                    logger.info("Scheduler: mesh has no config (restart?), pushing...", extra={"reason": reason})
                     success, result = config_push_client.push_config(force=True)
                     if success:
-                        logger.info("Scheduler: config push successful, hash=%s", result[:16])
+                        logger.info("Scheduler: config push successful", extra={"config_hash": result[:16]})
                     else:
-                        logger.warning("Scheduler: config push failed: %s", result)
+                        logger.warning("Scheduler: config push failed", extra={"error": result})
                 elif reason == "mesh_drift":
-                    logger.warning("Scheduler: mesh config drift detected, pushing fresh config...")
+                    logger.warning("Scheduler: mesh config drift detected, pushing fresh config...", extra={"reason": reason})
                     success, result = config_push_client.push_config(force=True)
                     if success:
-                        logger.info("Scheduler: config push successful, hash=%s", result[:16])
+                        logger.info("Scheduler: config push successful", extra={"config_hash": result[:16]})
                     else:
-                        logger.warning("Scheduler: config push failed: %s", result)
+                        logger.warning("Scheduler: config push failed", extra={"error": result})
         except Exception as e:
-            logger.warning("Scheduler: config sync check failed: %s", e)
+            logger.warning("Scheduler: config sync check failed", extra={"error": str(e)})
 
     def _check_hmac_rotation(self):
         """Check if HMAC rotation is due (weekly)."""
@@ -608,14 +657,14 @@ class Scheduler:
             return
         try:
             if hmac_rotator.should_rotate():
-                logger.info("Scheduler: HMAC rotation due, rotating...")
+                logger.info("Scheduler: HMAC rotation due, rotating...", extra={"action": "hmac_rotation"})
                 success, result = hmac_rotator.rotate(use_grace_period=True)
                 if success:
-                    logger.info("Scheduler: HMAC rotation successful")
+                    logger.info("Scheduler: HMAC rotation successful", extra={"action": "hmac_rotation", "status": "success"})
                 else:
-                    logger.warning("Scheduler: HMAC rotation failed: %s", result)
+                    logger.warning("Scheduler: HMAC rotation failed", extra={"action": "hmac_rotation", "error": result})
         except Exception as e:
-            logger.warning("Scheduler: HMAC rotation check failed: %s", e)
+            logger.warning("Scheduler: HMAC rotation check failed", extra={"error": str(e)})
 
     def _refresh_membership(self):
         """Refresh group membership cache (only if feature is active)."""
@@ -624,7 +673,7 @@ class Scheduler:
             if membership_cache.refresh():
                 logger.debug("Scheduler: membership cache refreshed")
         except Exception as e:
-            logger.warning("Scheduler: membership refresh failed: %s", e)
+            logger.warning("Scheduler: membership refresh failed", extra={"error": str(e)})
 
     def _check_wind_impulse(self):
         """Check Wind proactive messaging impulse for all eligible conversations."""
@@ -648,7 +697,7 @@ class Scheduler:
                 )
 
                 if not message_text:
-                    logger.warning("Wind: failed to generate message for %s", conv_id)
+                    logger.warning("Wind: failed to generate message", extra={"conversation_id": conv_id})
                     continue
 
                 # Determine conversation type (DMs start with +, groups are base64)
@@ -661,7 +710,7 @@ class Scheduler:
                 # For DMs, recipient is the conversation_id (phone number)
                 # For groups, we'd need to handle differently (not supported yet)
                 if is_group:
-                    logger.warning("Wind: group proactive sends not yet supported")
+                    logger.warning("Wind: group proactive sends not yet supported", extra={"conversation_id": conv_id})
                     continue
 
                 recipient_id = "owner"  # Proactive sends go to allowlisted users
@@ -696,10 +745,10 @@ class Scheduler:
                         conversation_id=conv_id,
                     )
                 else:
-                    logger.error("Wind: failed to send to %s", conv_id)
+                    logger.error("Wind: failed to send", extra={"conversation_id": conv_id})
 
         except Exception as e:
-            logger.warning("Scheduler: Wind impulse check failed: %s", e)
+            logger.warning("Scheduler: Wind impulse check failed", extra={"error": str(e)})
 
     def _check_reminders(self):
         """Check for due reminders and send them."""
@@ -716,7 +765,7 @@ class Scheduler:
                 )
 
                 if not message_text:
-                    logger.warning("Reminder: failed to generate message for topic #%d", topic.id)
+                    logger.warning("Reminder: failed to generate message", extra={"topic_id": topic.id})
                     # Mark as mentioned anyway to avoid retrying forever
                     wind_orchestrator.topic_manager.mark_mentioned(topic.id)
                     continue
@@ -727,7 +776,7 @@ class Scheduler:
                 conversation = InboundConversation(type=conv_type, id=topic.conversation_id)
 
                 if is_group:
-                    logger.warning("Reminder: group sends not yet supported, skipping topic #%d", topic.id)
+                    logger.warning("Reminder: group sends not yet supported", extra={"topic_id": topic.id})
                     wind_orchestrator.topic_manager.mark_mentioned(topic.id)
                     continue
 
@@ -755,28 +804,33 @@ class Scheduler:
                         conversation_id=topic.conversation_id,
                     )
 
-                    logger.info("Reminder sent: topic #%d '%s' to %s",
-                               topic.id, topic.title[:30], topic.conversation_id)
+                    logger.info("Reminder sent", extra={
+                        "topic_id": topic.id,
+                        "title": topic.title[:30],
+                        "conversation_id": topic.conversation_id
+                    })
                 else:
-                    logger.error("Reminder: failed to send topic #%d to %s",
-                                topic.id, topic.conversation_id)
+                    logger.error("Reminder: failed to send", extra={
+                        "topic_id": topic.id,
+                        "conversation_id": topic.conversation_id
+                    })
 
         except Exception as e:
-            logger.warning("Scheduler: reminder check failed: %s", e)
+            logger.warning("Scheduler: reminder check failed", extra={"error": str(e)})
 
     def _startup_config_push(self):
         """Push config to mesh on startup to ensure sync."""
         if not config_push_client:
             return
         try:
-            logger.info("Startup: pushing config to mesh...")
+            logger.info("Startup: pushing config to mesh...", extra={"action": "startup_config_push"})
             success, result = config_push_client.push_config(force=True)
             if success:
-                logger.info("Startup: config push successful, hash=%s", result[:16])
+                logger.info("Startup: config push successful", extra={"config_hash": result[:16]})
             else:
-                logger.warning("Startup: config push failed: %s", result)
+                logger.warning("Startup: config push failed", extra={"error": result})
         except Exception as e:
-            logger.warning("Startup: config push failed: %s", e)
+            logger.warning("Startup: config push failed", extra={"error": str(e)})
 
     def get_status(self) -> dict:
         """Get scheduler status for health endpoint."""
@@ -838,11 +892,13 @@ def _get_valid_hmac_secrets() -> list[bytes]:
 
 # Initialize Ollama client
 LLM_TIMEOUT = float(os.getenv("JOI_LLM_TIMEOUT", "180"))
+LLM_KEEP_ALIVE = os.getenv("JOI_LLM_KEEP_ALIVE", "30m")
 llm = OllamaClient(
     base_url=settings.ollama_url,
     model=settings.ollama_model,
     timeout=LLM_TIMEOUT,
     num_ctx=settings.ollama_num_ctx,
+    keep_alive=LLM_KEEP_ALIVE,
 )
 
 # Initialize memory store
@@ -963,14 +1019,14 @@ class GroupMembershipCache:
         try:
             minutes = int(value)
         except ValueError:
-            logger.warning("Invalid JOI_MEMBERSHIP_REFRESH_MINUTES '%s', using default 15", value)
+            logger.warning("Invalid JOI_MEMBERSHIP_REFRESH_MINUTES, using default 15", extra={"value": value})
             return 15
         # Bounds: 1 minute (aggressive) to 1440 minutes (24 hours)
         if minutes < 1:
-            logger.warning("JOI_MEMBERSHIP_REFRESH_MINUTES %d too low, using minimum 1", minutes)
+            logger.warning("JOI_MEMBERSHIP_REFRESH_MINUTES too low, using minimum 1", extra={"value": minutes})
             return 1
         if minutes > 1440:
-            logger.warning("JOI_MEMBERSHIP_REFRESH_MINUTES %d too high, using maximum 1440", minutes)
+            logger.warning("JOI_MEMBERSHIP_REFRESH_MINUTES too high, using maximum 1440", extra={"value": minutes})
             return 1440
         return minutes
 
@@ -1002,13 +1058,13 @@ class GroupMembershipCache:
                 # Only update if: new data has groups, OR we have no cache yet
                 if data or not self._cache:
                     self._cache = data
-                    logger.debug("Refreshed group membership: %d groups", len(data))
+                    logger.debug("Refreshed group membership", extra={"group_count": len(data)})
                 else:
-                    logger.warning("Ignoring empty membership response (keeping %d cached groups)", len(self._cache))
+                    logger.warning("Ignoring empty membership response", extra={"cached_groups": len(self._cache)})
                 self._last_refresh = time.time()
             return True
         except Exception as e:
-            logger.warning("Failed to refresh group membership: %s", e)
+            logger.warning("Failed to refresh group membership", extra={"error": str(e)})
             return False
 
     def refresh(self) -> bool:
@@ -1057,7 +1113,7 @@ class GroupMembershipCache:
                     return self._find_user_groups_unlocked(user_id)
                 else:
                     # No cache and refresh in progress - fail closed
-                    logger.warning("No cache available, refresh in progress - denying access (fail-closed)")
+                    logger.warning("No cache available, refresh in progress - denying access (fail-closed)", extra={"action": "access_denied"})
                     return []
 
             # We need to refresh - mark ourselves as refreshing
@@ -1077,11 +1133,11 @@ class GroupMembershipCache:
 
             # Refresh failed
             if has_cache:
-                logger.warning("Using stale membership cache (refresh failed)")
+                logger.warning("Using stale membership cache (refresh failed)", extra={"action": "cache_stale"})
                 return self._find_user_groups_unlocked(user_id)
             else:
                 # FAIL-CLOSED: No cache and refresh failed - deny access
-                logger.warning("No membership cache and refresh failed - denying group access (fail-closed)")
+                logger.warning("No membership cache and refresh failed - denying group access (fail-closed)", extra={"action": "access_denied"})
                 return []
 
     def _find_user_groups_unlocked(self, user_id: str) -> List[str]:
@@ -1194,28 +1250,30 @@ class ConfigPushClient:
 
                     # Verify hash match
                     if mesh_hash and mesh_hash != current_hash:
-                        logger.warning(
-                            "Config hash mismatch: local=%s mesh=%s",
-                            current_hash[:16], mesh_hash[:16],
-                        )
+                        logger.warning("Config hash mismatch", extra={
+                            "local_hash": current_hash[:16],
+                            "mesh_hash": mesh_hash[:16]
+                        })
 
                     self._last_push_hash = mesh_hash
                     self._last_push_time = time.time()
-                    logger.info(
-                        "Config push successful, hash=%s",
-                        mesh_hash[:16] if mesh_hash else "none",
-                    )
+                    logger.info("Config push successful", extra={
+                        "config_hash": mesh_hash[:16] if mesh_hash else "none"
+                    })
                     return True, mesh_hash
 
                 error = data.get("error", "unknown")
-                logger.error("Mesh returned error on config push: %s", error)
+                logger.error("Mesh returned error on config push", extra={"error": error})
                 return False, error
 
             except httpx.HTTPStatusError as exc:
-                logger.error("Config push HTTP error: %s", exc)
+                logger.error("Config push HTTP error", extra={
+                    "status_code": exc.response.status_code,
+                    "error": str(exc)
+                })
                 return False, f"http_error_{exc.response.status_code}"
             except Exception as exc:
-                logger.error("Config push failed: %s", exc)
+                logger.error("Config push failed", extra={"error": str(exc)})
                 return False, str(exc)
 
     def verify_sync(self, mesh_hash: str) -> bool:
@@ -1246,7 +1304,7 @@ class ConfigPushClient:
             return False, None
 
         except Exception as exc:
-            logger.debug("Failed to get mesh status: %s", exc)
+            logger.debug("Failed to get mesh status", extra={"error": str(exc)})
             return False, None
 
     def check_mesh_sync(self) -> tuple[bool, str]:
@@ -1269,11 +1327,10 @@ class ConfigPushClient:
             return False, "mesh_empty"
 
         if mesh_hash != self._last_push_hash:
-            logger.info(
-                "Mesh config drift: expected=%s actual=%s",
-                self._last_push_hash[:16] if self._last_push_hash else "none",
-                mesh_hash[:16] if mesh_hash else "none",
-            )
+            logger.info("Mesh config drift", extra={
+                "expected_hash": self._last_push_hash[:16] if self._last_push_hash else "none",
+                "actual_hash": mesh_hash[:16] if mesh_hash else "none"
+            })
             return False, "mesh_drift"
 
         return True, "in_sync"
@@ -1302,11 +1359,10 @@ if HMAC_ENABLED:
     # Check HMAC sync on startup to detect key mismatches early
     sync_ok, sync_msg = hmac_rotator.check_mesh_sync()
     if not sync_ok:
-        logger.warning(
-            "HMAC sync check failed on startup: %s. "
-            "Mesh may reject authenticated requests until keys are aligned.",
-            sync_msg
-        )
+        logger.warning("HMAC sync check failed on startup", extra={
+            "reason": sync_msg,
+            "action": "hmac_sync_warning"
+        })
     config_push_client = ConfigPushClient(
         mesh_url=settings.mesh_url,
         policy=policy_manager,
@@ -1434,7 +1490,7 @@ Return ONLY valid JSON, nothing else:"""
     try:
         response = llm.generate(prompt=prompt)
         if response.error:
-            logger.debug("LLM error in remember detection: %s", response.error)
+            logger.debug("LLM error in remember detection", extra={"error": response.error})
             return None
 
         # Parse JSON
@@ -1471,17 +1527,27 @@ Return ONLY valid JSON, nothing else:"""
                 )
                 important_marker = " [important]" if is_important else ""
                 if policy_manager.is_privacy_mode():
-                    logger.info("Saved stated fact for %s: %s.%s%s [privacy mode]",
-                               conversation_id[:8] + "..." if conversation_id else "global",
-                               result["category"], fact_key, important_marker)
+                    logger.info("Saved stated fact [privacy mode]", extra={
+                        "conversation_id": conversation_id[:8] + "..." if conversation_id else "global",
+                        "category": result["category"],
+                        "key": fact_key,
+                        "important": is_important,
+                        "action": "fact_save"
+                    })
                 else:
-                    logger.info("Saved stated fact for %s: %s.%s = %s%s",
-                               conversation_id or "global", result["category"], fact_key, fact_value, important_marker)
+                    logger.info("Saved stated fact", extra={
+                        "conversation_id": conversation_id or "global",
+                        "category": result["category"],
+                        "key": fact_key,
+                        "value": fact_value,
+                        "important": is_important,
+                        "action": "fact_save"
+                    })
                 return fact_value
     except json.JSONDecodeError as e:
-        logger.debug("Failed to parse remember response: %s", e)
+        logger.debug("Failed to parse remember response", extra={"error": str(e)})
     except Exception as e:
-        logger.warning("Failed to detect/extract fact: %s", e)
+        logger.warning("Failed to detect/extract fact", extra={"error": str(e)})
 
     return None
 
@@ -1582,7 +1648,10 @@ async def hmac_verification_middleware(request: Request, call_next):
 
     # Fail-closed: reject if HMAC not configured
     if not HMAC_ENABLED:
-        logger.error("HMAC auth failed: HMAC not configured (fail-closed)")
+        logger.error("HMAC auth failed: not configured (fail-closed)", extra={
+            "action": "auth_failed",
+            "reason": "hmac_not_configured"
+        })
         return JSONResponse(
             status_code=503,
             content={"status": "error", "error": {"code": "hmac_not_configured", "message": "HMAC authentication not configured"}}
@@ -1595,7 +1664,10 @@ async def hmac_verification_middleware(request: Request, call_next):
 
     # Check all required headers present
     if not all([nonce, timestamp_str, signature]):
-        logger.warning("HMAC auth failed: missing headers")
+        logger.warning("HMAC auth failed: missing headers", extra={
+            "action": "auth_failed",
+            "reason": "missing_headers"
+        })
         return JSONResponse(
             status_code=401,
             content={"status": "error", "error": {"code": "hmac_missing_headers", "message": "Missing authentication headers"}}
@@ -1605,7 +1677,10 @@ async def hmac_verification_middleware(request: Request, call_next):
     try:
         timestamp = int(timestamp_str)
     except ValueError:
-        logger.warning("HMAC auth failed: invalid timestamp format")
+        logger.warning("HMAC auth failed: invalid timestamp format", extra={
+            "action": "auth_failed",
+            "reason": "invalid_timestamp"
+        })
         return JSONResponse(
             status_code=401,
             content={"status": "error", "error": {"code": "hmac_invalid_timestamp", "message": "Invalid timestamp format"}}
@@ -1614,7 +1689,10 @@ async def hmac_verification_middleware(request: Request, call_next):
     # Verify timestamp freshness
     ts_valid, ts_error = verify_timestamp(timestamp, HMAC_TIMESTAMP_TOLERANCE_MS)
     if not ts_valid:
-        logger.warning("HMAC auth failed: %s", ts_error)
+        logger.warning("HMAC auth failed: timestamp", extra={
+            "action": "auth_failed",
+            "reason": ts_error
+        })
         return JSONResponse(
             status_code=401,
             content={"status": "error", "error": {"code": ts_error, "message": "Request timestamp out of tolerance"}}
@@ -1623,7 +1701,11 @@ async def hmac_verification_middleware(request: Request, call_next):
     # Verify nonce not replayed
     nonce_valid, nonce_error = nonce_store.check_and_store(nonce, source="mesh")
     if not nonce_valid:
-        logger.warning("HMAC auth failed: %s nonce=%s", nonce_error, nonce[:8])
+        logger.warning("HMAC auth failed: nonce", extra={
+            "action": "auth_failed",
+            "reason": nonce_error,
+            "nonce": nonce[:8]
+        })
         return JSONResponse(
             status_code=401,
             content={"status": "error", "error": {"code": nonce_error, "message": "Nonce already used"}}
@@ -1641,13 +1723,16 @@ async def hmac_verification_middleware(request: Request, call_next):
             break
 
     if not signature_valid:
-        logger.warning("HMAC auth failed: invalid signature")
+        logger.warning("HMAC auth failed: invalid signature", extra={
+            "action": "auth_failed",
+            "reason": "invalid_signature"
+        })
         return JSONResponse(
             status_code=401,
             content={"status": "error", "error": {"code": "hmac_invalid_signature", "message": "Invalid HMAC signature"}}
         )
 
-    logger.debug("HMAC auth passed for %s", request.url.path)
+    logger.debug("HMAC auth passed", extra={"path": str(request.url.path)})
     return await call_next(request)
 
 
@@ -1735,8 +1820,11 @@ def _init_fingerprints():
             return f"{name}:{hash}"
 
         summary = " | ".join(format_entry(p, h) for p, h in sorted(_startup_fingerprints.items()))
-        privacy_tag = " [privacy]" if privacy_mode else ""
-        logger.info("Runtime fingerprint initialized%s: %s", privacy_tag, summary)
+        logger.info("Runtime fingerprint initialized", extra={
+            "files": summary,
+            "privacy_mode": privacy_mode,
+            "action": "fingerprint_init"
+        })
 
 
 def _check_fingerprints() -> List[str]:
@@ -1763,13 +1851,21 @@ def _check_fingerprints() -> List[str]:
         current_hash = current.get(path, "deleted")
         if current_hash != original_hash:
             changed.append(path)
-            logger.warning("TAMPER DETECTED: %s changed (%s -> %s)", display_path(path), original_hash, current_hash)
+            logger.warning("TAMPER DETECTED: file changed", extra={
+                "file": display_path(path),
+                "original_hash": original_hash,
+                "current_hash": current_hash,
+                "action": "tamper_detect"
+            })
 
     # Check for new files
     for path in current:
         if path not in _startup_fingerprints:
             changed.append(path)
-            logger.warning("TAMPER DETECTED: new file %s", display_path(path))
+            logger.warning("TAMPER DETECTED: new file", extra={
+                "file": display_path(path),
+                "action": "tamper_detect"
+            })
 
     return changed
 
@@ -1782,13 +1878,18 @@ def startup_event():
     message_queue.start()
     if scheduler:
         scheduler.start()
-    hmac_status = "HMAC enabled" if HMAC_ENABLED else "HMAC DISABLED - set JOI_HMAC_SECRET"
-    scheduler_status = f"scheduler enabled (interval: {SCHEDULER_INTERVAL}s)" if scheduler else "scheduler disabled"
-    time_status = f"time awareness enabled (tz: {TIME_AWARENESS_TIMEZONE})" if TIME_AWARENESS_ENABLED else "time awareness disabled"
-    privacy_status = "privacy ON" if policy_manager.is_privacy_mode() else "privacy off"
     wind_config = _get_wind_config()
-    wind_status = f"wind {'shadow' if wind_config.shadow_mode else 'live'}" if wind_config.enabled else "wind disabled"
-    logger.info("Joi API started: %s, %s, %s, %s, %s", hmac_status, scheduler_status, time_status, privacy_status, wind_status)
+    logger.info("Joi API started", extra={
+        "hmac_enabled": HMAC_ENABLED,
+        "scheduler_enabled": scheduler is not None,
+        "scheduler_interval": SCHEDULER_INTERVAL if scheduler else None,
+        "time_awareness": TIME_AWARENESS_ENABLED,
+        "timezone": TIME_AWARENESS_TIMEZONE if TIME_AWARENESS_ENABLED else None,
+        "privacy_mode": policy_manager.is_privacy_mode(),
+        "wind_enabled": wind_config.enabled,
+        "wind_shadow": wind_config.shadow_mode if wind_config.enabled else None,
+        "action": "startup"
+    })
     _init_fingerprints()
 
 
@@ -1987,7 +2088,7 @@ def admin_set_privacy_mode(request: Request):
     if config_push_client:
         success, result = config_push_client.push_config(force=True)
         if not success:
-            logger.warning("Failed to push privacy mode change to mesh: %s", result)
+            logger.warning("Failed to push privacy mode change to mesh", extra={"error": result})
 
     return {
         "status": "ok",
@@ -2016,9 +2117,9 @@ def admin_set_kill_switch(request: Request):
     if config_push_client:
         success, result = config_push_client.push_config(force=True)
         if success:
-            logger.info("Kill switch %s pushed to mesh", "activated" if active else "deactivated")
+            logger.info("Kill switch pushed to mesh", extra={"active": active, "action": "kill_switch"})
         else:
-            logger.error("CRITICAL: Failed to push kill switch to mesh: %s", result)
+            logger.error("CRITICAL: Failed to push kill switch to mesh", extra={"error": result, "active": active})
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "error": f"push_failed: {result}", "kill_switch": active},
@@ -2118,7 +2219,7 @@ def admin_routing_toggle(request: Request):
     if config_push_client:
         success, result = config_push_client.push_config(force=True)
         if not success:
-            logger.warning("Failed to push routing change to mesh: %s", result)
+            logger.warning("Failed to push routing change to mesh", extra={"error": result})
 
     return {
         "status": "ok",
@@ -2218,31 +2319,25 @@ def ingest_document(req: DocumentIngestRequest):
     """
     # Rate limit check
     if not _check_ingest_rate_limit(req.scope):
-        logger.warning("Document ingestion rate limit exceeded for scope: %s", req.scope)
+        logger.warning("Document ingestion rate limit exceeded", extra={"scope": req.scope})
         return DocumentIngestResponse(
             status="error",
             error="rate_limit_exceeded",
         )
     # Log with privacy mode redaction
-    if policy_manager.is_privacy_mode():
-        logger.info(
-            "Received document: filename=[redacted] content_type=%s scope=%s sender=%s [privacy]",
-            req.content_type,
-            _redact_filename_pii(req.scope),
-            _redact_filename_pii(req.sender_id),
-        )
-    else:
-        logger.info(
-            "Received document: filename=%s content_type=%s scope=%s sender=%s",
-            req.filename,
-            req.content_type,
-            req.scope,
-            req.sender_id,
-        )
+    privacy_mode = policy_manager.is_privacy_mode()
+    logger.info("Received document", extra={
+        "filename": "[redacted]" if privacy_mode else req.filename,
+        "content_type": req.content_type,
+        "scope": _redact_filename_pii(req.scope) if privacy_mode else req.scope,
+        "sender_id": _redact_filename_pii(req.sender_id) if privacy_mode else req.sender_id,
+        "privacy_mode": privacy_mode,
+        "action": "document_receive"
+    })
 
     # Validate filename (basic security check)
     if "/" in req.filename or "\\" in req.filename or ".." in req.filename:
-        logger.warning("Invalid filename rejected: %s", req.filename)
+        logger.warning("Invalid filename rejected", extra={"filename": req.filename})
         return DocumentIngestResponse(
             status="error",
             error="invalid_filename",
@@ -2251,7 +2346,7 @@ def ingest_document(req: DocumentIngestRequest):
     # Sanitize scope for use as directory name (consistent with RAG lookup)
     safe_scope = sanitize_scope(req.scope)
     if not safe_scope or safe_scope.startswith(".") or ".." in safe_scope:
-        logger.warning("Invalid scope rejected: %s", req.scope)
+        logger.warning("Invalid scope rejected", extra={"scope": req.scope})
         return DocumentIngestResponse(
             status="error",
             error="invalid_scope",
@@ -2261,7 +2356,7 @@ def ingest_document(req: DocumentIngestRequest):
     try:
         content = base64.b64decode(req.content_base64)
     except Exception as e:
-        logger.warning("Failed to decode base64 content: %s", e)
+        logger.warning("Failed to decode base64 content", extra={"error": str(e)})
         return DocumentIngestResponse(
             status="error",
             error="invalid_base64",
@@ -2272,7 +2367,7 @@ def ingest_document(req: DocumentIngestRequest):
     try:
         scope_dir.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        logger.error("Failed to create scope directory %s: %s", scope_dir, e)
+        logger.error("Failed to create scope directory", extra={"path": str(scope_dir), "error": str(e)})
         return DocumentIngestResponse(
             status="error",
             error="directory_error",
@@ -2288,13 +2383,16 @@ def ingest_document(req: DocumentIngestRequest):
     try:
         temp_path.write_bytes(content)
         temp_path.rename(filepath)  # Atomic on POSIX
-        if policy_manager.is_privacy_mode():
-            logger.info("Saved document (%d bytes) [privacy]", len(content))
-        else:
-            logger.info("Saved document to %s (%d bytes)", filepath, len(content))
+        privacy_mode = policy_manager.is_privacy_mode()
+        logger.info("Saved document", extra={
+            "path": "[redacted]" if privacy_mode else str(filepath),
+            "size_bytes": len(content),
+            "privacy_mode": privacy_mode,
+            "action": "document_save"
+        })
     except Exception as e:
         # Error logs always show path for debugging
-        logger.error("Failed to save document %s: %s", filepath, e)
+        logger.error("Failed to save document", extra={"path": str(filepath), "error": str(e)})
         return DocumentIngestResponse(
             status="error",
             error="save_failed",
@@ -2324,30 +2422,22 @@ def receive_message(msg: InboundMessage):
     is_owner = msg.is_owner
 
     # Privacy-aware logging
-    if policy_manager.is_privacy_mode():
-        logger.info(
-            "Received message_id=%s from=[redacted] type=%s convo=%s store_only=%s is_owner=%s",
-            msg.message_id,
-            msg.content.type,
-            msg.conversation.type,
-            msg.store_only,
-            is_owner,
-        )
-    else:
-        logger.info(
-            "Received message_id=%s from=%s type=%s convo=%s store_only=%s is_owner=%s",
-            msg.message_id,
-            msg.sender.transport_id,
-            msg.content.type,
-            msg.conversation.type,
-            msg.store_only,
-            is_owner,
-        )
+    privacy_mode = policy_manager.is_privacy_mode()
+    logger.info("Received message", extra={
+        "message_id": msg.message_id,
+        "sender": "[redacted]" if privacy_mode else msg.sender.transport_id,
+        "type": msg.content.type,
+        "conversation_type": msg.conversation.type,
+        "store_only": msg.store_only,
+        "is_owner": is_owner,
+        "privacy_mode": privacy_mode,
+        "action": "message_receive"
+    })
 
     # Handle reactions - store and respond briefly
     if msg.content.type == "reaction":
         emoji = msg.content.reaction or "?"
-        logger.info("Received reaction %s from %s", emoji, msg.sender.transport_id)
+        logger.info("Received reaction", extra={"emoji": emoji, "sender": msg.sender.transport_id, "action": "reaction_receive"})
 
         reaction_text = f"[reacted with {emoji}]"
         memory.store_message(
@@ -2393,17 +2483,17 @@ def receive_message(msg: InboundMessage):
                     timeout=60.0,  # Shorter timeout for reactions
                 )
             except TimeoutError:
-                logger.warning("Reaction response timed out for %s", msg.message_id)
+                logger.warning("Reaction response timed out", extra={"message_id": msg.message_id})
                 return InboundResponse(status="ok", message_id=msg.message_id)
             except Exception as e:
-                logger.error("Reaction response failed: %s", e)
+                logger.error("Reaction response failed", extra={"error": str(e)})
                 return InboundResponse(status="ok", message_id=msg.message_id)
 
         return InboundResponse(status="ok", message_id=msg.message_id)
 
     # Only handle text messages beyond this point
     if msg.content.type != "text" or not msg.content.text:
-        logger.info("Skipping unsupported message type=%s", msg.content.type)
+        logger.info("Skipping unsupported message type", extra={"type": msg.content.type})
         return InboundResponse(status="ok", message_id=msg.message_id)
 
     user_text = sanitize_input(msg.content.text.strip())
@@ -2439,25 +2529,31 @@ def receive_message(msg: InboundMessage):
 
     if msg.store_only:
         # Non-allowed sender in group - store only, no response
-        logger.info("Message stored for context only (store_only=True)")
+        logger.info("Message stored for context only", extra={"store_only": True})
         should_respond = False
     elif msg.conversation.type == "group":
         # Group message from allowed sender - only respond if bot is addressed
         # Check Signal @mention (bot_mentioned) or text-based @name
         bot_name = policy_manager.get_bot_name()
-        logger.debug("Group message: bot_mentioned=%s, group_names=%s", msg.bot_mentioned, msg.group_names)
+        logger.debug("Group message", extra={"bot_mentioned": msg.bot_mentioned, "group_names": msg.group_names})
         if msg.bot_mentioned:
-            logger.info("%s @mentioned in group message (Signal mention), will respond", bot_name)
+            logger.info("Bot @mentioned in group message (Signal mention), will respond", extra={
+                "bot_name": bot_name,
+                "action": "mention_detect"
+            })
             should_respond = True
         else:
             # Fallback: check text for @name pattern
             names_to_check = msg.group_names if msg.group_names else None
-            logger.debug("Checking address: names=%s, text_start='%s'", names_to_check, user_text[:50] if user_text else "")
+            logger.debug("Checking address", extra={"names": names_to_check, "text_start": user_text[:50] if user_text else ""})
             if _is_addressing_joi(user_text, names=names_to_check):
-                logger.info("%s addressed in group message (text pattern), will respond", bot_name)
+                logger.info("Bot addressed in group message (text pattern), will respond", extra={
+                    "bot_name": bot_name,
+                    "action": "address_detect"
+                })
                 should_respond = True
             else:
-                logger.info("%s not addressed in group message, storing only", bot_name)
+                logger.info("Bot not addressed in group message, storing only", extra={"bot_name": bot_name})
                 should_respond = False
 
     if not should_respond:
@@ -2542,17 +2638,21 @@ def receive_message(msg: InboundMessage):
         # and excessive "tagging" behavior. Memory is now invisible to the response generation.
 
         # Generate response from LLM with conversation context
-        model_info = f"model={custom_model}" if custom_model else "model=default"
         model_source = get_model_source(msg.conversation.type, msg.conversation.id, msg.sender.transport_id)
-        modelfile_info = f"modelfile={model_source}"
         prompt_source = get_prompt_source(msg.conversation.type, msg.conversation.id, msg.sender.transport_id)
-        prompt_info = f"prompt={prompt_source}"
-        context_info = f"context={context_size}" if custom_context else f"context={context_size}(default)"
-        logger.info("Generating LLM response with %d messages (%s, %s, %s, %s)", len(chat_messages), model_info, modelfile_info, prompt_info, context_info)
+        logger.info("Generating LLM response", extra={
+            "message_count": len(chat_messages),
+            "model": custom_model or "default",
+            "modelfile": model_source,
+            "prompt": prompt_source,
+            "context_size": context_size,
+            "context_source": "custom" if custom_context else "default",
+            "action": "llm_generate"
+        })
         llm_response = llm.chat(messages=chat_messages, system=enriched_prompt, model=custom_model)
 
         if llm_response.error:
-            logger.error("LLM error: %s", llm_response.error)
+            logger.error("LLM error", extra={"error": llm_response.error})
             return InboundResponse(
                 status="error",
                 message_id=msg.message_id,
@@ -2574,11 +2674,13 @@ def receive_message(msg: InboundMessage):
 
         # Log response (redact content in privacy mode)
         response_len = len(response_text)
-        if policy_manager.is_privacy_mode():
-            logger.info("LLM response generated (%d chars) [privacy mode]", response_len)
-        else:
-            clean_response = response_text.replace("\r", "").replace("\n", " ")[:50]
-            logger.info("LLM response: %s... (%d chars)", clean_response, response_len)
+        privacy_mode = policy_manager.is_privacy_mode()
+        logger.info("LLM response generated", extra={
+            "response_length": response_len,
+            "preview": None if privacy_mode else response_text.replace("\r", "").replace("\n", " ")[:50],
+            "privacy_mode": privacy_mode,
+            "action": "llm_response"
+        })
 
         # Send response back via mesh
         outbound_message_id = str(uuid.uuid4())
@@ -2624,14 +2726,14 @@ def receive_message(msg: InboundMessage):
         )
         return result
     except TimeoutError:
-        logger.error("Message %s timed out in queue", msg.message_id)
+        logger.error("Message timed out in queue", extra={"message_id": msg.message_id})
         return InboundResponse(
             status="error",
             message_id=msg.message_id,
             error="queue_timeout",
         )
     except Exception as e:
-        logger.error("Message %s queue error: %s", msg.message_id, e)
+        logger.error("Message queue error", extra={"message_id": msg.message_id, "error": str(e)})
         return InboundResponse(
             status="error",
             message_id=msg.message_id,
@@ -2690,7 +2792,7 @@ Just the message, nothing else."""
             system=system_prompt,
         )
         if response.error or not response.text:
-            logger.warning("Wind: LLM generation failed: %s", response.error)
+            logger.warning("Wind: LLM generation failed", extra={"error": response.error})
             return None
 
         text = response.text.strip()
@@ -2698,19 +2800,23 @@ Just the message, nothing else."""
         # Validate output
         is_valid, text = validate_output(text)
         if not is_valid:
-            logger.warning("Wind: generated message failed validation")
+            logger.warning("Wind: generated message failed validation", extra={"action": "wind_validate"})
             return None
 
         # Length check (proactive messages should be short)
         if len(text) > 500:
-            logger.warning("Wind: generated message too long (%d chars), truncating", len(text))
+            logger.warning("Wind: generated message too long, truncating", extra={"length": len(text)})
             text = text[:500]
 
-        logger.info("Wind: generated message (%d chars) for topic '%s'", len(text), topic_title[:30])
+        logger.info("Wind: generated message", extra={
+            "length": len(text),
+            "topic": topic_title[:30],
+            "action": "wind_generate"
+        })
         return text
 
     except Exception as e:
-        logger.error("Wind: message generation error: %s", e)
+        logger.error("Wind: message generation error", extra={"error": str(e)})
         return None
 
 
@@ -2795,13 +2901,13 @@ def _build_enriched_prompt(
         )
         if facts_text:
             parts.append("\n\n" + facts_text)
-            logger.info("Facts FTS: added %d chars", len(facts_text))
+            logger.info("Facts FTS: added context", extra={"chars": len(facts_text)})
         else:
             # Fallback: load all facts if FTS returns nothing
             facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
             if facts_text:
                 parts.append("\n\n" + facts_text)
-                logger.debug("Facts FTS: fallback to all facts (%d chars)", len(facts_text))
+                logger.debug("Facts FTS: fallback to all facts", extra={"chars": len(facts_text)})
     else:
         # FTS disabled: original behavior
         facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
@@ -2818,13 +2924,13 @@ def _build_enriched_prompt(
         )
         if summaries_text:
             parts.append("\n\n" + summaries_text)
-            logger.info("Summaries FTS: added %d chars", len(summaries_text))
+            logger.info("Summaries FTS: added context", extra={"chars": len(summaries_text)})
         else:
             # Fallback: load recent summaries if FTS returns nothing
             summaries_text = memory.get_summaries_as_text(days=7, conversation_id=conversation_id)
             if summaries_text:
                 parts.append("\n\n" + summaries_text)
-                logger.debug("Summaries FTS: fallback to recent (%d chars)", len(summaries_text))
+                logger.debug("Summaries FTS: fallback to recent", extra={"chars": len(summaries_text)})
     else:
         # FTS disabled: original behavior
         summaries_text = memory.get_summaries_as_text(days=7, conversation_id=conversation_id)
@@ -2833,7 +2939,7 @@ def _build_enriched_prompt(
 
     # Add RAG context if enabled and user message provided
     if RAG_ENABLED and user_message:
-        logger.debug("RAG lookup: query=%s scopes=%s", user_message[:50], knowledge_scopes)
+        logger.debug("RAG lookup", extra={"query": user_message[:50], "scopes": knowledge_scopes})
         rag_context = memory.get_knowledge_as_context(
             user_message,
             max_tokens=RAG_MAX_TOKENS,
@@ -2841,8 +2947,7 @@ def _build_enriched_prompt(
         )
         if rag_context:
             parts.append("\n\n" + rag_context)
-            rag_chars = len(rag_context)
-            logger.info("RAG: added %d chars of context", rag_chars)
+            logger.info("RAG: added context", extra={"chars": len(rag_context)})
         else:
             logger.info("RAG: no matches for query")
 
@@ -2878,7 +2983,7 @@ def _maybe_run_consolidation() -> None:
                 result["messages_removed"],
             )
     except Exception as e:
-        logger.error("Consolidation error: %s", e)
+        logger.error("Consolidation error", extra={"error": str(e)})
 
 
 def _send_to_mesh(
@@ -2893,7 +2998,7 @@ def _send_to_mesh(
     # Check outbound rate limit (critical messages bypass)
     allowed, reason = outbound_limiter.check_and_record(is_critical=is_critical)
     if not allowed:
-        logger.warning("Outbound blocked by rate limit: %s", reason)
+        logger.warning("Outbound blocked by rate limit", extra={"reason": reason})
         return False
 
     # Enforce cooldown between sends to same conversation
@@ -2906,7 +3011,7 @@ def _send_to_mesh(
         elapsed = now - last_send
         if elapsed < cooldown:
             wait_time = cooldown - elapsed
-            logger.debug("Cooldown: waiting %.1fs before sending to %s", wait_time, convo_id)
+            logger.debug("Cooldown: waiting before sending", extra={"wait_seconds": round(wait_time, 1), "conversation_id": convo_id})
             time.sleep(wait_time)
         _last_send_times[convo_id] = time.time()
 
@@ -2949,16 +3054,16 @@ def _send_to_mesh(
             data = resp.json()
 
         if data.get("status") == "ok":
-            logger.info("Sent response to mesh successfully")
+            logger.info("Sent response to mesh successfully", extra={"action": "mesh_send"})
             # Record outbound for Wind state tracking
             wind_orchestrator.record_outbound(conversation.id)
             return True
         else:
-            logger.error("Mesh returned error: %s", data.get("error"))
+            logger.error("Mesh returned error", extra={"error": data.get("error")})
             return False
 
     except Exception as exc:
-        logger.error("Failed to send to mesh: %s", exc)
+        logger.error("Failed to send to mesh", extra={"error": str(exc)})
         return False
 
 
@@ -2974,15 +3079,25 @@ def main():
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
-    logger.info("Starting Joi API on %s:%d (log_level=%s)", settings.bind_host, settings.bind_port, settings.log_level)
-    ctx_info = f", num_ctx: {settings.ollama_num_ctx}" if settings.ollama_num_ctx > 0 else ""
-    logger.info("Ollama: %s (default model: %s%s)", settings.ollama_url, settings.ollama_model, ctx_info)
-    logger.info("Mesh: %s", settings.mesh_url)
-    logger.info("Memory: %s (context: %d messages)",
-                os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
-                CONTEXT_MESSAGE_COUNT)
-    logger.info("Prompts directory: %s", PROMPTS_DIR)
-    logger.info("Response cooldown: DM=%.1fs, group=%.1fs", RESPONSE_COOLDOWN_DM_SECONDS, RESPONSE_COOLDOWN_GROUP_SECONDS)
+    logger.info("Starting Joi API", extra={
+        "bind_host": settings.bind_host,
+        "bind_port": settings.bind_port,
+        "log_level": settings.log_level,
+        "action": "main_start"
+    })
+    logger.info("Ollama config", extra={
+        "url": settings.ollama_url,
+        "model": settings.ollama_model,
+        "num_ctx": settings.ollama_num_ctx if settings.ollama_num_ctx > 0 else None
+    })
+    logger.info("Service config", extra={
+        "mesh_url": settings.mesh_url,
+        "memory_db": os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
+        "context_messages": CONTEXT_MESSAGE_COUNT,
+        "prompts_dir": str(PROMPTS_DIR),
+        "cooldown_dm": RESPONSE_COOLDOWN_DM_SECONDS,
+        "cooldown_group": RESPONSE_COOLDOWN_GROUP_SECONDS
+    })
 
     uvicorn.run(
         app,

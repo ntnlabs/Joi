@@ -205,7 +205,7 @@ class WindOrchestrator:
         if not self.config.enabled:
             return []
 
-        logger.debug("Wind tick at %s", now.isoformat())
+        logger.debug("Wind tick", extra={"timestamp": now.isoformat()})
 
         results = self.check_impulse_all(now)
 

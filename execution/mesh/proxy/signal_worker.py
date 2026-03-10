@@ -11,6 +11,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from flask import Flask, jsonify, request
 
 from config import load_settings
+from logging_config import configure_logging
+
+# Configure structured logging early
+configure_logging()
 from forwarder import forward_to_joi, forward_document_to_joi, set_config_state, set_routing_state
 from hmac_auth import (
     InMemoryNonceStore,
@@ -120,7 +124,7 @@ class MessageDedupeCache:
                 del self._cache[k]
 
         if expired:
-            logger.debug("Pruned %d expired dedupe entries", len(expired))
+            logger.debug("Pruned expired dedupe entries", extra={"count": len(expired), "action": "dedupe_prune"})
 
 
 # --- Delivery Tracker ---
@@ -146,7 +150,10 @@ class DeliveryTracker:
                 "delivered_at": None,
                 "read_at": None,
             }
-            logger.debug("Tracking message ts=%d to %s", timestamp, _redact_pii(recipient, "phone"))
+            logger.debug("Tracking message", extra={
+                "timestamp": timestamp,
+                "recipient": _redact_pii(recipient, "phone")
+            })
 
     def mark_delivered(self, timestamps: List[int]) -> int:
         """Mark messages as delivered. Returns count of newly marked."""
@@ -157,7 +164,7 @@ class DeliveryTracker:
                 if ts in self._messages and self._messages[ts]["delivered_at"] is None:
                     self._messages[ts]["delivered_at"] = now
                     count += 1
-                    logger.info("Message ts=%d delivered", ts)
+                    logger.info("Message delivered", extra={"timestamp": ts})
         return count
 
     def mark_read(self, timestamps: List[int]) -> int:
@@ -172,7 +179,7 @@ class DeliveryTracker:
                     if self._messages[ts]["delivered_at"] is None:
                         self._messages[ts]["delivered_at"] = now
                     count += 1
-                    logger.info("Message ts=%d read", ts)
+                    logger.info("Message read", extra={"timestamp": ts})
         return count
 
     def get_status(self, timestamp: int) -> Optional[Dict[str, Any]]:
@@ -228,8 +235,10 @@ class RoutingState:
             self._rules = routing_config.get("rules", [])
 
         if self._enabled:
-            logger.info("Routing enabled: %d backends, %d rules",
-                       len(self._backends), len(self._rules))
+            logger.info("Routing enabled", extra={
+                "backend_count": len(self._backends),
+                "rule_count": len(self._rules)
+            })
         else:
             logger.debug("Routing disabled, using default backend")
 
@@ -333,12 +342,18 @@ class ConfigState:
 
             # Log security flag changes
             if self._kill_switch and not old_kill_switch:
-                logger.warning("KILL SWITCH ACTIVATED - forwarding to Joi disabled")
+                logger.warning("KILL SWITCH ACTIVATED - forwarding disabled", extra={
+                    "action": "kill_switch",
+                    "status": "activated"
+                })
             elif not self._kill_switch and old_kill_switch:
-                logger.info("Kill switch deactivated - forwarding resumed")
+                logger.info("Kill switch deactivated - forwarding resumed", extra={
+                    "action": "kill_switch",
+                    "status": "deactivated"
+                })
 
             if self._privacy_mode:
-                logger.info("Privacy mode enabled - PII will be redacted in logs")
+                logger.info("Privacy mode enabled - PII redacted in logs", extra={"privacy_mode": True})
 
             # Remove timestamp_ms before storing (it's metadata, not config)
             config.pop("timestamp_ms", None)
@@ -385,10 +400,10 @@ class ConfigState:
             # Persist to file for restart recovery
             save_shared_secret(new_secret_hex)
 
-            logger.info(
-                "HMAC rotation: new key active, old key valid for %ds",
-                grace_period_ms // 1000,
-            )
+            logger.info("HMAC rotation: new key active", extra={
+                "action": "hmac_rotation",
+                "grace_period_seconds": grace_period_ms // 1000
+            })
 
     def _compute_hash(self, config: Dict[str, Any]) -> str:
         """Compute SHA256 hash of config."""
@@ -447,7 +462,7 @@ RESTART_COOLDOWN_SECONDS = 30  # Wait between restart attempts
 def _start_signal_cli() -> JsonRpcStdioClient:
     """Start signal-cli subprocess and return RPC client."""
     global _rpc_healthy
-    logger.info("Starting signal-cli subprocess...")
+    logger.info("Starting signal-cli subprocess...", extra={"action": "signal_cli_start"})
     rpc = JsonRpcStdioClient(
         [
             _signal_cli_bin,
@@ -458,7 +473,7 @@ def _start_signal_cli() -> JsonRpcStdioClient:
         ]
     )
     _rpc_healthy = True
-    logger.info("signal-cli started (pid=%s)", rpc.get_pid())
+    logger.info("signal-cli started", extra={"pid": rpc.get_pid()})
     return rpc
 
 
@@ -474,24 +489,23 @@ def _restart_signal_cli() -> bool:
         _rpc_restart_count += 1
 
         if _rpc_restart_count > MAX_RESTART_ATTEMPTS:
-            logger.critical(
-                "signal-cli restart failed: max attempts (%d) exceeded. "
-                "Manual intervention required.",
-                MAX_RESTART_ATTEMPTS
-            )
+            logger.critical("signal-cli restart failed: max attempts exceeded", extra={
+                "max_attempts": MAX_RESTART_ATTEMPTS,
+                "action": "restart_failed"
+            })
             return False
 
-        logger.warning(
-            "Restarting signal-cli (attempt %d/%d)...",
-            _rpc_restart_count, MAX_RESTART_ATTEMPTS
-        )
+        logger.warning("Restarting signal-cli", extra={
+            "attempt": _rpc_restart_count,
+            "max_attempts": MAX_RESTART_ATTEMPTS
+        })
 
         # Close old client if exists
         if _rpc:
             try:
                 _rpc.close()
             except Exception as e:
-                logger.warning("Error closing old signal-cli: %s", e)
+                logger.warning("Error closing old signal-cli", extra={"error": str(e)})
 
         # Wait before restart
         time.sleep(RESTART_COOLDOWN_SECONDS)
@@ -502,16 +516,16 @@ def _restart_signal_cli() -> bool:
             # Verify it's responding
             result = _rpc.call("listAccounts", {}, timeout=10.0)
             if "error" in result:
-                logger.error("signal-cli restart failed health check: %s", result["error"])
+                logger.error("signal-cli restart failed health check", extra={"error": result["error"]})
                 _rpc_healthy = False
                 return False
 
-            logger.info("signal-cli restarted successfully")
+            logger.info("signal-cli restarted successfully", extra={"action": "restart_success"})
             _rpc_healthy = True
             return True
 
         except Exception as e:
-            logger.error("signal-cli restart failed: %s", e)
+            logger.error("signal-cli restart failed", extra={"error": str(e)})
             _rpc_healthy = False
             return False
 
@@ -525,7 +539,7 @@ def _watchdog_loop():
     """
     global _rpc_last_health_check, _rpc_healthy
 
-    logger.info("Watchdog started (interval=%ds)", WATCHDOG_INTERVAL_SECONDS)
+    logger.info("Watchdog started", extra={"interval_seconds": WATCHDOG_INTERVAL_SECONDS})
 
     while True:
         time.sleep(WATCHDOG_INTERVAL_SECONDS)
@@ -551,10 +565,10 @@ def _watchdog_loop():
                     continue
 
                 _rpc_healthy = True
-                logger.debug("Watchdog: signal-cli healthy (pid=%s)", _rpc.get_pid())
+                logger.debug("Watchdog: signal-cli healthy", extra={"pid": _rpc.get_pid()})
 
         except Exception as e:
-            logger.error("Watchdog error: %s", e)
+            logger.error("Watchdog error", extra={"error": str(e)})
 
 
 # --- Flask app for outbound API ---
@@ -587,7 +601,10 @@ def verify_hmac_auth():
     # Check if HMAC is available (dynamic check - not just startup state)
     if not _is_hmac_available():
         # Fail-closed: reject if no HMAC configured
-        logger.error("HMAC auth failed: no secret configured (fail-closed)")
+        logger.error("HMAC auth failed: no secret configured (fail-closed)", extra={
+            "action": "auth_failed",
+            "reason": "hmac_not_configured"
+        })
         return jsonify({"status": "error", "error": {"code": "hmac_not_configured", "message": "HMAC authentication not configured"}}), 503
 
     # Extract headers
@@ -597,26 +614,39 @@ def verify_hmac_auth():
 
     # Check all required headers present
     if not all([nonce, timestamp_str, signature]):
-        logger.warning("HMAC auth failed: missing headers")
+        logger.warning("HMAC auth failed: missing headers", extra={
+            "action": "auth_failed",
+            "reason": "missing_headers"
+        })
         return jsonify({"status": "error", "error": {"code": "hmac_missing_headers", "message": "Missing authentication headers"}}), 401
 
     # Parse timestamp
     try:
         timestamp = int(timestamp_str)
     except ValueError:
-        logger.warning("HMAC auth failed: invalid timestamp format")
+        logger.warning("HMAC auth failed: invalid timestamp format", extra={
+            "action": "auth_failed",
+            "reason": "invalid_timestamp"
+        })
         return jsonify({"status": "error", "error": {"code": "hmac_invalid_timestamp", "message": "Invalid timestamp format"}}), 401
 
     # Verify timestamp freshness
     ts_valid, ts_error = verify_timestamp(timestamp, _hmac_timestamp_tolerance)
     if not ts_valid:
-        logger.warning("HMAC auth failed: %s", ts_error)
+        logger.warning("HMAC auth failed: timestamp", extra={
+            "action": "auth_failed",
+            "reason": ts_error
+        })
         return jsonify({"status": "error", "error": {"code": ts_error, "message": "Request timestamp out of tolerance"}}), 401
 
     # Verify nonce not replayed
     nonce_valid, nonce_error = _nonce_store.check_and_store(nonce, source="joi")
     if not nonce_valid:
-        logger.warning("HMAC auth failed: %s nonce=%s", nonce_error, nonce[:8])
+        logger.warning("HMAC auth failed: nonce", extra={
+            "action": "auth_failed",
+            "reason": nonce_error,
+            "nonce": nonce[:8]
+        })
         return jsonify({"status": "error", "error": {"code": nonce_error, "message": "Nonce already used"}}), 401
 
     # Get raw body for HMAC verification
@@ -630,15 +660,18 @@ def verify_hmac_auth():
         current_secret = _hmac_secret
 
     if verify_hmac(nonce, timestamp, body, signature, current_secret):
-        logger.debug("HMAC auth passed for %s (current key)", request.path)
+        logger.debug("HMAC auth passed (current key)", extra={"path": request.path})
         return None
 
     # Try old key during grace period
     if old_secret and verify_hmac(nonce, timestamp, body, signature, old_secret):
-        logger.info("HMAC auth passed for %s (grace period key)", request.path)
+        logger.info("HMAC auth passed (grace period key)", extra={"path": request.path})
         return None
 
-    logger.warning("HMAC auth failed: invalid signature")
+    logger.warning("HMAC auth failed: invalid signature", extra={
+        "action": "auth_failed",
+        "reason": "invalid_signature"
+    })
     return jsonify({"status": "error", "error": {"code": "hmac_invalid_signature", "message": "Invalid HMAC signature"}}), 401
 
 
@@ -714,10 +747,10 @@ def config_sync():
     try:
         config_hash = _config_state.apply_config(data)
     except Exception as e:
-        logger.error("Config sync failed: %s", e)
+        logger.error("Config sync failed", extra={"error": str(e)})
         return jsonify({"status": "error", "error": "apply_failed"}), 500
 
-    logger.info("Config sync applied, hash=%s", config_hash[:16])
+    logger.info("Config sync applied", extra={"config_hash": config_hash[:16]})
 
     return jsonify({
         "status": "ok",
@@ -749,11 +782,11 @@ def _list_groups() -> List[Dict]:
         try:
             result = _rpc.call("listGroups", {}, timeout=30.0)
             if "error" in result:
-                logger.warning("listGroups error: %s", result["error"])
+                logger.warning("listGroups error", extra={"error": result["error"]})
                 return []
             return result.get("result", [])
         except Exception as exc:
-            logger.error("listGroups failed: %s", exc)
+            logger.error("listGroups failed", extra={"error": str(exc)})
             return []
 
 
@@ -796,7 +829,10 @@ def send_outbound():
 
     # Check kill switch - block all message sending when active
     if _config_state.is_kill_switch_active():
-        logger.warning("Kill switch active - blocking outbound message")
+        logger.warning("Kill switch active - blocking outbound message", extra={
+            "action": "message_blocked",
+            "reason": "kill_switch"
+        })
         return jsonify({"status": "error", "error": "kill_switch_active"}), 503
 
     data = request.get_json()
@@ -837,11 +873,11 @@ def send_outbound():
         try:
             result = _rpc.call("send", payload, timeout=30.0)
         except Exception as exc:
-            logger.error("Signal send failed: %s", exc)
+            logger.error("Signal send failed", extra={"error": str(exc)})
             return jsonify({"status": "error", "error": str(exc)}), 500
 
     if "error" in result:
-        logger.warning("Signal send error: %s", result["error"])
+        logger.warning("Signal send error", extra={"error": str(result["error"])})
         return jsonify({"status": "error", "error": str(result["error"])}), 500
 
     # Extract timestamp from result
@@ -858,7 +894,11 @@ def send_outbound():
         _delivery_tracker.register_sent(sent_at, recipient_id)
 
     recipient_display = _redact_pii(transport_id, "phone") if transport_id else _redact_pii(group_id, "group")
-    logger.info("Sent message to %s (ts=%s)", recipient_display, sent_at)
+    logger.info("Sent message", extra={
+        "recipient": recipient_display,
+        "timestamp": sent_at,
+        "action": "message_sent"
+    })
     return jsonify({
         "status": "ok",
         "data": {
@@ -909,11 +949,11 @@ def _handle_receipt_message(raw: Dict[str, Any]) -> bool:
     if is_delivery:
         count = _delivery_tracker.mark_delivered(timestamps)
         if count > 0:
-            logger.info("Processed %d delivery receipt(s)", count)
+            logger.info("Processed delivery receipts", extra={"count": count, "action": "receipt_delivery"})
     if is_read or is_viewed:
         count = _delivery_tracker.mark_read(timestamps)
         if count > 0:
-            logger.info("Processed %d read receipt(s)", count)
+            logger.info("Processed read receipts", extra={"count": count, "action": "receipt_read"})
 
     return True
 
@@ -1031,7 +1071,7 @@ def _process_attachments(
 
         ext = os.path.splitext(filename)[1].lower()
         if ext not in ALLOWED_DOCUMENT_EXTENSIONS:
-            logger.debug("Skipping attachment with unsupported extension: %s", ext)
+            logger.debug("Skipping attachment with unsupported extension", extra={"extension": ext})
             continue
 
         # Check file size
@@ -1049,7 +1089,7 @@ def _process_attachments(
 
         attachment_path = SIGNAL_ATTACHMENTS_DIR / attachment_id
         if not attachment_path.exists():
-            logger.warning("Attachment file not found: %s", attachment_path)
+            logger.warning("Attachment file not found", extra={"path": str(attachment_path)})
             continue
 
         # Read file content
@@ -1057,7 +1097,7 @@ def _process_attachments(
             with open(attachment_path, "rb") as f:
                 content = f.read()
         except Exception as e:
-            logger.error("Failed to read attachment %s: %s", attachment_path, e)
+            logger.error("Failed to read attachment", extra={"path": str(attachment_path), "error": str(e)})
             continue
 
         # Validate content is valid UTF-8 text (security: extension alone isn't enough)
@@ -1078,10 +1118,12 @@ def _process_attachments(
         # Determine scope (same logic as fact_key)
         scope = conversation_id  # group_id for groups, sender phone for DMs
 
-        logger.info(
-            "Processing document: %s (%d bytes) for scope %s",
-            filename, len(content), _redact_pii(scope, "group" if conversation_type == "group" else "phone")
-        )
+        logger.info("Processing document", extra={
+            "filename": filename,
+            "size_bytes": len(content),
+            "scope": _redact_pii(scope, "group" if conversation_type == "group" else "phone"),
+            "action": "document_process"
+        })
 
         # Forward to Joi for ingestion
         content_type = EXTENSION_TO_MIME.get(ext, "text/plain")
@@ -1094,19 +1136,19 @@ def _process_attachments(
                 sender_id=sender_id,
             )
             if not success:
-                logger.warning("Document forward to Joi returned failure: %s", filename)
+                logger.warning("Document forward to Joi returned failure", extra={"filename": filename})
                 continue
-            logger.info("Document forwarded to Joi: %s", filename)
+            logger.info("Document forwarded to Joi", extra={"filename": filename, "action": "document_forward"})
         except Exception as e:
-            logger.error("Failed to forward document to Joi: %s", e)
+            logger.error("Failed to forward document to Joi", extra={"error": str(e)})
             continue
 
         # Delete attachment after successful forward
         try:
             attachment_path.unlink()
-            logger.debug("Deleted attachment file: %s", attachment_path)
+            logger.debug("Deleted attachment file", extra={"path": str(attachment_path)})
         except Exception as e:
-            logger.warning("Failed to delete attachment %s: %s", attachment_path, e)
+            logger.warning("Failed to delete attachment", extra={"path": str(attachment_path), "error": str(e)})
 
 
 def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uuid: str = "") -> Optional[Dict[str, Any]]:
@@ -1116,9 +1158,13 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
         exc_type = exception.get("type", "Unknown")
         exc_msg = exception.get("message", "")
         if exc_type == "UntrustedIdentityException":
-            logger.warning("UNTRUSTED IDENTITY: %s - run: signal-cli trust <uuid>", exc_msg)
+            logger.warning("UNTRUSTED IDENTITY - run: signal-cli trust <uuid>", extra={
+                "exception_type": exc_type,
+                "message": exc_msg,
+                "action": "untrusted_identity"
+            })
         else:
-            logger.warning("Signal exception: %s - %s", exc_type, exc_msg)
+            logger.warning("Signal exception", extra={"exception_type": exc_type, "message": exc_msg})
         return None
 
     envelope = _as_dict(raw.get("envelope"))
@@ -1126,8 +1172,11 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
         return None
 
     # Debug: log envelope source fields (useful for UUID vs phone troubleshooting)
-    logger.debug("Envelope source fields: source=%s sourceNumber=%s sourceUuid=%s",
-                 envelope.get("source"), envelope.get("sourceNumber"), envelope.get("sourceUuid"))
+    logger.debug("Envelope source fields", extra={
+        "source": envelope.get("source"),
+        "source_number": envelope.get("sourceNumber"),
+        "source_uuid": envelope.get("sourceUuid")
+    })
 
     data_message = _as_dict(envelope.get("dataMessage"))
 
@@ -1248,7 +1297,7 @@ def _send_rate_limit_notice(payload: Dict[str, Any]) -> None:
     now = time.time()
     last_sent = _rate_limit_notice_sent.get(sender, 0)
     if now - last_sent < _rate_limit_notice_cooldown:
-        logger.debug("Skipping rate limit notice to %s (cooldown)", _redact_pii(sender, "phone"))
+        logger.debug("Skipping rate limit notice (cooldown)", extra={"sender": _redact_pii(sender, "phone")})
         return
     _rate_limit_notice_sent[sender] = now
 
@@ -1270,15 +1319,15 @@ def _send_rate_limit_notice(payload: Dict[str, Any]) -> None:
             return
         try:
             _rpc.call("send", send_payload, timeout=10.0)
-            logger.info("Sent rate limit notice to %s", _redact_pii(sender, "phone"))
+            logger.info("Sent rate limit notice", extra={"sender": _redact_pii(sender, "phone"), "action": "rate_limit_notice"})
         except Exception as exc:
-            logger.error("Failed to send rate limit notice: %s", exc)
+            logger.error("Failed to send rate limit notice", extra={"error": str(exc)})
 
 
 def run_http_server(port: int):
     """Run Flask server in a thread using waitress (production WSGI server)."""
     from waitress import serve
-    logger.info("HTTP server (waitress) listening on port %d", port)
+    logger.info("HTTP server (waitress) listening", extra={"port": port, "action": "http_start"})
     # waitress is production-ready: thread pool, proper HTTP parsing, no dev warnings
     # threads=4 handles concurrent requests (e.g., multiple outbound sends)
     serve(flask_app, host="0.0.0.0", port=port, threads=4, _quiet=True)
@@ -1324,11 +1373,14 @@ def main() -> None:
         if "error" in result:
             raise SystemExit(f"signal-cli health check failed: {result['error']}")
         accounts = result.get("result", [])
-        logger.info("signal-cli OK: %d account(s) registered", len(accounts))
+        logger.info("signal-cli OK", extra={"accounts_registered": len(accounts), "action": "health_check"})
         # Verify our account is registered
         account_numbers = [a.get("number") for a in accounts if isinstance(a, dict)]
         if _account not in account_numbers:
-            logger.warning("Bot account %s not found in registered accounts: %s", _account, account_numbers)
+            logger.warning("Bot account not found in registered accounts", extra={
+                "bot_account": _account,
+                "registered_accounts": account_numbers
+            })
     except Exception as e:
         if "SystemExit" in type(e).__name__:
             raise
@@ -1342,15 +1394,15 @@ def main() -> None:
             err = result["error"]
             # Some errors are warnings, not fatal
             if "not a primary device" in str(err).lower():
-                logger.info("Signal server OK (linked device, sync request sent)")
+                logger.info("Signal server OK (linked device)", extra={"action": "server_check"})
             else:
-                logger.warning("Signal server test returned error: %s", err)
+                logger.warning("Signal server test returned error", extra={"error": str(err)})
         else:
-            logger.info("Signal server OK (sync request successful)")
+            logger.info("Signal server OK (sync request successful)", extra={"action": "server_check"})
     except Exception as e:
-        logger.warning("Signal server test failed: %s (continuing anyway)", e)
+        logger.warning("Signal server test failed (continuing anyway)", extra={"error": str(e)})
 
-    logger.info("Signal worker started (log_level=%s)", log_level)
+    logger.info("Signal worker started", extra={"log_level": log_level, "action": "startup"})
     logger.info("Waiting for config push from Joi (denying all messages)")
     if _is_hmac_available():
         logger.info("HMAC authentication enabled")
@@ -1381,7 +1433,7 @@ def main() -> None:
                 messages = _extract_messages([notification])
 
                 if messages:
-                    logger.debug("Received %d raw message(s) from Signal", len(messages))
+                    logger.debug("Received raw messages from Signal", extra={"count": len(messages)})
                 for msg in messages:
                     # Check for delivery/read receipts first
                     if _handle_receipt_message(msg):
@@ -1395,7 +1447,7 @@ def main() -> None:
                     # Dedupe check - drop if we've seen this message_id before
                     message_id = payload.get("message_id")
                     if not _dedupe_cache.check_and_add(message_id):
-                        logger.info("Dropping duplicate message_id=%s", message_id)
+                        logger.info("Dropping duplicate message", extra={"message_id": message_id, "action": "dedupe_drop"})
                         continue
 
                     decision = policy.evaluate_inbound(payload)
@@ -1403,14 +1455,22 @@ def main() -> None:
                         sender = payload.get("sender", {}).get("transport_id", "unknown")
                         if decision.reason == "unknown_sender":
                             # Don't redact unknown senders - admin needs full ID to add them
-                            logger.info("Dropping unknown sender=%s", sender)
+                            logger.info("Dropping unknown sender", extra={"sender": sender, "action": "drop"})
                         elif decision.reason.startswith("rate_limited"):
                             sender_display = _redact_pii(sender, "phone")
-                            logger.warning("Rate limited sender=%s reason=%s", sender_display, decision.reason)
+                            logger.warning("Rate limited sender", extra={
+                                "sender": sender_display,
+                                "reason": decision.reason,
+                                "action": "rate_limit"
+                            })
                             _send_rate_limit_notice(payload)
                         else:
                             sender_display = _redact_pii(sender, "phone")
-                            logger.warning("Dropping sender=%s reason=%s", sender_display, decision.reason)
+                            logger.warning("Dropping sender", extra={
+                                "sender": sender_display,
+                                "reason": decision.reason,
+                                "action": "drop"
+                            })
                         continue
 
                     # Add store_only flag to payload for Joi
@@ -1418,9 +1478,16 @@ def main() -> None:
                         payload["store_only"] = True
                         # Show full sender for store_only - admin needs ID to add them to participants
                         sender = payload.get("sender", {}).get("transport_id", "unknown")
-                        logger.info("Forwarding message_id=%s to Joi (store_only, sender=%s)", payload.get("message_id"), sender)
+                        logger.info("Forwarding to Joi (store_only)", extra={
+                            "message_id": payload.get("message_id"),
+                            "sender": sender,
+                            "action": "forward"
+                        })
                     else:
-                        logger.info("Forwarding message_id=%s to Joi", payload.get("message_id"))
+                        logger.info("Forwarding to Joi", extra={
+                            "message_id": payload.get("message_id"),
+                            "action": "forward"
+                        })
 
                     # Add is_owner flag for priority handling
                     # Owner = first entry in allowed_senders list
@@ -1441,7 +1508,7 @@ def main() -> None:
                             names.extend(n for n in group_names if n not in names)
                         if names:
                             payload["group_names"] = names
-                            logger.debug("Group names for addressing: %s", names)
+                            logger.debug("Group names for addressing", extra={"names": names})
 
                             # Re-check bot_mentioned (in case signal-cli provides mentions array)
                             if not payload.get("bot_mentioned"):
@@ -1450,9 +1517,12 @@ def main() -> None:
                                 data_message = _as_dict(envelope.get("dataMessage")) if envelope else {}
                                 if data_message and _check_bot_mentioned(data_message, _account, _account_uuid, names):
                                     payload["bot_mentioned"] = True
-                                    logger.debug("Bot mention detected via mentions array")
+                                    logger.debug("Bot mention detected via mentions array", extra={"action": "mention_detect"})
                         else:
-                            logger.debug("No group names found (bot_name=%s, group_id=%s)", bot_name, group_id[:8] if group_id else None)
+                            logger.debug("No group names found", extra={
+                                "bot_name": bot_name,
+                                "group_id": group_id[:8] if group_id else None
+                            })
 
                     # Check kill switch before forwarding
                     if _config_state.is_kill_switch_active():
@@ -1480,7 +1550,7 @@ def main() -> None:
 
                     forward_to_joi(payload)
             except Exception as exc:  # noqa: BLE001
-                logger.error("signal_worker error: %s", exc)
+                logger.error("signal_worker error", extra={"error": str(exc)})
                 time.sleep(1)
     finally:
         _rpc.close()

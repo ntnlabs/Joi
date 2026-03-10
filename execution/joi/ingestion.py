@@ -142,11 +142,11 @@ def ingest_file(
     try:
         text = filepath.read_text(encoding="utf-8")
     except Exception as e:
-        logger.error("Failed to read %s: %s", filepath, e)
+        logger.error("Failed to read file", extra={"path": str(filepath), "error": str(e)})
         return 0
 
     if not text.strip():
-        logger.warning("Skipping empty file: %s", filepath)
+        logger.warning("Skipping empty file", extra={"path": str(filepath)})
         return 0
 
     # Source identifier uses scope/filename for uniqueness
@@ -162,7 +162,7 @@ def ingest_file(
     chunks = chunk_text(text, chunk_size, overlap)
 
     if not chunks:
-        logger.warning("No chunks generated from: %s", filepath)
+        logger.warning("No chunks generated from file", extra={"path": str(filepath)})
         return 0
 
     # Store chunks
@@ -175,7 +175,7 @@ def ingest_file(
             scope=scope,
         )
 
-    logger.info("Ingested %s: %d chunks (scope: %s)", filepath.name, len(chunks), scope)
+    logger.info("Ingested file", extra={"filename": filepath.name, "chunks": len(chunks), "scope": scope})
     return len(chunks)
 
 
@@ -205,12 +205,12 @@ def mark_done(filepath: Path, scope: str, done_dir: Path) -> None:
     if KEEP_FILES:
         # Move original to done/
         shutil.move(str(filepath), str(dest))
-        logger.debug("Moved %s to %s", filepath, dest)
+        logger.debug("Moved file to done", extra={"source": str(filepath), "dest": str(dest)})
     else:
         # Touch marker, delete original
         dest.touch()
         filepath.unlink()
-        logger.debug("Marked %s as done, deleted original", filepath.name)
+        logger.debug("Marked file as done, deleted original", extra={"filename": filepath.name})
 
 
 def process_pending(memory: MemoryStore) -> Tuple[int, int]:
@@ -246,13 +246,13 @@ def process_pending(memory: MemoryStore) -> Tuple[int, int]:
                 continue
 
             if filepath.suffix.lower() not in SUPPORTED_EXTENSIONS:
-                logger.debug("Skipping unsupported file: %s", filepath)
+                logger.debug("Skipping unsupported file", extra={"path": str(filepath)})
                 continue
 
             # Check if already processed
             marker = done_dir / scope / filepath.name
             if marker.exists():
-                logger.debug("Skipping already processed: %s", filepath)
+                logger.debug("Skipping already processed", extra={"path": str(filepath)})
                 continue
 
             # Ingest
@@ -263,7 +263,7 @@ def process_pending(memory: MemoryStore) -> Tuple[int, int]:
                     files_processed += 1
                     total_chunks += chunks
             except Exception as e:
-                logger.error("Failed to ingest %s: %s", filepath, e)
+                logger.error("Failed to ingest file", extra={"path": str(filepath), "error": str(e)})
 
     return files_processed, total_chunks
 
@@ -277,6 +277,6 @@ def run_auto_ingestion(memory: MemoryStore) -> None:
     try:
         files, chunks = process_pending(memory)
         if files > 0:
-            logger.info("Auto-ingestion: processed %d files, %d chunks", files, chunks)
+            logger.info("Auto-ingestion completed", extra={"files": files, "chunks": chunks})
     except Exception as e:
-        logger.error("Auto-ingestion error: %s", e)
+        logger.error("Auto-ingestion error", extra={"error": str(e)})

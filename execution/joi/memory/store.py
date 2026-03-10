@@ -61,7 +61,7 @@ def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
         )
         return None
     except Exception as e:
-        logger.error("Failed to read encryption key from %s: %s", key_path, e)
+        logger.error("Failed to read encryption key", extra={"path": str(key_path), "error": str(e)})
         return None
 
 
@@ -402,11 +402,17 @@ class MemoryStore:
         self._init_schema()
 
         if is_new_db:
-            encryption_status = "encrypted" if self._encrypted else "unencrypted"
-            logger.info("Created new memory database: %s (%s)", db_path, encryption_status)
+            logger.info("Created new memory database", extra={
+                "path": str(db_path),
+                "encrypted": self._encrypted,
+                "action": "db_create"
+            })
 
-        encryption_status = "encrypted" if self._encrypted else "unencrypted"
-        logger.info("Memory store initialized: %s (%s)", db_path, encryption_status)
+        logger.info("Memory store initialized", extra={
+            "path": str(db_path),
+            "encrypted": self._encrypted,
+            "action": "init"
+        })
 
     def _connect(self) -> sqlite3.Connection:
         """Get or create a connection for the current thread."""
@@ -595,10 +601,10 @@ class MemoryStore:
         try:
             conn.execute(f"INSERT INTO {index_name}({index_name}) VALUES('rebuild')")
             conn.commit()
-            logger.info("Rebuilt FTS index: %s", index_name)
+            logger.info("Rebuilt FTS index", extra={"index": index_name, "action": "fts_rebuild"})
             return True
         except sqlite3.OperationalError as e:
-            logger.error("Failed to rebuild FTS index %s: %s", index_name, e)
+            logger.error("Failed to rebuild FTS index", extra={"index": index_name, "error": str(e)})
             return False
 
     def check_fts_integrity(self) -> dict:
@@ -722,7 +728,7 @@ class MemoryStore:
         if direction == "inbound":
             self.set_state("last_interaction_at", str(now_ms))
 
-        logger.debug("Stored %s message: %s", direction, message_id)
+        logger.debug("Stored message", extra={"direction": direction, "message_id": message_id})
         return cursor.lastrowid or 0
 
     def get_recent_messages(
@@ -1009,8 +1015,14 @@ class MemoryStore:
             )
 
         conn.commit()
-        important_marker = " [important]" if important else ""
-        logger.debug("Stored fact for %s: %s.%s = %s (confidence: %.2f)%s", conversation_id or "global", category, key, value, confidence, important_marker)
+        logger.debug("Stored fact", extra={
+            "conversation_id": conversation_id or "global",
+            "category": category,
+            "key": key,
+            "value": value,
+            "confidence": confidence,
+            "important": important
+        })
         return cursor.lastrowid or 0
 
     def get_facts(
@@ -1142,9 +1154,9 @@ class MemoryStore:
                 params
             )
             rows = cursor.fetchall()
-            logger.debug("Facts FTS: %d matches for query '%s'", len(rows), fts_query[:50])
+            logger.debug("Facts FTS: matches found", extra={"count": len(rows), "query": fts_query[:50]})
         except sqlite3.OperationalError as e:
-            logger.warning("Facts FTS5 search failed: %s", e)
+            logger.warning("Facts FTS5 search failed", extra={"error": str(e)})
             return []
 
         return [
@@ -1308,8 +1320,14 @@ class MemoryStore:
         )
         conn.commit()
 
-        logger.info("Stored %s summary for %s period %d-%d (%d messages)",
-                    summary_type, conversation_id or "global", period_start, period_end, message_count)
+        logger.info("Stored summary", extra={
+            "summary_type": summary_type,
+            "conversation_id": conversation_id or "global",
+            "period_start": period_start,
+            "period_end": period_end,
+            "message_count": message_count,
+            "action": "summary_store"
+        })
         return cursor.lastrowid or 0
 
     def get_recent_summaries(
@@ -1439,9 +1457,9 @@ class MemoryStore:
                 params
             )
             rows = cursor.fetchall()
-            logger.debug("Summaries FTS: %d matches for query '%s'", len(rows), fts_query[:50])
+            logger.debug("Summaries FTS: matches found", extra={"count": len(rows), "query": fts_query[:50]})
         except sqlite3.OperationalError as e:
-            logger.warning("Summaries FTS5 search failed: %s", e)
+            logger.warning("Summaries FTS5 search failed", extra={"error": str(e)})
             return []
 
         return [
@@ -1598,7 +1616,7 @@ class MemoryStore:
 
         archived = cursor.rowcount
         if archived > 0:
-            logger.info("Archived %d messages before %d", archived, before_ms)
+            logger.info("Archived messages", extra={"count": archived, "before_ms": before_ms})
         return archived
 
     def delete_messages_before(self, before_ms: int, conversation_id: Optional[str] = None) -> int:
@@ -1639,7 +1657,7 @@ class MemoryStore:
 
         deleted = cursor.rowcount
         if deleted > 0:
-            logger.info("Deleted %d messages before %d", deleted, before_ms)
+            logger.info("Deleted messages", extra={"count": deleted, "before_ms": before_ms})
         return deleted
 
     def delete_messages_by_ids(self, message_ids: List[str], conversation_id: Optional[str] = None) -> int:
@@ -1679,7 +1697,7 @@ class MemoryStore:
 
         deleted = cursor.rowcount
         if deleted > 0:
-            logger.info("Deleted %d messages by ID", deleted)
+            logger.info("Deleted messages by ID", extra={"count": deleted})
         return deleted
 
     def archive_messages_by_ids(self, message_ids: List[str], conversation_id: Optional[str] = None) -> int:
@@ -1704,7 +1722,7 @@ class MemoryStore:
 
         archived = cursor.rowcount
         if archived > 0:
-            logger.info("Archived %d messages by ID", archived)
+            logger.info("Archived messages by ID", extra={"count": archived})
         return archived
 
     # --- Knowledge Operations (RAG) ---
@@ -1741,8 +1759,11 @@ class MemoryStore:
         )
         conn.commit()
 
-        scope_info = f" (scope: {scope})" if scope else ""
-        logger.debug("Stored knowledge chunk: %s [%d]%s", source, chunk_index, scope_info)
+        logger.debug("Stored knowledge chunk", extra={
+            "source": source,
+            "chunk_index": chunk_index,
+            "scope": scope or None
+        })
         return cursor.lastrowid or 0
 
     def search_knowledge(
@@ -1795,7 +1816,7 @@ class MemoryStore:
                 params = [fts_query] + allowed + [limit]
 
             # Use FTS5 MATCH for full-text search
-            logger.debug("FTS query: %s, scopes: %s", fts_query[:100], scopes)
+            logger.debug("FTS query", extra={"query": fts_query[:100], "scopes": scopes})
             cursor = conn.execute(
                 f"""
                 SELECT k.id, k.scope, k.source, k.title, k.content, k.chunk_index, k.created_at,
@@ -1810,9 +1831,9 @@ class MemoryStore:
                 params
             )
             rows = cursor.fetchall()
-            logger.debug("FTS results: %d matches", len(rows))
+            logger.debug("FTS results", extra={"matches": len(rows)})
         except sqlite3.OperationalError as e:
-            logger.warning("FTS5 search failed: %s (query: %s)", e, fts_query[:100])
+            logger.warning("FTS5 search failed", extra={"error": str(e), "query": fts_query[:100]})
             return []
 
         return [
@@ -1884,8 +1905,11 @@ class MemoryStore:
 
         deleted = cursor.rowcount
         if deleted > 0:
-            scope_info = f" (scope: {scope})" if scope else ""
-            logger.info("Deleted %d chunks from source: %s%s", deleted, source, scope_info)
+            logger.info("Deleted chunks from source", extra={
+                "count": deleted,
+                "source": source,
+                "scope": scope or None
+            })
         return deleted
 
     def rescope_knowledge(self, old_scope: str, new_scope: str) -> int:
@@ -1900,7 +1924,11 @@ class MemoryStore:
 
         updated = cursor.rowcount
         if updated > 0:
-            logger.info("Rescoped %d chunks: '%s' -> '%s'", updated, old_scope, new_scope)
+            logger.info("Rescoped chunks", extra={
+                "count": updated,
+                "old_scope": old_scope,
+                "new_scope": new_scope
+            })
         return updated
 
     def get_knowledge_sources(self) -> List[Dict[str, Any]]:
@@ -1989,7 +2017,7 @@ class MemoryStore:
 
         deleted = cursor.rowcount
         if deleted > 0:
-            logger.info("Cleaned up %d old messages", deleted)
+            logger.info("Cleaned up old messages", extra={"count": deleted})
         return deleted
 
 

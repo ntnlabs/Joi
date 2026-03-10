@@ -288,7 +288,7 @@ class TopicManager:
             (self.STATUS_MENTIONED, _format_datetime(now), topic_id)
         )
         conn.commit()
-        logger.debug("Marked topic #%d as mentioned", topic_id)
+        logger.debug("Marked topic as mentioned", extra={"topic_id": topic_id})
 
     def mark_expired(self, topic_id: int) -> None:
         """Mark a topic as expired."""
@@ -302,7 +302,7 @@ class TopicManager:
             (self.STATUS_EXPIRED, topic_id)
         )
         conn.commit()
-        logger.debug("Marked topic #%d as expired", topic_id)
+        logger.debug("Marked topic as expired", extra={"topic_id": topic_id})
 
     def mark_dismissed(self, topic_id: int) -> None:
         """Mark a topic as dismissed (user indicated not interested)."""
@@ -316,7 +316,7 @@ class TopicManager:
             (self.STATUS_DISMISSED, topic_id)
         )
         conn.commit()
-        logger.debug("Marked topic #%d as dismissed", topic_id)
+        logger.debug("Marked topic as dismissed", extra={"topic_id": topic_id})
 
     def expire_stale_topics(self) -> int:
         """
@@ -341,7 +341,7 @@ class TopicManager:
 
         expired_count = cursor.rowcount
         if expired_count > 0:
-            logger.info("Expired %d stale topics", expired_count)
+            logger.info("Expired stale topics", extra={"count": expired_count})
         return expired_count
 
     def get_topic_pressure(self, conversation_id: str) -> float:
@@ -400,7 +400,7 @@ class TopicManager:
         conn.commit()
         deleted = cursor.rowcount > 0
         if deleted:
-            logger.debug("Deleted topic #%d", topic_id)
+            logger.debug("Deleted topic", extra={"topic_id": topic_id})
         return deleted
 
     def clear_conversation_topics(self, conversation_id: str) -> int:
@@ -413,5 +413,5 @@ class TopicManager:
         conn.commit()
         deleted = cursor.rowcount
         if deleted > 0:
-            logger.info("Cleared %d topics for %s", deleted, conversation_id)
+            logger.info("Cleared topics", extra={"count": deleted, "conversation_id": conversation_id})
         return deleted

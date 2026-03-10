@@ -28,7 +28,7 @@ def set_routing_state(state: Any) -> None:
     """Set reference to RoutingState from worker (avoids module import issues)."""
     global _routing_state
     _routing_state = state
-    logger.debug("Forwarder routing_state reference set")
+    logger.debug("Forwarder routing_state reference set", extra={"action": "init"})
 
 # Cache the shared secret (fallback if config_state not set)
 _hmac_secret: Optional[bytes] = None
@@ -66,7 +66,7 @@ def set_config_state(config_state) -> None:
     """Set reference to ConfigState from worker (avoids module import issues)."""
     global _config_state_ref
     _config_state_ref = config_state
-    logger.debug("Forwarder config_state reference set")
+    logger.debug("Forwarder config_state reference set", extra={"action": "init"})
 
 
 def _get_client() -> httpx.Client:
@@ -103,9 +103,9 @@ def _get_hmac_secret() -> Optional[bytes]:
         _hmac_secret = get_shared_secret()
         _hmac_secret_loaded = True
         if _hmac_secret:
-            logger.info("HMAC authentication enabled for Joi forwarding")
+            logger.info("HMAC authentication enabled for Joi forwarding", extra={"action": "init", "hmac_enabled": True})
         else:
-            logger.warning("MESH_HMAC_SECRET not set - forwarding without HMAC")
+            logger.warning("HMAC not configured for forwarding", extra={"action": "init", "hmac_enabled": False})
     return _hmac_secret
 
 
@@ -150,16 +150,27 @@ def _forward_async(url: str, payload: Dict[str, Any]) -> None:
 
     try:
         do_forward()
-        logger.debug("Forwarded message_id=%s to Joi", message_id)
+        logger.debug("Forwarded message to Joi", extra={"message_id": message_id, "action": "forward"})
     except Exception as e:
-        logger.warning("Forward to Joi failed (will retry in 10s): %s", e)
+        logger.warning("Forward to Joi failed, will retry", extra={
+            "message_id": message_id,
+            "error": str(e),
+            "retry_in_seconds": 10
+        })
         # Single retry after 10 seconds for transient network issues
         time.sleep(10)
         try:
             do_forward()
-            logger.info("Forwarded message_id=%s to Joi (retry succeeded)", message_id)
+            logger.info("Forwarded message to Joi (retry succeeded)", extra={
+                "message_id": message_id,
+                "action": "forward_retry"
+            })
         except Exception as e2:
-            logger.error("Forward to Joi failed after retry, dropping message_id=%s: %s", message_id, e2)
+            logger.error("Forward to Joi failed after retry, dropping message", extra={
+                "message_id": message_id,
+                "error": str(e2),
+                "action": "forward_dropped"
+            })
     finally:
         with _pending_lock:
             _pending_tasks -= 1
@@ -173,11 +184,11 @@ def _forward_async_to_backend(url: str, payload: Dict[str, Any], backend_name: s
     # Fail-closed: reject if no secret configured for this backend
     secret = get_shared_secret_for_backend(backend_name)
     if not secret:
-        logger.error(
-            "Forward to %s REJECTED: no HMAC secret configured (fail-closed). "
-            "Set MESH_HMAC_SECRET_%s env var.",
-            backend_name, backend_name.upper()
-        )
+        logger.error("Forward rejected: no HMAC secret configured (fail-closed)", extra={
+            "backend": backend_name,
+            "env_var": f"MESH_HMAC_SECRET_{backend_name.upper()}",
+            "action": "forward_rejected"
+        })
         with _pending_lock:
             _pending_tasks -= 1
         return  # Don't send unsigned traffic
@@ -204,16 +215,34 @@ def _forward_async_to_backend(url: str, payload: Dict[str, Any], backend_name: s
 
     try:
         do_forward()
-        logger.debug("Forwarded to %s: message_id=%s", backend_name, message_id)
+        logger.debug("Forwarded to backend", extra={
+            "backend": backend_name,
+            "message_id": message_id,
+            "action": "forward"
+        })
     except Exception as e:
-        logger.warning("Forward to %s failed (will retry in 10s): %s", backend_name, e)
+        logger.warning("Forward to backend failed, will retry", extra={
+            "backend": backend_name,
+            "message_id": message_id,
+            "error": str(e),
+            "retry_in_seconds": 10
+        })
         # Single retry after 10 seconds for transient network issues
         time.sleep(10)
         try:
             do_forward()
-            logger.info("Forwarded to %s: message_id=%s (retry succeeded)", backend_name, message_id)
+            logger.info("Forwarded to backend (retry succeeded)", extra={
+                "backend": backend_name,
+                "message_id": message_id,
+                "action": "forward_retry"
+            })
         except Exception as e2:
-            logger.error("Forward to %s failed after retry, dropping message_id=%s: %s", backend_name, message_id, e2)
+            logger.error("Forward to backend failed after retry, dropping message", extra={
+                "backend": backend_name,
+                "message_id": message_id,
+                "error": str(e2),
+                "action": "forward_dropped"
+            })
     finally:
         with _pending_lock:
             _pending_tasks -= 1
@@ -230,7 +259,11 @@ def forward_to_backend(payload: Dict[str, Any], backend_name: str, backend_url: 
     # Check queue capacity before submitting
     with _pending_lock:
         if _pending_tasks >= _MAX_PENDING:
-            logger.warning("Forward queue full, dropping message for %s", backend_name)
+            logger.warning("Forward queue full, dropping message", extra={
+                "backend": backend_name,
+                "queue_size": _pending_tasks,
+                "action": "forward_dropped"
+            })
             return
         _pending_tasks += 1
 
@@ -241,7 +274,10 @@ def forward_to_backend(payload: Dict[str, Any], backend_name: str, backend_url: 
         # Executor shutdown - log but don't crash
         with _pending_lock:
             _pending_tasks -= 1
-        logger.warning("Forwarder executor shutdown, dropping message for %s", backend_name)
+        logger.warning("Forwarder executor shutdown, dropping message", extra={
+            "backend": backend_name,
+            "action": "forward_dropped"
+        })
 
 
 def forward_to_joi(payload: Dict[str, Any]) -> None:
@@ -262,7 +298,10 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
     # Check queue capacity before submitting
     with _pending_lock:
         if _pending_tasks >= _MAX_PENDING:
-            logger.warning("Forward queue full (%d), dropping message", _pending_tasks)
+            logger.warning("Forward queue full, dropping message", extra={
+                "queue_size": _pending_tasks,
+                "action": "forward_dropped"
+            })
             return
         _pending_tasks += 1
 
@@ -273,7 +312,7 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
         # Executor shutdown - log but don't crash
         with _pending_lock:
             _pending_tasks -= 1
-        logger.warning("Forwarder executor shutdown, dropping message")
+        logger.warning("Forwarder executor shutdown, dropping message", extra={"action": "forward_dropped"})
 
 
 def _forward_document_sync(
@@ -312,10 +351,17 @@ def _forward_document_sync(
 
         resp = client.post(url, content=body, headers=headers)
         resp.raise_for_status()
-        logger.info("Forwarded document %s to Joi", filename)
+        logger.info("Forwarded document to Joi", extra={
+            "filename": filename,
+            "action": "document_forward"
+        })
         return True
     except Exception as e:
-        logger.error("Forward document to Joi failed: %s", e)
+        logger.error("Forward document to Joi failed", extra={
+            "filename": filename,
+            "error": str(e),
+            "action": "document_forward_failed"
+        })
         return False
 
 
