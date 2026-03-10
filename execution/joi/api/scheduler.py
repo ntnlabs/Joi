@@ -44,6 +44,7 @@ class Scheduler:
         self._generate_proactive_message: Optional[Callable] = None
         self._send_to_mesh: Optional[Callable] = None
         self._run_auto_ingestion: Optional[Callable] = None
+        self._cleanup_send_caches: Optional[Callable] = None
         self._InboundConversation = None
 
     def set_dependencies(
@@ -60,6 +61,7 @@ class Scheduler:
         generate_proactive_message: Callable,
         send_to_mesh: Callable,
         run_auto_ingestion: Callable,
+        cleanup_send_caches: Callable,
         InboundConversation,
     ):
         """Set dependencies after construction to avoid circular imports."""
@@ -72,6 +74,7 @@ class Scheduler:
         self._policy_manager = policy_manager
         self._check_fingerprints = check_fingerprints
         self._get_wind_config = get_wind_config
+        self._cleanup_send_caches = cleanup_send_caches
         self._generate_proactive_message = generate_proactive_message
         self._send_to_mesh = send_to_mesh
         self._run_auto_ingestion = run_auto_ingestion
@@ -167,6 +170,7 @@ class Scheduler:
         # Low-priority maintenance tasks every 60 ticks (~1 hour with 60s interval)
         if self._tick_count % 60 == 0:
             self._cleanup_nonces()
+            self._cleanup_send_cache()
             self._check_fts_integrity()
 
         # Weekly HMAC rotation check once per day (1440 ticks with 60s interval)
@@ -197,9 +201,10 @@ class Scheduler:
                 })
                 for path in changed:
                     logger.critical("SECURITY: Tampered file", extra={"path": path})
-                # Give logs time to flush
+                # Give logs time to flush, then exit with cleanup
                 time.sleep(1)
-                os._exit(78)  # EX_CONFIG - configuration error
+                import sys
+                sys.exit(78)  # EX_CONFIG - configuration error
         except Exception as e:
             logger.warning("Scheduler: tamper check failed", extra={"error": str(e)})
 
@@ -212,6 +217,14 @@ class Scheduler:
                     logger.info("Scheduler: cleaned up expired nonces", extra={"count": deleted})
             except Exception as e:
                 logger.warning("Scheduler: nonce cleanup failed", extra={"error": str(e)})
+
+    def _cleanup_send_cache(self):
+        """Cleanup stale entries from send rate-limiting caches."""
+        if self._cleanup_send_caches:
+            try:
+                self._cleanup_send_caches()
+            except Exception as e:
+                logger.warning("Scheduler: send cache cleanup failed", extra={"error": str(e)})
 
     def _check_fts_integrity(self):
         """Periodic check of FTS index integrity."""
