@@ -9,8 +9,8 @@ JOI_BIND_HOST=10.42.0.10
 JOI_BIND_PORT=8443
 
 # --- Logging ---
-# Set to 1 for JSON structured logs, 0 for human-readable text
-JOI_LOG_JSON=1
+# Set to 1 for JSON structured logs, 0 for human-readable text (default)
+#JOI_LOG_JSON=0
 #JOI_LOG_LEVEL=DEBUG
 
 # --- Message Limits ---
