@@ -43,7 +43,7 @@ def get_shared_secret() -> Optional[bytes]:
                 # Secret file contains hex-encoded bytes
                 return bytes.fromhex(secret)
         except Exception as e:
-            logger.warning("Failed to read HMAC secret file: %s", e)
+            logger.warning("Failed to read HMAC secret file", extra={"error": str(e)})
 
     # Fall back to environment
     secret = os.getenv("JOI_HMAC_SECRET")
@@ -180,7 +180,11 @@ class NonceStore:
             (nonce,)
         )
         if cursor.fetchone() is not None:
-            logger.warning("Replay detected: nonce=%s source=%s", nonce[:8], source)
+            logger.warning("Replay detected", extra={
+                "nonce": nonce[:8],
+                "source": source,
+                "action": "replay_blocked"
+            })
             return False, "replay_detected"
 
         # Store new nonce
@@ -193,7 +197,7 @@ class NonceStore:
             return True, ""
         except Exception as e:
             # Race condition: another thread may have inserted
-            logger.warning("Nonce insert failed (possible race): %s", e)
+            logger.warning("Nonce insert failed (possible race)", extra={"error": str(e)})
             return False, "replay_detected"
 
     def _cleanup_expired(self, now_ms: int):
@@ -214,7 +218,7 @@ class NonceStore:
         deleted = cursor.rowcount
         self._conn.commit()
         if deleted > 0:
-            logger.debug("Cleaned up %d expired nonces", deleted)
+            logger.debug("Cleaned up expired nonces", extra={"count": deleted})
         return deleted
 
 

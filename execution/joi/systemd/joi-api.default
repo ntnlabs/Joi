@@ -7,6 +7,10 @@
 # Replace with your Joi VM's Nebula IP (e.g., 10.42.0.10)
 JOI_BIND_HOST=10.42.0.10
 JOI_BIND_PORT=8443
+
+# --- Logging ---
+# Set to 1 for JSON structured logs, 0 for human-readable text
+JOI_LOG_JSON=1
 #JOI_LOG_LEVEL=DEBUG
 
 # --- Message Limits ---
@@ -21,6 +25,8 @@ JOI_SIGNAL_FORMAT_ENABLED=1
 JOI_OLLAMA_URL=http://localhost:11434
 JOI_OLLAMA_MODEL=llama3
 JOI_LLM_TIMEOUT=180
+# How long to keep model loaded in VRAM after request (e.g., 30m, 1h, 0 to unload immediately)
+JOI_LLM_KEEP_ALIVE=30m
 # Context window size - prefer setting this in Modelfile (PARAMETER num_ctx)
 # This env var overrides Modelfile if set. Use 0 or leave unset to use Modelfile value.
 # Only use as fallback when you can't control the Modelfile.
