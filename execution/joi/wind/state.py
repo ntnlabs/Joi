@@ -98,27 +98,25 @@ class WindStateManager:
     def get_or_create_state(self, conversation_id: str) -> WindState:
         """
         Get Wind state for a conversation, creating default if not exists.
-        """
-        state = self.get_state(conversation_id)
-        if state:
-            return state
 
-        # Create default state
+        Uses INSERT OR IGNORE for atomicity - avoids TOCTOU race where
+        concurrent threads could both see "not exists" and both INSERT.
+        """
         now = datetime.now()
         conn = self._connect()
+
+        # Atomic insert - silently ignores if already exists
         conn.execute(
             """
-            INSERT INTO wind_state (conversation_id, updated_at)
+            INSERT OR IGNORE INTO wind_state (conversation_id, updated_at)
             VALUES (?, ?)
             """,
             (conversation_id, _format_datetime(now))
         )
         conn.commit()
 
-        return WindState(
-            conversation_id=conversation_id,
-            updated_at=now,
-        )
+        # Now fetch the state (guaranteed to exist)
+        return self.get_state(conversation_id)
 
     def update_state(self, conversation_id: str, **updates) -> None:
         """
@@ -171,29 +169,47 @@ class WindStateManager:
         - proactive_sent_today (incremented, or reset if new day)
         - proactive_day_bucket
         - unanswered_proactive_count (incremented)
+
+        Uses atomic SQL update to avoid read-modify-write race with
+        record_user_interaction (which resets unanswered_proactive_count).
         """
         now = datetime.now()
         today_bucket = now.strftime("%Y-%m-%d")
 
-        state = self.get_or_create_state(conversation_id)
+        # Ensure state exists (atomic)
+        self.get_or_create_state(conversation_id)
 
-        # Check if we need to reset daily counter
-        if state.proactive_day_bucket != today_bucket:
-            new_count = 1
-        else:
-            new_count = state.proactive_sent_today + 1
+        conn = self._connect()
 
-        self.update_state(
-            conversation_id,
-            last_proactive_sent_at=now,
-            proactive_sent_today=new_count,
-            proactive_day_bucket=today_bucket,
-            unanswered_proactive_count=state.unanswered_proactive_count + 1,
+        # Atomic update with conditional reset and increment
+        # If day bucket changed, reset to 1; otherwise increment
+        # unanswered_proactive_count always increments atomically
+        conn.execute(
+            """
+            UPDATE wind_state
+            SET last_proactive_sent_at = ?,
+                proactive_sent_today = CASE
+                    WHEN proactive_day_bucket != ? OR proactive_day_bucket IS NULL
+                    THEN 1
+                    ELSE proactive_sent_today + 1
+                END,
+                proactive_day_bucket = ?,
+                unanswered_proactive_count = unanswered_proactive_count + 1,
+                updated_at = ?
+            WHERE conversation_id = ?
+            """,
+            (_format_datetime(now), today_bucket, today_bucket,
+             _format_datetime(now), conversation_id)
         )
-        logger.info(
-            "Recorded proactive sent for %s (today: %d, unanswered: %d)",
-            conversation_id, new_count, state.unanswered_proactive_count + 1
-        )
+        conn.commit()
+
+        # Log with fresh state
+        state = self.get_state(conversation_id)
+        logger.info("Recorded proactive sent", extra={
+            "conversation_id": conversation_id,
+            "today": state.proactive_sent_today,
+            "unanswered": state.unanswered_proactive_count
+        })
 
     def record_user_interaction(self, conversation_id: str) -> None:
         """
