@@ -206,10 +206,10 @@ class Scheduler:
                 })
                 for path in changed:
                     logger.critical("SECURITY: Tampered file", extra={"path": path})
-                # Give logs time to flush, then exit with cleanup
+                # Give logs time to flush, then terminate entire process
                 time.sleep(1)
-                import sys
-                sys.exit(78)  # EX_CONFIG - configuration error
+                import os
+                os._exit(78)  # EX_CONFIG - must use _exit to kill process, not just thread
         except Exception as e:
             logger.warning("Scheduler: tamper check failed", extra={"error": str(e)})
 
