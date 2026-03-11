@@ -321,21 +321,26 @@ _SEND_CACHE_CLEANUP_AGE = 3600  # Remove entries older than 1 hour
 
 
 def _cleanup_send_caches():
-    """Remove old entries from send caches to prevent unbounded growth."""
+    """Remove old entries from send caches to prevent unbounded growth.
+
+    Note: Only cleans up timestamps, NOT locks. Locks may still be held by
+    threads and deleting them would allow concurrent threads to bypass
+    serialization by getting new locks for the same conversation.
+    """
     now = time.time()
     cutoff = now - _SEND_CACHE_CLEANUP_AGE
     with _send_locks_lock:
-        # Find stale conversation IDs
+        # Find stale conversation IDs and remove timestamps only
         stale_ids = [cid for cid, ts in _last_send_times.items() if ts < cutoff]
         for cid in stale_ids:
             _last_send_times.pop(cid, None)
-            _send_locks.pop(cid, None)
-        # If still too large, remove oldest entries
+            # DON'T delete lock - it may still be held by another thread
+        # If still too large, remove oldest timestamp entries
         if len(_last_send_times) > _SEND_CACHE_MAX_SIZE:
             sorted_ids = sorted(_last_send_times.items(), key=lambda x: x[1])
             for cid, _ in sorted_ids[:len(sorted_ids) - _SEND_CACHE_MAX_SIZE]:
                 _last_send_times.pop(cid, None)
-                _send_locks.pop(cid, None)
+                # DON'T delete lock - it may still be held
 
 
 def _get_send_lock(convo_id: str) -> threading.Lock:
@@ -882,7 +887,7 @@ async def hmac_verification_middleware(request: Request, call_next):
             content={"status": "error", "error": {"code": "hmac_invalid_timestamp", "message": "Invalid timestamp format"}}
         )
 
-    # Verify timestamp freshness
+    # Verify timestamp freshness (cheap check first)
     ts_valid, ts_error = verify_timestamp(timestamp, HMAC_TIMESTAMP_TOLERANCE_MS)
     if not ts_valid:
         logger.warning("HMAC auth failed: timestamp", extra={
@@ -894,23 +899,10 @@ async def hmac_verification_middleware(request: Request, call_next):
             content={"status": "error", "error": {"code": ts_error, "message": "Request timestamp out of tolerance"}}
         )
 
-    # Verify nonce not replayed
-    nonce_valid, nonce_error = nonce_store.check_and_store(nonce, source="mesh")
-    if not nonce_valid:
-        logger.warning("HMAC auth failed: nonce", extra={
-            "action": "auth_failed",
-            "reason": nonce_error,
-            "nonce": nonce[:8]
-        })
-        return JSONResponse(
-            status_code=401,
-            content={"status": "error", "error": {"code": nonce_error, "message": "Nonce already used"}}
-        )
-
     # Read body for HMAC verification
     body = await request.body()
 
-    # Verify HMAC signature - try all valid secrets (supports grace period)
+    # Verify HMAC signature BEFORE storing nonce (prevents unauthenticated nonce DoS)
     valid_secrets = _get_valid_hmac_secrets()
     signature_valid = False
     for secret in valid_secrets:
@@ -926,6 +918,19 @@ async def hmac_verification_middleware(request: Request, call_next):
         return JSONResponse(
             status_code=401,
             content={"status": "error", "error": {"code": "hmac_invalid_signature", "message": "Invalid HMAC signature"}}
+        )
+
+    # Signature valid - now check and store nonce for replay protection
+    nonce_valid, nonce_error = nonce_store.check_and_store(nonce, source="mesh")
+    if not nonce_valid:
+        logger.warning("HMAC auth failed: nonce replay", extra={
+            "action": "auth_failed",
+            "reason": nonce_error,
+            "nonce": nonce[:8]
+        })
+        return JSONResponse(
+            status_code=401,
+            content={"status": "error", "error": {"code": nonce_error, "message": "Nonce already used"}}
         )
 
     logger.debug("HMAC auth passed", extra={"path": str(request.url.path)})
@@ -1349,9 +1354,17 @@ def receive_message(msg: InboundMessage):
         # Generate brief reaction response (skip for store_only)
         # Queue the LLM call to ensure all LLM access is serialized
         if not msg.store_only:
-            def process_reaction() -> InboundResponse:
+            def process_reaction(queue_msg) -> InboundResponse:
                 response_text = _generate_reaction_response(emoji, msg.conversation.id)
                 if response_text:
+                    # Check if cancelled before committing (deferred commit pattern)
+                    if queue_msg.cancelled:
+                        logger.warning("Reaction abandoned after timeout", extra={
+                            "message_id": msg.message_id,
+                            "action": "deferred_abort"
+                        })
+                        return InboundResponse(status="ok", message_id=msg.message_id)
+
                     _send_to_mesh(
                         recipient_id=msg.sender.id,
                         recipient_transport_id=msg.sender.transport_id,
@@ -1457,19 +1470,30 @@ def receive_message(msg: InboundMessage):
     # --- Queue the LLM processing ---
     # This ensures messages are processed sequentially with owner priority
 
-    def process_with_llm() -> InboundResponse:
-        """Process message with LLM - runs in queue worker thread."""
+    def process_with_llm(queue_msg) -> InboundResponse:
+        """Process message with LLM - runs in queue worker thread.
+
+        Uses deferred commit pattern: collect pending work, only commit at end if not cancelled.
+        Heartbeat signals keep timeout from firing during long LLM operations.
+        """
+        # Pending work to commit at the end (deferred commit pattern)
+        pending_fact = None
+        pending_response = None
+
         # Check for "remember this" requests (only from allowed senders)
         # Uses hybrid approach: keyword filter + LLM detection/extraction
         # Note: This is inside the queue to ensure all LLM calls are serialized
         if not msg.store_only:
-            _detect_and_extract_fact(
+            queue_msg.heartbeat()  # Signal still working
+            pending_fact = _detect_and_extract_fact(
                 user_text,
                 conversation_id=fact_key,
                 sender_id=msg.sender.transport_id,
                 sender_name=msg.sender.display_name or "",
                 is_group=(msg.conversation.type == "group"),
             )
+            # Note: _detect_and_extract_fact already stores the fact, so for true deferred commit
+            # we'd need to refactor it. For now, heartbeat extends timeout to reduce partial state.
 
         # Get per-conversation context size (or use global default)
         custom_context = get_context_for_conversation(
@@ -1544,7 +1568,10 @@ def receive_message(msg: InboundMessage):
             "context_source": "custom" if custom_context else "default",
             "action": "llm_generate"
         })
+
+        queue_msg.heartbeat()  # Signal still working before LLM call
         llm_response = llm.chat(messages=chat_messages, system=enriched_prompt, model=custom_model)
+        queue_msg.heartbeat()  # Signal still working after LLM call
 
         if llm_response.error:
             logger.error("LLM error", extra={"error": llm_response.error})
@@ -1577,7 +1604,16 @@ def receive_message(msg: InboundMessage):
             "action": "llm_response"
         })
 
-        # Send response back via mesh
+        # Check if cancelled before committing (deferred commit pattern)
+        if queue_msg.cancelled:
+            logger.warning("Message abandoned after timeout (deferred abort)", extra={
+                "message_id": msg.message_id,
+                "response_generated": True,
+                "action": "deferred_abort"
+            })
+            return InboundResponse(status="ok", message_id=msg.message_id)
+
+        # --- Commit phase: send response and store ---
         outbound_message_id = str(uuid.uuid4())
         send_result = _send_to_mesh(
             recipient_id=msg.sender.id,
