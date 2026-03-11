@@ -13,16 +13,36 @@ logger = logging.getLogger("joi.api.queue")
 
 # --- Priority Message Queue ---
 
+# Monotonic sequence counter for FIFO ordering within same priority
+_message_seq = 0
+_message_seq_lock = threading.Lock()
+
+
+def _next_seq() -> int:
+    """Get next sequence number for message ordering."""
+    global _message_seq
+    with _message_seq_lock:
+        _message_seq += 1
+        return _message_seq
+
+
 @dataclass(order=True)
 class PrioritizedMessage:
     """Message wrapper for priority queue. Lower priority number = higher priority."""
     priority: int
+    sequence: int  # Monotonic counter for FIFO within same priority
     timestamp: float = field(compare=False)
     message_id: str = field(compare=False)
     handler: Callable = field(compare=False)
     result: Any = field(default=None, compare=False)
     error: Optional[str] = field(default=None, compare=False)
     done_event: threading.Event = field(default_factory=threading.Event, compare=False)
+    cancelled: bool = field(default=False, compare=False)
+    last_heartbeat: float = field(default_factory=time.time, compare=False)
+
+    def heartbeat(self) -> None:
+        """Signal that processing is still active (extends timeout)."""
+        self.last_heartbeat = time.time()
 
 
 class MessageQueue:
@@ -53,6 +73,7 @@ class MessageQueue:
         # Put a sentinel to unblock the queue
         self._queue.put(PrioritizedMessage(
             priority=999,
+            sequence=_next_seq(),
             timestamp=time.time(),
             message_id="__stop__",
             handler=lambda: None,
@@ -62,26 +83,32 @@ class MessageQueue:
             self._worker_thread = None
         logger.info("Message queue worker stopped", extra={"action": "queue_stop"})
 
+    # Heartbeat settings for dynamic timeout extension
+    HEARTBEAT_INTERVAL = 30.0  # Check heartbeat every 30s
+    MAX_EXTENSIONS = 5  # Max number of timeout extensions
+
     def enqueue(self, message_id: str, handler: Callable, is_owner: bool = False, timeout: float = 300.0) -> Any:
         """
         Add message to queue and wait for processing.
 
         Args:
             message_id: Unique message identifier
-            handler: Function to call for processing (returns result)
+            handler: Function to call for processing (returns result).
+                     Handler receives the PrioritizedMessage as argument for heartbeat support.
             is_owner: If True, gets priority processing
-            timeout: Max seconds to wait for processing
+            timeout: Max seconds to wait for processing (can be extended via heartbeat)
 
         Returns:
             Result from handler
 
         Raises:
-            TimeoutError: If processing takes too long
+            TimeoutError: If processing takes too long (marks message as cancelled)
             Exception: If handler raises an error
         """
         priority = self.PRIORITY_OWNER if is_owner else self.PRIORITY_NORMAL
         msg = PrioritizedMessage(
             priority=priority,
+            sequence=_next_seq(),
             timestamp=time.time(),
             message_id=message_id,
             handler=handler,
@@ -106,9 +133,37 @@ class MessageQueue:
             })
             raise Exception("Message queue full, try again later")
 
-        # Wait for processing to complete
-        if not msg.done_event.wait(timeout=timeout):
-            raise TimeoutError(f"Message {message_id} processing timed out after {timeout}s")
+        # Wait for processing with heartbeat-based timeout extension
+        extensions = 0
+        deadline = time.time() + timeout
+
+        while True:
+            remaining = deadline - time.time()
+            if remaining <= 0:
+                # Timeout reached - mark as cancelled for deferred commit
+                msg.cancelled = True
+                logger.warning("Queue timeout, marking cancelled", extra={
+                    "message_id": message_id,
+                    "extensions": extensions,
+                    "action": "queue_timeout"
+                })
+                raise TimeoutError(f"Message {message_id} processing timed out after {timeout}s (extensions: {extensions})")
+
+            # Wait in intervals to check heartbeat
+            wait_time = min(remaining, self.HEARTBEAT_INTERVAL)
+            if msg.done_event.wait(timeout=wait_time):
+                break  # Processing completed
+
+            # Check if handler sent heartbeat recently (still working)
+            if time.time() - msg.last_heartbeat < self.HEARTBEAT_INTERVAL:
+                if extensions < self.MAX_EXTENSIONS:
+                    deadline += self.HEARTBEAT_INTERVAL
+                    extensions += 1
+                    logger.debug("Extended timeout via heartbeat", extra={
+                        "message_id": message_id,
+                        "extensions": extensions,
+                        "action": "timeout_extend"
+                    })
 
         if msg.error:
             raise Exception(msg.error)
@@ -136,7 +191,8 @@ class MessageQueue:
             })
 
             try:
-                msg.result = msg.handler()
+                # Pass message to handler for heartbeat support
+                msg.result = msg.handler(msg)
             except Exception as e:
                 logger.error("Queue ERROR", extra={
                     "message_id": msg.message_id,
@@ -149,6 +205,7 @@ class MessageQueue:
                 logger.info("Queue DONE", extra={
                     "message_id": msg.message_id,
                     "duration_ms": int(elapsed * 1000),
+                    "cancelled": msg.cancelled,
                     "action": "queue_process_done"
                 })
                 self._current_message_id = None
