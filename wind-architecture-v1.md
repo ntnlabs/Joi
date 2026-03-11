@@ -1417,20 +1417,23 @@ Joi "discovers" something interesting:
 
 ### Detection Methods
 
+**Important:** Avoid keyword matching - unreliable across languages (Slovak, German, etc.) and with typos. Use LLM-based detection instead.
+
 **Emotional content detection:**
-- Keyword triggers: worried, stressed, anxious, excited, scared, nervous, happy, sad
 - LLM annotation during message processing: "Rate emotional weight 0-3"
+- Or add to consolidation prompt: "Flag if emotionally significant"
 - Store flag in message metadata or wind_state
 
 **Unfinished threads:**
-- Parse last Joi message for question marks
-- Pattern match: "let me know", "tell me how", "curious about"
+- LLM check on last Joi message: "Does this expect a follow-up?"
+- Or during tension extraction: flag open questions
 - Track topics introduced but not concluded
 
 **Outcome curiosity:**
-- Pattern match: "tomorrow", "next week", "appointment", "meeting", "interview"
-- Store with expected follow-up date
-- Surface as topic when date arrives
+- LLM extracts future events during message processing
+- Structured output: `{"event": "doctor appointment", "expected_date": "2026-03-12"}`
+- Store in pending_topics with due date
+- Surface as curiosity topic when date arrives
 
 ### Rejected Ideas
 
