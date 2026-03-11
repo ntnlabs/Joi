@@ -1,11 +1,12 @@
-from typing import Any, Dict, Optional
-from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional
 import atexit
 import base64
 import json
 import logging
 import os
+import queue
 import threading
+import time
 
 import httpx
 
@@ -38,14 +39,14 @@ _hmac_secret_loaded = False
 _client: httpx.Client = None
 _client_lock = threading.Lock()
 
-# Bounded thread pool for async forwarding (prevents unbounded thread spawning)
+# Fixed worker queues for causal ordering (same conversation always goes to same worker)
 # Configurable via environment for high-traffic scenarios
-_FORWARD_WORKERS = int(os.getenv("MESH_FORWARD_WORKERS", "4"))
+_NUM_WORKERS = int(os.getenv("MESH_FORWARD_WORKERS", "4"))
 _MAX_PENDING = int(os.getenv("MESH_FORWARD_MAX_PENDING", "20"))
-_executor: ThreadPoolExecutor = ThreadPoolExecutor(max_workers=_FORWARD_WORKERS, thread_name_prefix="forward")
-_pending_tasks = 0
-_pending_lock = threading.Lock()
-atexit.register(_executor.shutdown, wait=False)
+_worker_queues: List[queue.Queue] = []
+_workers: List[threading.Thread] = []
+_workers_started = False
+_workers_lock = threading.Lock()
 
 
 def _cleanup_client():
@@ -120,9 +121,56 @@ def _get_config_hash() -> Optional[str]:
     return None
 
 
-def _forward_async(url: str, payload: Dict[str, Any]) -> None:
-    """Forward message in background thread with HMAC signing (legacy - uses default secret)."""
-    global _pending_tasks
+def _worker_loop(worker_id: int) -> None:
+    """Process messages for this worker sequentially (ensures causal ordering)."""
+    q = _worker_queues[worker_id]
+    while True:
+        try:
+            work_item = q.get()
+            if work_item is None:  # Shutdown signal
+                break
+            url, payload, backend_name, secret = work_item
+            _forward_sync(url, payload, backend_name, secret)
+            q.task_done()
+        except Exception as e:
+            logger.error("Worker loop error", extra={"worker": worker_id, "error": str(e)})
+
+
+def _init_workers() -> None:
+    """Initialize worker queues and threads (lazy, on first forward)."""
+    global _worker_queues, _workers, _workers_started
+    with _workers_lock:
+        if _workers_started:
+            return
+        _worker_queues = [queue.Queue(maxsize=_MAX_PENDING) for _ in range(_NUM_WORKERS)]
+        for i in range(_NUM_WORKERS):
+            t = threading.Thread(target=_worker_loop, args=(i,), name=f"forward-{i}", daemon=True)
+            t.start()
+            _workers.append(t)
+        _workers_started = True
+        logger.info("Forward workers initialized", extra={"workers": _NUM_WORKERS, "action": "init"})
+
+
+def _shutdown_workers() -> None:
+    """Shutdown worker threads gracefully."""
+    global _workers_started
+    with _workers_lock:
+        if not _workers_started:
+            return
+        # Send shutdown signal to all workers
+        for q in _worker_queues:
+            try:
+                q.put_nowait(None)
+            except queue.Full:
+                pass
+        _workers_started = False
+
+
+atexit.register(_shutdown_workers)
+
+
+def _forward_sync(url: str, payload: Dict[str, Any], backend_name: Optional[str], secret: Optional[bytes]) -> None:
+    """Forward message synchronously with retry. Called by worker threads."""
     message_id = payload.get("message_id", "unknown")
 
     def do_forward() -> bool:
@@ -134,7 +182,6 @@ def _forward_async(url: str, payload: Dict[str, Any]) -> None:
 
         # Build headers with HMAC if secret is configured
         headers = {"Content-Type": "application/json"}
-        secret = _get_hmac_secret()
         if secret:
             hmac_headers = create_request_headers(body, secret)
             headers.update(hmac_headers)
@@ -148,12 +195,16 @@ def _forward_async(url: str, payload: Dict[str, Any]) -> None:
         resp.raise_for_status()
         return True
 
+    log_extra = {"message_id": message_id, "action": "forward"}
+    if backend_name:
+        log_extra["backend"] = backend_name
+
     try:
         do_forward()
-        logger.debug("Forwarded message to Joi", extra={"message_id": message_id, "action": "forward"})
+        logger.debug("Forwarded message", extra=log_extra)
     except Exception as e:
-        logger.warning("Forward to Joi failed, will retry", extra={
-            "message_id": message_id,
+        logger.warning("Forward failed, will retry", extra={
+            **log_extra,
             "error": str(e),
             "retry_in_seconds": 10
         })
@@ -161,25 +212,26 @@ def _forward_async(url: str, payload: Dict[str, Any]) -> None:
         time.sleep(10)
         try:
             do_forward()
-            logger.info("Forwarded message to Joi (retry succeeded)", extra={
-                "message_id": message_id,
-                "action": "forward_retry"
-            })
+            log_extra["action"] = "forward_retry"
+            logger.info("Forward retry succeeded", extra=log_extra)
         except Exception as e2:
-            logger.error("Forward to Joi failed after retry, dropping message", extra={
-                "message_id": message_id,
-                "error": str(e2),
-                "action": "forward_dropped"
-            })
-    finally:
-        with _pending_lock:
-            _pending_tasks -= 1
+            log_extra["action"] = "forward_dropped"
+            log_extra["error"] = str(e2)
+            logger.error("Forward failed after retry, dropping message", extra=log_extra)
 
 
-def _forward_async_to_backend(url: str, payload: Dict[str, Any], backend_name: str) -> None:
-    """Forward message to specified backend with backend-specific HMAC."""
-    global _pending_tasks
-    message_id = payload.get("message_id", "unknown")
+def _get_conversation_id(payload: Dict[str, Any]) -> str:
+    """Extract conversation ID for worker routing (group_id or sender)."""
+    # Group messages use group_id, DMs use sender
+    return payload.get("group_id") or payload.get("sender", {}).get("transport_id", "unknown")
+
+
+def forward_to_backend(payload: Dict[str, Any], backend_name: str, backend_url: str) -> None:
+    """Forward message to specified backend with causal ordering."""
+    if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
+        return
+
+    _init_workers()
 
     # Fail-closed: reject if no secret configured for this backend
     secret = get_shared_secret_for_backend(backend_name)
@@ -189,100 +241,26 @@ def _forward_async_to_backend(url: str, payload: Dict[str, Any], backend_name: s
             "env_var": f"MESH_HMAC_SECRET_{backend_name.upper()}",
             "action": "forward_rejected"
         })
-        with _pending_lock:
-            _pending_tasks -= 1
-        return  # Don't send unsigned traffic
-
-    def do_forward() -> bool:
-        """Attempt to forward. Returns True on success."""
-        client = _get_client()
-
-        # Serialize payload to JSON bytes
-        body = json.dumps(payload).encode("utf-8")
-
-        headers = {"Content-Type": "application/json"}
-        hmac_headers = create_request_headers(body, secret)
-        headers.update(hmac_headers)
-
-        # Add config hash for sync verification
-        config_hash = _get_config_hash()
-        if config_hash:
-            headers["X-Config-Hash"] = config_hash
-
-        resp = client.post(url, content=body, headers=headers)
-        resp.raise_for_status()
-        return True
-
-    try:
-        do_forward()
-        logger.debug("Forwarded to backend", extra={
-            "backend": backend_name,
-            "message_id": message_id,
-            "action": "forward"
-        })
-    except Exception as e:
-        logger.warning("Forward to backend failed, will retry", extra={
-            "backend": backend_name,
-            "message_id": message_id,
-            "error": str(e),
-            "retry_in_seconds": 10
-        })
-        # Single retry after 10 seconds for transient network issues
-        time.sleep(10)
-        try:
-            do_forward()
-            logger.info("Forwarded to backend (retry succeeded)", extra={
-                "backend": backend_name,
-                "message_id": message_id,
-                "action": "forward_retry"
-            })
-        except Exception as e2:
-            logger.error("Forward to backend failed after retry, dropping message", extra={
-                "backend": backend_name,
-                "message_id": message_id,
-                "error": str(e2),
-                "action": "forward_dropped"
-            })
-    finally:
-        with _pending_lock:
-            _pending_tasks -= 1
-
-
-def forward_to_backend(payload: Dict[str, Any], backend_name: str, backend_url: str) -> None:
-    """Forward message to specified backend."""
-    global _pending_tasks
-    if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
         return
 
     url = f"{backend_url}/api/v1/message/inbound"
 
-    # Check queue capacity before submitting
-    with _pending_lock:
-        if _pending_tasks >= _MAX_PENDING:
-            logger.warning("Forward queue full, dropping message", extra={
-                "backend": backend_name,
-                "queue_size": _pending_tasks,
-                "action": "forward_dropped"
-            })
-            return
-        _pending_tasks += 1
+    # Hash conversation to worker - same convo always goes to same worker
+    convo_id = _get_conversation_id(payload)
+    worker_idx = hash(convo_id) % _NUM_WORKERS
 
-    # Submit to bounded thread pool
     try:
-        _executor.submit(_forward_async_to_backend, url, payload, backend_name)
-    except RuntimeError:
-        # Executor shutdown - log but don't crash
-        with _pending_lock:
-            _pending_tasks -= 1
-        logger.warning("Forwarder executor shutdown, dropping message", extra={
+        _worker_queues[worker_idx].put_nowait((url, payload, backend_name, secret))
+    except queue.Full:
+        logger.warning("Forward queue full, dropping message", extra={
             "backend": backend_name,
+            "worker": worker_idx,
             "action": "forward_dropped"
         })
 
 
 def forward_to_joi(payload: Dict[str, Any]) -> None:
-    """Forward message - routes based on config or uses default."""
-    global _pending_tasks
+    """Forward message to Joi with causal ordering per conversation."""
     if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
         return
 
@@ -292,27 +270,23 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
         forward_to_backend(payload, backend_name, backend_url)
         return
 
+    _init_workers()
+
     # Legacy behavior - use MESH_JOI_URL with default HMAC secret
     url = f"{MESH_JOI_URL}/api/v1/message/inbound"
+    secret = _get_hmac_secret()
 
-    # Check queue capacity before submitting
-    with _pending_lock:
-        if _pending_tasks >= _MAX_PENDING:
-            logger.warning("Forward queue full, dropping message", extra={
-                "queue_size": _pending_tasks,
-                "action": "forward_dropped"
-            })
-            return
-        _pending_tasks += 1
+    # Hash conversation to worker - same convo always goes to same worker
+    convo_id = _get_conversation_id(payload)
+    worker_idx = hash(convo_id) % _NUM_WORKERS
 
-    # Submit to bounded thread pool
     try:
-        _executor.submit(_forward_async, url, payload)
-    except RuntimeError:
-        # Executor shutdown - log but don't crash
-        with _pending_lock:
-            _pending_tasks -= 1
-        logger.warning("Forwarder executor shutdown, dropping message", extra={"action": "forward_dropped"})
+        _worker_queues[worker_idx].put_nowait((url, payload, None, secret))
+    except queue.Full:
+        logger.warning("Forward queue full, dropping message", extra={
+            "worker": worker_idx,
+            "action": "forward_dropped"
+        })
 
 
 def _forward_document_sync(
