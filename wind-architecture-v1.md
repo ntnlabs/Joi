@@ -1435,11 +1435,47 @@ Joi "discovers" something interesting:
 - Store in pending_topics with due date
 - Surface as curiosity topic when date arrives
 
+### Background Processing Architecture
+
+Wind metadata extraction runs asynchronously after user gets their response.
+
+**Two-tier queue model:**
+```
+HIGH PRIORITY QUEUE          LOW PRIORITY QUEUE
+─────────────────────        ────────────────────────
+User messages                Wind metadata extraction
+  ↓                          - Emotional weight
+[Immediate response]         - Future events
+                             - Unfinished threads
+                             - Tension mining
+                                  ↓
+                             [Processed during idle]
+```
+
+**Same model, minimal context:**
+- Use the same LLM (stays warm, no cold start)
+- Background tasks are fast - just message + extraction prompt
+- No RAG/knowledge/full context overhead
+
+**Flush on full:**
+- Low-priority queue has max size threshold (e.g., 20)
+- When threshold hit, temporarily elevate to high priority
+- Flush until queue drops below threshold
+- Return to low priority
+
+**Benefits:**
+- User response latency unchanged
+- Model stays warm (no cold start penalty)
+- Prevents unbounded queue growth
+- Metadata stays fresh (not hours stale)
+- Natural backpressure under load
+
 ### Rejected Ideas
 
 - **Reciprocity tracking**: Would hurt introverts who never reach out first
 - **Anti-pattern detection**: Over-complicated, randomness solves it better
 - **Energy matching**: User will just say "busy" - not useful signal
+- **Separate smaller model**: Cold start issues, model juggling complexity
 
 ## Summary
 
