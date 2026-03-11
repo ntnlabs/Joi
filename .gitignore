@@ -2,6 +2,7 @@
 .claude/
 
 # Personal/private files
+CLAUDE.md
 hardware-budget-analysis.md
 checklists.md
 dev-notes.md
