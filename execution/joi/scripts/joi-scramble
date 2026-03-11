@@ -159,9 +159,12 @@ db_scalar() {
     local output
     output=$(db_exec "$sql")
 
-    # SQLCipher can emit a standalone "ok" line from PRAGMA key.
-    # Return first real scalar value, skipping "ok".
-    printf "%s\n" "$output" | awk 'NF && $0 != "ok" { print; exit }'
+    # SQLCipher emits "ok" as first line from PRAGMA key.
+    # Skip only the first line if it's exactly "ok", not subsequent lines.
+    printf "%s\n" "$output" | awk '
+        NR == 1 && $0 == "ok" { next }
+        NF { print; exit }
+    '
 }
 
 confirm_or_abort() {
