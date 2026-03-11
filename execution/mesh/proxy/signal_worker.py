@@ -47,35 +47,36 @@ SIGNAL_ATTACHMENTS_DIR = Path(os.getenv("SIGNAL_ATTACHMENTS_DIR", "/var/lib/sign
 
 def _redact_pii(value: str, pii_type: str = "phone") -> str:
     """
-    Redact PII when privacy mode is enabled.
+    Redact PII when privacy mode is enabled. Fails CLOSED - returns redacted on error.
 
     Args:
         value: The value to potentially redact
         pii_type: Type of PII ("phone", "group", "uuid")
 
     Returns:
-        Redacted value if privacy mode, original otherwise
+        Redacted value if privacy mode or on error, original only if privacy mode explicitly disabled
     """
-    # Import here to avoid circular dependency at module load
-    # _config_state may not be initialized yet
+    def _do_redact(val: str, ptype: str) -> str:
+        """Apply redaction based on type."""
+        if ptype == "phone":
+            # Show last 4 digits: +1234567890 -> +***7890
+            return f"+***{val[-4:]}" if len(val) >= 4 else "+***"
+        elif ptype == "group":
+            # Show first 4 chars of group ID
+            return f"[GRP:{val[:4]}...]" if len(val) >= 4 else "[GRP:...]"
+        elif ptype == "uuid":
+            # Show first 8 chars of UUID
+            return f"{val[:8]}..." if len(val) > 8 else "***"
+        else:
+            return "[REDACTED]"
+
     try:
         if _config_state.is_privacy_mode():
-            if pii_type == "phone":
-                # Show last 4 digits: +1234567890 -> +***7890
-                if len(value) > 4:
-                    return f"+***{value[-4:]}"
-                return "***"
-            elif pii_type == "group":
-                # Show first 8 chars of group ID
-                return f"[GRP:{value[:8]}...]" if len(value) > 8 else "[GRP:***]"
-            elif pii_type == "uuid":
-                # Show first 8 chars of UUID
-                return f"{value[:8]}..." if len(value) > 8 else "***"
-            else:
-                return "***"
+            return _do_redact(value, pii_type)
+        return value
     except Exception:
-        pass  # _config_state not ready yet
-    return value
+        # Fail CLOSED - if we can't check privacy mode, assume it's enabled
+        return _do_redact(value, pii_type)
 
 
 # --- Dedupe Cache ---
@@ -440,7 +441,7 @@ _config_state.set_routing_state(_routing_state)
 
 # Global RPC client (shared between receiver thread and HTTP server)
 _rpc: Optional[JsonRpcStdioClient] = None
-_rpc_lock = threading.Lock()
+_rpc_lock = threading.RLock()  # Reentrant: watchdog calls restart while holding lock
 _account: str = ""
 _account_uuid: str = ""
 _dedupe_cache = MessageDedupeCache()
@@ -630,7 +631,7 @@ def verify_hmac_auth():
         })
         return jsonify({"status": "error", "error": {"code": "hmac_invalid_timestamp", "message": "Invalid timestamp format"}}), 401
 
-    # Verify timestamp freshness
+    # Verify timestamp freshness (cheap check first)
     ts_valid, ts_error = verify_timestamp(timestamp, _hmac_timestamp_tolerance)
     if not ts_valid:
         logger.warning("HMAC auth failed: timestamp", extra={
@@ -639,40 +640,42 @@ def verify_hmac_auth():
         })
         return jsonify({"status": "error", "error": {"code": ts_error, "message": "Request timestamp out of tolerance"}}), 401
 
-    # Verify nonce not replayed
-    nonce_valid, nonce_error = _nonce_store.check_and_store(nonce, source="joi")
-    if not nonce_valid:
-        logger.warning("HMAC auth failed: nonce", extra={
-            "action": "auth_failed",
-            "reason": nonce_error,
-            "nonce": nonce[:8]
-        })
-        return jsonify({"status": "error", "error": {"code": nonce_error, "message": "Nonce already used"}}), 401
-
     # Get raw body for HMAC verification
     body = request.get_data()
 
-    # Verify HMAC signature - try current key first, then old key during grace period
+    # Verify HMAC signature BEFORE storing nonce (prevents unauthenticated nonce DoS)
     current_secret, old_secret = _config_state.get_hmac_secrets()
 
     # Use module-level secret if config state doesn't have one yet
     if current_secret is None:
         current_secret = _hmac_secret
 
+    signature_valid = False
     if verify_hmac(nonce, timestamp, body, signature, current_secret):
+        signature_valid = True
         logger.debug("HMAC auth passed (current key)", extra={"path": request.path})
-        return None
-
-    # Try old key during grace period
-    if old_secret and verify_hmac(nonce, timestamp, body, signature, old_secret):
+    elif old_secret and verify_hmac(nonce, timestamp, body, signature, old_secret):
+        signature_valid = True
         logger.info("HMAC auth passed (grace period key)", extra={"path": request.path})
-        return None
 
-    logger.warning("HMAC auth failed: invalid signature", extra={
-        "action": "auth_failed",
-        "reason": "invalid_signature"
-    })
-    return jsonify({"status": "error", "error": {"code": "hmac_invalid_signature", "message": "Invalid HMAC signature"}}), 401
+    if not signature_valid:
+        logger.warning("HMAC auth failed: invalid signature", extra={
+            "action": "auth_failed",
+            "reason": "invalid_signature"
+        })
+        return jsonify({"status": "error", "error": {"code": "hmac_invalid_signature", "message": "Invalid HMAC signature"}}), 401
+
+    # Signature valid - now check and store nonce for replay protection
+    nonce_valid, nonce_error = _nonce_store.check_and_store(nonce, source="joi")
+    if not nonce_valid:
+        logger.warning("HMAC auth failed: nonce replay", extra={
+            "action": "auth_failed",
+            "reason": nonce_error,
+            "nonce": nonce[:8]
+        })
+        return jsonify({"status": "error", "error": {"code": nonce_error, "message": "Nonce already used"}}), 401
+
+    return None
 
 
 @flask_app.route("/health", methods=["GET"])
