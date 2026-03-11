@@ -1337,6 +1337,107 @@ Together, Phase 4a-4c transform Wind from "queue-based reminders" to "genuine co
 - Cross-conversation proactive coordination
 - Runtime mode switching
 
+## Wind v2 Enhancement Ideas (Planned)
+
+Ideas for making Wind feel more natural and less predictable.
+
+### Must Implement
+
+#### 1. Daily Mood Roll
+Random daily multiplier (e.g., 0.7-1.3) affecting all impulse scores for that day.
+- Some days Joi is chattier, some days quieter
+- Breaks the "always reaches out at the same pattern" problem
+- Roll once per day per conversation, persist in state
+
+#### 2. Day-of-Week Personality
+Different behavior profiles by day:
+- Weekdays: more task-focused, check-ins about work/plans
+- Weekends: more relaxed, casual topics, lighter mood
+- Monday: week ahead check-in
+- Friday: lighter, wind-down mood
+
+#### 3. Probability-Based Triggering
+Instead of hard threshold:
+```python
+# Old: deterministic
+if score >= threshold: send()
+
+# New: probabilistic
+if random() < score: send()
+```
+- Score becomes probability, not gate
+- Even high scores don't guarantee immediate send
+- Creates natural variance in timing
+
+#### 4. Response Quality Feedback
+Learn from how user responds to proactive messages:
+- Short/dismissive replies → reduce future probability
+- Engaged/long replies → increase probability
+- Track per conversation, influences impulse calculation
+
+#### 5. Momentum (Upward Only)
+Good conversations boost next-day impulse:
+- Yesterday was engaging (long, many turns) → higher impulse today
+- Never goes below baseline (Joi shouldn't go quiet if user is quiet)
+- Measures: message count, response length, conversation duration
+
+### Good Additions
+
+#### 6. Curiosity About Outcomes
+When user mentions future events ("big meeting tomorrow", "doctor appointment"):
+- Store as pending curiosity item with expected date
+- Next day: genuine impulse to ask "How did it go?"
+- Not scheduled reminder, but context-triggered curiosity
+
+#### 7. Emotional Follow-Up
+Detect emotional content in conversations:
+- Flag during message processing (keywords: worried, stressed, excited, scared)
+- Or LLM rates "emotional weight 0-3"
+- Higher impulse to check in with care next day
+
+#### 8. Unfinished Threads Detection
+Check last Joi message for:
+- Ended with question mark?
+- Contains "let me know", "tell me later", "curious how"
+- Topic introduced but no follow-up
+- Higher impulse to continue that thread
+
+#### 9. Special Dates
+From stored facts (birthdays, anniversaries) and calendar:
+- Birthdays trigger warm check-in
+- Holidays affect mood/topic selection
+- Anniversaries (if stored) get acknowledgment
+
+#### 10. Spontaneous Sharing
+Joi "discovers" something interesting:
+- From knowledge base or random interesting fact
+- "I was reading about X and thought of you"
+- Feels organic, not silence-driven
+- Low frequency, high relevance requirement
+
+### Detection Methods
+
+**Emotional content detection:**
+- Keyword triggers: worried, stressed, anxious, excited, scared, nervous, happy, sad
+- LLM annotation during message processing: "Rate emotional weight 0-3"
+- Store flag in message metadata or wind_state
+
+**Unfinished threads:**
+- Parse last Joi message for question marks
+- Pattern match: "let me know", "tell me how", "curious about"
+- Track topics introduced but not concluded
+
+**Outcome curiosity:**
+- Pattern match: "tomorrow", "next week", "appointment", "meeting", "interview"
+- Store with expected follow-up date
+- Surface as topic when date arrives
+
+### Rejected Ideas
+
+- **Reciprocity tracking**: Would hurt introverts who never reach out first
+- **Anti-pattern detection**: Over-complicated, randomness solves it better
+- **Energy matching**: User will just say "busy" - not useful signal
+
 ## Summary
 
 Wind v1 should be:
