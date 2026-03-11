@@ -78,7 +78,7 @@ def parse_facts_json(response: str) -> List[Dict[str, Any]]:
 
 
 def validate_fact(fact: Any) -> bool:
-    """Validate a fact dict has required fields."""
+    """Validate a fact dict has required fields and safe content."""
     if not isinstance(fact, dict):
         return False
 
@@ -97,6 +97,28 @@ def validate_fact(fact: Any) -> bool:
     # Category is free-form - just ensure it's a non-empty string
     if not fact.get("category"):
         return False
+
+    # Check for injection patterns in value and key (defense against indirect prompt injection)
+    suspicious_patterns = [
+        r'ignore previous',
+        r'disregard all',
+        r'you are now',
+        r'new instructions',
+        r'SYSTEM PROMPT',
+        r'CRITICAL INSTRUCTIONS',
+        r'ignore all',
+        r'forget everything',
+    ]
+
+    value_str = str(fact.get("value", ""))
+    key_str = str(fact.get("key", ""))
+    content_to_check = f"{key_str} {value_str}"
+
+    for pattern in suspicious_patterns:
+        if re.search(pattern, content_to_check, re.IGNORECASE):
+            logger.warning("Fact rejected: injection pattern detected",
+                extra={"pattern": pattern, "action": "fact_rejected"})
+            return False
 
     # Confidence should be 0-1
     confidence = fact.get("confidence", 0.8)
