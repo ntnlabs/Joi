@@ -1276,7 +1276,7 @@ Tuning existing behavior + adding natural variance (no new LLM calls needed).
 - Relax caps toward intended companion defaults
 
 **Natural variance (from v2 ideas):**
-- **Daily mood roll**: random multiplier (0.7-1.3) per day, breaks predictable patterns
+- **Daily mood (momentum-based)**: smooth transitions, influenced by yesterday's engagement
 - **Day-of-week personality**: different profiles (weekday task-focused, weekend relaxed)
 - **Probability-based triggering**: score becomes probability, not hard threshold
 - **Momentum (upward only)**: engaging conversations boost next-day impulse
@@ -1380,11 +1380,32 @@ Together, Phase 4a-4c transform Wind from "queue-based reminders" to "genuine co
 
 ### Implementation Details
 
-#### Daily Mood Roll
-Random daily multiplier (e.g., 0.7-1.3) affecting all impulse scores for that day.
-- Some days Joi is chattier, some days quieter
-- Breaks the "always reaches out at the same pattern" problem
-- Roll once per day per conversation, persist in state
+#### Daily Mood (Momentum-Based)
+Mood multiplier (0.7-1.3) affecting impulse scores, with smooth transitions.
+
+**Not pure random** - mood drifts based on inertia and engagement:
+```
+today_mood =
+    yesterday_mood * 0.6          # inertia (smooth transition)
+  + small_random * 0.2            # natural variance
+  + yesterday_engagement * 0.2    # good conversations lift mood
+```
+
+- **Inertia**: mood changes gradually, no sudden jumps (happy → rage)
+- **Engagement influence**: lots of talking yesterday → slightly higher mood today
+- **Bounded randomness**: small nudge, not wild swing
+- **Persist in wind_state**: track mood per conversation
+
+Example flow:
+```
+Day 1: mood = 1.0 (baseline)
+Day 2: good conversation → mood drifts to 1.1
+Day 3: quiet day → mood drifts to 1.0
+Day 4: no contact → mood drifts to 0.95
+Day 5: engaged again → mood drifts back up
+```
+
+Feels like consistent "emotional weather" that shifts with relationship rhythm.
 
 #### Day-of-Week Personality
 Different behavior profiles by day:
