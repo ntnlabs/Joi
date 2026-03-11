@@ -1252,7 +1252,7 @@ Success criteria:
 - No obvious spammy drafts
 - Topic selection quality is acceptable
 
-### Phase 2: Basic Live Mode
+### Phase 2: Basic Live Mode ✅
 - Enable actual sends via `_send_to_mesh()`
 - Strict caps (low daily limit, 1-2 per day)
 - Limited recipient allowlist
@@ -1265,14 +1265,32 @@ Success criteria:
 - No spam complaints
 - User engagement on some topics
 
-### Phase 3: Tuning
+### Phase 3: Tuning ← CURRENT
+Tuning existing behavior + adding natural variance (no new LLM calls needed).
+
+**Config tuning:**
 - Observe real behavior patterns
 - Adjust factor weights, thresholds, dampers
 - Tune quiet windows based on activity patterns
 - Improve topic ranking and dedupe
 - Relax caps toward intended companion defaults
 
+**Natural variance (from v2 ideas):**
+- **Daily mood roll**: random multiplier (0.7-1.3) per day, breaks predictable patterns
+- **Day-of-week personality**: different profiles (weekday task-focused, weekend relaxed)
+- **Probability-based triggering**: score becomes probability, not hard threshold
+- **Momentum (upward only)**: engaging conversations boost next-day impulse
+
+Success criteria:
+- Wind doesn't feel robotic or predictable
+- No "always at 7 AM" pattern
+- Natural day-to-day variance
+
 ### Phase 4a: Engagement Foundation
+- **Response quality feedback**: learn from how user responds to proactive messages
+  - Short/dismissive → reduce future probability
+  - Engaged/long replies → increase probability
+  - Track per conversation
 - **Topic engagement tracking**: detect if user engaged, ignored, or deflected after proactive send
   - Mark topic outcome: `engaged`, `ignored`, `deflected`
   - Re-queue ignored topics for later retry (with decay)
@@ -1297,13 +1315,25 @@ Success criteria:
 ### Phase 4c: Intelligence
 *Depends on: Phase 4b (benefits from affinity data)*
 
+**Requires: Low-priority background queue** (see Background Processing Architecture)
+
+- **Emotional follow-up**: LLM flags emotional weight during background processing
+  - Higher impulse to check in with care next day
+- **Unfinished threads**: LLM detects open questions/pending topics
+  - Higher impulse to continue that thread
+- **Outcome curiosity**: LLM extracts future events ("meeting tomorrow")
+  - Surface as curiosity topic when date arrives
 - **Tension extraction** (joi-tension model): mine unfinished threads from conversation
   - Detect open questions, unresolved topics, pending plans
   - Auto-generate tension topics from conversation history
 - **Curiosity/discovery** (joi-curiosity model): generate exploratory probes
   - Low-frequency probing for new interests
   - Convert successful discoveries to affinity topics
-- **Adaptive quiet hours**: learn activity patterns like Windows Update
+- **Special dates**: birthdays, anniversaries from stored facts
+  - Trigger warm check-ins
+- **Spontaneous sharing**: Joi "discovers" something interesting to share
+  - From knowledge base, low frequency, high relevance
+- **Adaptive quiet hours**: learn activity patterns
   - Track when user typically responds
   - Shift quiet windows based on observed patterns
 
@@ -1337,26 +1367,29 @@ Together, Phase 4a-4c transform Wind from "queue-based reminders" to "genuine co
 - Cross-conversation proactive coordination
 - Runtime mode switching
 
-## Wind v2 Enhancement Ideas (Planned)
+## Wind v2 Enhancement Ideas
 
-Ideas for making Wind feel more natural and less predictable.
+> **Note:** These ideas are now integrated into the Rollout Plan above.
+> - Phase 3: mood roll, day-of-week, probability triggering, momentum
+> - Phase 4a: response quality feedback
+> - Phase 4c: emotional follow-up, unfinished threads, outcome curiosity, special dates, spontaneous sharing
 
-### Must Implement
+### Implementation Details
 
-#### 1. Daily Mood Roll
+#### Daily Mood Roll
 Random daily multiplier (e.g., 0.7-1.3) affecting all impulse scores for that day.
 - Some days Joi is chattier, some days quieter
 - Breaks the "always reaches out at the same pattern" problem
 - Roll once per day per conversation, persist in state
 
-#### 2. Day-of-Week Personality
+#### Day-of-Week Personality
 Different behavior profiles by day:
 - Weekdays: more task-focused, check-ins about work/plans
 - Weekends: more relaxed, casual topics, lighter mood
 - Monday: week ahead check-in
 - Friday: lighter, wind-down mood
 
-#### 3. Probability-Based Triggering
+#### Probability-Based Triggering
 Instead of hard threshold:
 ```python
 # Old: deterministic
