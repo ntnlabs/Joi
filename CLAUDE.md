@@ -35,6 +35,7 @@ Joi is a security-focused offline AI assistant running on isolated VMs. The code
 
 ## Things to Avoid
 
+- **Private information in git**: Never put real phone numbers, API keys, passwords, or other private data in files that get pushed to git. Use placeholders like `+1234567890` or `YOUR_API_KEY` in examples.
 - IPv6 - not used in this project
 - Over-engineering or premature abstraction
 - Creating documentation files unless explicitly requested
