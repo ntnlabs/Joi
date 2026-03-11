@@ -25,6 +25,13 @@ Joi is a security-focused offline AI assistant running on isolated VMs. The code
   - Joi: `execution/joi/systemd/joi-api.default`
   - Mesh: `execution/mesh/systemd/mesh-signal-worker.default`
 - **New features/functions**: Always update the install scripts in `sysprep/` (stage1-4)
+- **New log statements**: Must respect privacy mode - redact sensitive data when `privacy_mode` is enabled
+  - Phone numbers: `+1234567890` → `+***7890`
+  - Group IDs: `abc123...xyz` → `[GRP:abc1...]`
+  - User queries/messages: redact or omit entirely
+  - LLM responses: redact or omit entirely
+  - Facts/personal data: redact or omit entirely
+  - Use existing `_redact_pii()` helper or similar pattern
 
 ## Things to Avoid
 
