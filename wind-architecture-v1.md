@@ -1407,6 +1407,29 @@ Day 5: engaged again → mood drifts back up
 
 Feels like consistent "emotional weather" that shifts with relationship rhythm.
 
+#### 30-Day Cycle (Optional, Default: On)
+Longer-term mood rhythm layered on top of daily variance.
+
+```
+cycle_day = day_count % 30
+cycle_position = cycle_day / 30.0
+cycle_modifier = sin(cycle_position * 2π) * 0.1  # ±0.1 swing
+```
+
+- Adds ~30 day rhythm to baseline mood
+- Some weeks slightly more energetic/chatty
+- Some weeks slightly more introspective/calm
+- Combined with daily mood = layered natural variance
+
+**Config:**
+```json
+"wind": {
+  "mood_cycle_enabled": true  // default: true
+}
+```
+
+Why: Humans have rhythms beyond daily - this adds subtle long-term variance that makes behavior feel less mechanical over time.
+
 #### Day-of-Week Personality
 Different behavior profiles by day:
 - Weekdays: more task-focused, check-ins about work/plans
