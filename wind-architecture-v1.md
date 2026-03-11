@@ -1281,6 +1281,10 @@ Tuning existing behavior + adding natural variance (no new LLM calls needed).
 - **Probability-based triggering**: score becomes probability, not hard threshold
 - **Momentum (upward only)**: engaging conversations boost next-day impulse
 
+**Context management:**
+- **Compact before Wind**: trigger consolidation before sending new topic (see Context Management section)
+- **Topic-first prompting**: structure prompt with topic as focus, context as background
+
 Success criteria:
 - Wind doesn't feel robotic or predictable
 - No "always at 7 AM" pattern
@@ -1467,6 +1471,42 @@ Joi "discovers" something interesting:
 - Structured output: `{"event": "doctor appointment", "expected_date": "2026-03-12"}`
 - Store in pending_topics with due date
 - Surface as curiosity topic when date arrives
+
+### Compact Before Wind (Context Management)
+
+Problem: When Wind initiates a new topic, old context can drown it out. The LLM gets pulled back into old threads instead of focusing on the new topic.
+
+Solution: Trigger context compaction before sending a Wind message.
+
+**Why compaction, not reduced context window:**
+- Reduced window only helps for initial send
+- User's first reply loads full context → old threads flood back
+- Compaction creates a **permanent boundary** - old messages become summary
+
+**Flow:**
+```
+Before Wind:  [100 messages of old context]
+Compact:      [100 messages] → [1 summary]
+Wind send:    [summary] + [new topic] → topic lands well
+User replies: [summary] + [Wind msg] + [reply] → topic still has room
+Continues:    [summary] + [few new messages] → stays manageable
+```
+
+**Implementation:**
+- Before generating Wind message, check if context needs compaction
+- If messages > threshold (e.g., 20), trigger consolidation first
+- Then generate Wind message with fresh context
+- Cost: one extra LLM call (consolidation), but ensures topic focus
+
+**Combined with topic-first prompting:**
+```
+YOUR FOCUS: [new topic]
+
+Background context (reference only):
+[summary of previous conversation]
+```
+
+This ensures new topics actually land and get followed through.
 
 ### Background Processing Architecture
 
