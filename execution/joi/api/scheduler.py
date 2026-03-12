@@ -45,6 +45,7 @@ class Scheduler:
         self._membership_cache = None
         self._wind_orchestrator = None
         self._policy_manager = None
+        self._consolidator = None
         self._check_fingerprints: Optional[Callable] = None
         self._get_wind_config: Optional[Callable] = None
         self._generate_proactive_message: Optional[Callable] = None
@@ -62,6 +63,7 @@ class Scheduler:
         membership_cache,
         wind_orchestrator,
         policy_manager,
+        consolidator,
         check_fingerprints: Callable,
         get_wind_config: Callable,
         generate_proactive_message: Callable,
@@ -78,6 +80,7 @@ class Scheduler:
         self._membership_cache = membership_cache
         self._wind_orchestrator = wind_orchestrator
         self._policy_manager = policy_manager
+        self._consolidator = consolidator
         self._check_fingerprints = check_fingerprints
         self._get_wind_config = get_wind_config
         self._cleanup_send_caches = cleanup_send_caches
@@ -347,6 +350,9 @@ class Scheduler:
                 if not should_send or not topic:
                     continue
 
+                # Compact context before sending to ensure clean context when user replies
+                self._compact_before_wind(conv_id)
+
                 # Generate proactive message
                 message_text = self._generate_proactive_message(
                     topic_title=topic.title,
@@ -417,6 +423,9 @@ class Scheduler:
             due_reminders = self._wind_orchestrator.topic_manager.get_due_reminders()
 
             for topic in due_reminders:
+                # Compact context before sending to ensure clean context when user replies
+                self._compact_before_wind(topic.conversation_id)
+
                 # Generate reminder message
                 message_text = self._generate_proactive_message(
                     topic_title=topic.title,
@@ -477,6 +486,36 @@ class Scheduler:
 
         except Exception as e:
             logger.warning("Scheduler: reminder check failed", extra={"error": str(e)})
+
+    def _compact_before_wind(self, conversation_id: str) -> None:
+        """Compact ALL context before Wind send for a fresh start."""
+        if not self._consolidator or not self._memory:
+            return
+
+        msg_count = self._memory.get_message_count_for_conversation(conversation_id)
+
+        if msg_count <= 0:
+            return  # Nothing to compact
+
+        logger.info("Wind: compacting all context before send", extra={
+            "conversation_id": conversation_id,
+            "message_count": msg_count,
+            "action": "wind_compact"
+        })
+
+        try:
+            self._consolidator._consolidate_conversation(
+                conversation_id=conversation_id,
+                context_messages=0,  # Not used when compact_all=True
+                compact_batch_size=0,  # Not used when compact_all=True
+                archive_instead_of_delete=False,
+                compact_all=True,
+            )
+        except Exception as e:
+            logger.warning("Wind: compaction failed", extra={
+                "conversation_id": conversation_id,
+                "error": str(e)
+            })
 
     def _startup_config_push(self):
         """Push config to mesh on startup to ensure sync."""

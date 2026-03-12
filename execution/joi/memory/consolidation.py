@@ -488,12 +488,22 @@ Corrected JSON:"""
         context_messages: int,
         compact_batch_size: int,
         archive_instead_of_delete: bool,
+        compact_all: bool = False,
     ) -> Dict[str, Any]:
         """
         Consolidate a single conversation using count-based trigger.
 
         Compacts oldest messages when total exceeds context window.
         Per-conversation settings (.context, .compact_window files) override defaults.
+
+        Args:
+            conversation_id: The conversation to consolidate
+            context_messages: Context window size (trigger when exceeded)
+            compact_batch_size: Number of oldest messages to compact
+            archive_instead_of_delete: If True, archive messages; if False, delete them
+            compact_all: If True, compact ALL messages beyond context_messages
+                        (batch_size = msg_count - context_messages).
+                        If False, use compact_batch_size (original behavior).
         """
         results = {
             "ran": False,
@@ -515,8 +525,13 @@ Corrected JSON:"""
         # Check message count for this conversation
         message_count = self.memory.get_message_count_for_conversation(conversation_id)
 
-        # Trigger: message count exceeds context window
-        if message_count <= context_messages:
+        # If compact_all mode, compact ALL messages (for Wind fresh start)
+        if compact_all:
+            if message_count <= 0:
+                return results
+            compact_batch_size = message_count
+        elif message_count <= context_messages:
+            # Normal mode: only trigger when context window exceeded
             return results
 
         results["ran"] = True
