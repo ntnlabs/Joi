@@ -749,6 +749,11 @@ Return ONLY valid JSON, nothing else:"""
         logger.debug("Failed to parse remember response", extra={"error": str(e)})
     except Exception as e:
         logger.warning("Failed to detect/extract fact", extra={"error": str(e)})
+        # Rollback to clear failed transaction state (prevents blocking other connections)
+        try:
+            memory._connect().rollback()
+        except Exception:
+            pass
 
     return None
 

@@ -63,12 +63,12 @@ class WindOrchestrator:
         self,
         conversation_id: str,
         now: Optional[datetime] = None,
-    ) -> Tuple[bool, Optional[str], Optional[PendingTopic]]:
+    ) -> Tuple[bool, Optional[str], Optional[PendingTopic], float]:
         """
         Check impulse for a single conversation.
 
         Returns:
-            (should_send, skip_reason, selected_topic)
+            (should_send, skip_reason, selected_topic, impulse_score)
         """
         if now is None:
             now = datetime.now()
@@ -87,7 +87,7 @@ class WindOrchestrator:
                 threshold=result.threshold,
                 skip_reason=result.gate_result.failed_gate,
             )
-            return False, result.gate_result.failed_gate, None
+            return False, result.gate_result.failed_gate, None, 0.0
 
         # Check if above threshold
         if not result.above_threshold:
@@ -101,7 +101,7 @@ class WindOrchestrator:
                 factor_breakdown=result.factors,
                 skip_reason="below_threshold",
             )
-            return False, "below_threshold", None
+            return False, "below_threshold", None, result.score
 
         # Select topic
         topic = self.topic_manager.get_best_topic(conversation_id)
@@ -116,7 +116,7 @@ class WindOrchestrator:
                 factor_breakdown=result.factors,
                 skip_reason="no_viable_topic",
             )
-            return False, "no_viable_topic", None
+            return False, "no_viable_topic", None, result.score
 
         # Shadow mode: log decision but don't send
         if self.config.shadow_mode:
@@ -135,7 +135,7 @@ class WindOrchestrator:
                 "Wind shadow: would send to %s (score=%.2f, topic=#%d: %s)",
                 conversation_id, result.score, topic.id, topic.title
             )
-            return False, "shadow_mode", topic
+            return False, "shadow_mode", topic, result.score
 
         # Live mode: signal that we should send
         # Caller (scheduler) handles actual LLM generation and sending
@@ -143,7 +143,7 @@ class WindOrchestrator:
             "Wind live: triggering send to %s (score=%.2f, topic=#%d: %s)",
             conversation_id, result.score, topic.id, topic.title
         )
-        return True, None, topic
+        return True, None, topic, result.score
 
     def check_impulse_all(
         self,
@@ -169,10 +169,7 @@ class WindOrchestrator:
         # Only check conversations in allowlist
         for conversation_id in self.config.allowlist:
             try:
-                should_send, skip_reason, topic = self.check_impulse(conversation_id, now)
-                # Get the impulse score for logging/generation
-                impulse_result = self.impulse_engine.calculate_impulse(conversation_id, now)
-                score = impulse_result.score if impulse_result.eligible else 0.0
+                should_send, skip_reason, topic, score = self.check_impulse(conversation_id, now)
                 results.append((conversation_id, should_send, skip_reason, topic, score))
             except Exception as e:
                 logger.error(

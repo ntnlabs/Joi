@@ -440,7 +440,6 @@ class MemoryStore:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA synchronous = NORMAL")
             conn.execute("PRAGMA foreign_keys = ON")
-            conn.execute("PRAGMA busy_timeout = 30000")  # Wait up to 30s for locks
 
             self._local.conn = conn
         return self._local.conn
@@ -487,10 +486,42 @@ class MemoryStore:
             fact_columns = [row[1] for row in cursor.fetchall()]
             if "conversation_id" not in fact_columns:
                 logger.info("Migration: Adding 'conversation_id' column to user_facts table")
-                conn.execute("ALTER TABLE user_facts ADD COLUMN conversation_id TEXT NOT NULL DEFAULT ''")
+                # SQLite doesn't support ALTER CONSTRAINT, so rebuild table with new constraint
+                conn.execute("""
+                    CREATE TABLE user_facts_new (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        conversation_id TEXT NOT NULL DEFAULT '',
+                        category TEXT NOT NULL,
+                        key TEXT NOT NULL,
+                        value TEXT NOT NULL,
+                        confidence REAL NOT NULL DEFAULT 0.8,
+                        source TEXT NOT NULL,
+                        source_message_id TEXT,
+                        active INTEGER NOT NULL DEFAULT 1,
+                        important INTEGER NOT NULL DEFAULT 0,
+                        learned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+                        last_referenced_at INTEGER,
+                        last_verified_at INTEGER,
+                        updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+                        UNIQUE(conversation_id, category, key, active)
+                    )
+                """)
+                # Copy existing data (conversation_id defaults to '' for backward compatibility)
+                conn.execute("""
+                    INSERT INTO user_facts_new (
+                        id, conversation_id, category, key, value, confidence, source,
+                        source_message_id, active, learned_at, last_referenced_at,
+                        last_verified_at, updated_at
+                    )
+                    SELECT
+                        id, '' as conversation_id, category, key, value, confidence, source,
+                        source_message_id, active, learned_at, last_referenced_at,
+                        last_verified_at, updated_at
+                    FROM user_facts
+                """)
+                conn.execute("DROP TABLE user_facts")
+                conn.execute("ALTER TABLE user_facts_new RENAME TO user_facts")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_conversation ON user_facts(conversation_id, active)")
-                # Drop and recreate unique constraint (SQLite doesn't support ALTER CONSTRAINT)
-                # Existing facts get conversation_id='' which works for backward compatibility
                 conn.commit()
             if "important" not in fact_columns:
                 logger.info("Migration: Adding 'important' column to user_facts table")
