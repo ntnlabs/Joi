@@ -440,6 +440,7 @@ class MemoryStore:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA synchronous = NORMAL")
             conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA busy_timeout = 30000")  # Wait up to 30s for locks
 
             self._local.conn = conn
         return self._local.conn
