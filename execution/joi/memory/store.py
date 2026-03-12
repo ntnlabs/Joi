@@ -529,6 +529,53 @@ class MemoryStore:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_important ON user_facts(important, active)")
                 conn.commit()
 
+            # Check if unique constraint needs fixing (column exists but wrong constraint)
+            # Old DBs may have UNIQUE(category, key, active) instead of UNIQUE(conversation_id, category, key, active)
+            if "conversation_id" in fact_columns:
+                cursor = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='user_facts'"
+                )
+                row = cursor.fetchone()
+                if row and row[0] and "UNIQUE(category, key, active)" in row[0]:
+                    logger.info("Migration: Fixing user_facts unique constraint to include conversation_id")
+                    # Rebuild table with correct constraint
+                    conn.execute("""
+                        CREATE TABLE user_facts_new (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            conversation_id TEXT NOT NULL DEFAULT '',
+                            category TEXT NOT NULL,
+                            key TEXT NOT NULL,
+                            value TEXT NOT NULL,
+                            confidence REAL NOT NULL DEFAULT 0.8,
+                            source TEXT NOT NULL,
+                            source_message_id TEXT,
+                            active INTEGER NOT NULL DEFAULT 1,
+                            important INTEGER NOT NULL DEFAULT 0,
+                            learned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+                            last_referenced_at INTEGER,
+                            last_verified_at INTEGER,
+                            updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+                            UNIQUE(conversation_id, category, key, active)
+                        )
+                    """)
+                    conn.execute("""
+                        INSERT INTO user_facts_new (
+                            id, conversation_id, category, key, value, confidence, source,
+                            source_message_id, active, important, learned_at, last_referenced_at,
+                            last_verified_at, updated_at
+                        )
+                        SELECT
+                            id, conversation_id, category, key, value, confidence, source,
+                            source_message_id, active, important, learned_at, last_referenced_at,
+                            last_verified_at, updated_at
+                        FROM user_facts
+                    """)
+                    conn.execute("DROP TABLE user_facts")
+                    conn.execute("ALTER TABLE user_facts_new RENAME TO user_facts")
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_conversation ON user_facts(conversation_id, active)")
+                    conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_important ON user_facts(important, active)")
+                    conn.commit()
+
         # Check context_summaries table for conversation_id
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='context_summaries'")
         if cursor.fetchone():
