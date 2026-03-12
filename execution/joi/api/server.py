@@ -1903,6 +1903,12 @@ def _build_enriched_prompt(
         except Exception:
             tz = ZoneInfo("UTC")
         now = datetime.now(tz)
+        # DEBUG: Log the computed time to diagnose 5-hour offset issue
+        logger.info("Time awareness debug", extra={
+            "computed_time": str(now),
+            "timezone": TIME_AWARENESS_TIMEZONE,
+            "tz_object": str(tz),
+        })
         # Format: "Wednesday, February 26, 2026, 14:30, Europe/Bratislava"
         human_datetime = now.strftime('%A, %B %d, %Y, %H:%M') + f", {TIME_AWARENESS_TIMEZONE}"
         parts.append(f"\n\nCurrent date and time: {human_datetime}")
