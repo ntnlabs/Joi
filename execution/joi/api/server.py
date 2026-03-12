@@ -1415,7 +1415,7 @@ def receive_message(msg: InboundMessage):
         return InboundResponse(status="ok", message_id=msg.message_id)
 
     # Store inbound message (always store for context, sanitized)
-    memory.store_message(
+    msg_row_id = memory.store_message(
         message_id=msg.message_id,
         direction="inbound",
         content_type=msg.content.type,
@@ -1426,6 +1426,14 @@ def receive_message(msg: InboundMessage):
         sender_id=msg.sender.transport_id,
         sender_name=msg.sender.display_name,
     )
+
+    # Check if this was a duplicate (INSERT OR IGNORE returned 0)
+    if msg_row_id == 0:
+        logger.info("Duplicate message ignored", extra={
+            "message_id": msg.message_id,
+            "action": "duplicate_ignore"
+        })
+        return InboundResponse(status="ok", message_id=msg.message_id)
 
     # Record user interaction for Wind (resets unanswered counter, updates silence timer)
     wind_orchestrator.record_user_interaction(msg.conversation.id)
