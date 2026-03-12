@@ -1093,6 +1093,7 @@ def startup_event():
             membership_cache=membership_cache,
             wind_orchestrator=wind_orchestrator,
             policy_manager=policy_manager,
+            consolidator=consolidator,
             check_fingerprints=_check_fingerprints,
             get_wind_config=_get_wind_config,
             generate_proactive_message=_generate_proactive_message,
