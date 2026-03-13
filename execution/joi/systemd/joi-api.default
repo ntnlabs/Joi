@@ -54,6 +54,10 @@ JOI_CONSOLIDATION_ARCHIVE=0
 # Optional: separate model for fact extraction (low temperature recommended)
 #JOI_CONSOLIDATION_MODEL=joi-consolidator
 
+# --- Wind Engagement ---
+# Model for classifying user responses to proactive messages
+#JOI_ENGAGEMENT_MODEL=joi-engagement
+
 # --- RAG ---
 # Set to 0 to disable knowledge retrieval
 JOI_RAG_ENABLED=1
