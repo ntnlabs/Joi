@@ -153,6 +153,7 @@ sysprep/                    # VM provisioning scripts (stage1–4)
 | `SENSITIVE-CONFIG.md` | Secrets and deployment checklist (not in git) |
 | `Joi-architecture-v3.md` | Current architecture (security-hardened) |
 | `wind-architecture-v1.md` | Wind proactive messaging full design |
+| `WIND-CONFIG.md` | Wind config reference — all variables, formulas, tuning guide |
 | `system-channel.md` | System Channel & LLM Services specification |
 | `agent-loop-design.md` | Agent behavior, impulse system, behavior modes |
 | `Joi-threat-model.md` | Threat analysis, attack surfaces, mitigations |
