@@ -391,25 +391,32 @@ class Scheduler:
                 )
 
                 if success:
-                    # Record successful send
-                    self._wind_orchestrator.record_proactive_sent(
-                        conversation_id=conv_id,
-                        topic=topic,
-                        impulse_score=score,
-                        message_text=message_text,
-                    )
+                    # Generate message_id for tracking
+                    message_id = str(uuid.uuid4())
 
-                    # Store outbound message in memory
+                    # Store outbound message in memory first
                     self._memory.store_message(
-                        message_id=str(uuid.uuid4()),
+                        message_id=message_id,
                         direction="outbound",
                         content_type="text",
                         content_text=f"[JOI-WIND] {message_text}",
                         timestamp=int(time.time() * 1000),
                         conversation_id=conv_id,
                     )
+
+                    # Record successful send with message_id for engagement tracking
+                    self._wind_orchestrator.record_proactive_sent(
+                        conversation_id=conv_id,
+                        topic=topic,
+                        impulse_score=score,
+                        message_text=message_text,
+                        message_id=message_id,
+                    )
                 else:
                     logger.error("Wind: failed to send", extra={"conversation_id": conv_id})
+
+            # Check for timed-out topics (no response within timeout period)
+            self._wind_orchestrator.check_timeout_topics()
 
         except Exception as e:
             logger.warning("Scheduler: Wind impulse check failed", extra={"error": str(e)})
@@ -460,12 +467,12 @@ class Scheduler:
                 )
 
                 if success:
-                    # Mark topic as mentioned
-                    self._wind_orchestrator.topic_manager.mark_mentioned(topic.id)
+                    # Generate message_id for tracking
+                    message_id = str(uuid.uuid4())
 
-                    # Store outbound message
+                    # Store outbound message first
                     self._memory.store_message(
-                        message_id=str(uuid.uuid4()),
+                        message_id=message_id,
                         direction="outbound",
                         content_type="text",
                         content_text=f"[REMINDER] {message_text}",
@@ -473,10 +480,14 @@ class Scheduler:
                         conversation_id=topic.conversation_id,
                     )
 
+                    # Mark topic as sent with message_id for engagement tracking
+                    self._wind_orchestrator.topic_manager.mark_sent(topic.id, message_id)
+
                     logger.info("Reminder sent", extra={
                         "topic_id": topic.id,
                         "title": topic.title[:30],
-                        "conversation_id": topic.conversation_id
+                        "conversation_id": topic.conversation_id,
+                        "message_id": message_id
                     })
                 else:
                     logger.error("Reminder: failed to send", extra={
