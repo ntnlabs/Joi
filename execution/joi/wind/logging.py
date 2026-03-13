@@ -27,6 +27,9 @@ class WindDecision:
     decision: str = ""  # 'send', 'skip', 'shadow_logged'
     skip_reason: Optional[str] = None
     draft_message: Optional[str] = None
+    # WindMood fields
+    threshold_offset: Optional[float] = None
+    accumulated_impulse: Optional[float] = None
 
 
 def _format_datetime(dt: Optional[datetime]) -> Optional[str]:
@@ -76,6 +79,8 @@ class WindDecisionLogger:
         selected_topic_id: Optional[int] = None,
         skip_reason: Optional[str] = None,
         draft_message: Optional[str] = None,
+        threshold_offset: Optional[float] = None,
+        accumulated_impulse: Optional[float] = None,
     ) -> int:
         """
         Log a Wind decision.
@@ -86,11 +91,13 @@ class WindDecisionLogger:
             decision: Decision made ('send', 'skip', 'shadow_logged')
             gate_result: Dict of gate check results
             impulse_score: Calculated impulse score
-            threshold: Threshold used
+            threshold: Threshold used (with drift applied)
             factor_breakdown: Dict of factor contributions
             selected_topic_id: ID of topic selected (if any)
             skip_reason: Reason for skipping (if applicable)
             draft_message: Draft message (in shadow mode)
+            threshold_offset: WindMood threshold drift offset
+            accumulated_impulse: WindMood accumulated impulse
 
         Returns:
             Log entry ID
@@ -134,13 +141,18 @@ class WindDecisionLogger:
 
         # Only log INFO if state changed (suppresses identical repeats)
         if last_state != current_state:
+            # Include WindMood fields in log if available
+            offset_str = f" offset={threshold_offset:+.3f}" if threshold_offset is not None else ""
+            accum_str = f" accum={accumulated_impulse:.2f}" if accumulated_impulse is not None else ""
             logger.info(
-                "Wind decision #%d: conv=%s eligible=%s decision=%s score=%.2f reason=%s",
+                "Wind decision #%d: conv=%s score=%.2f threshold=%.2f%s%s decision=%s reason=%s",
                 log_id,
                 conversation_id[:16] if conversation_id else "?",
-                eligible,
-                decision,
                 impulse_score or 0.0,
+                threshold or 0.0,
+                offset_str,
+                accum_str,
+                decision,
                 skip_reason or "-",
             )
             self._last_state[conversation_id] = current_state

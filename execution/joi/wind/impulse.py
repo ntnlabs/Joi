@@ -5,6 +5,8 @@ Handles hard gates (fast fail) and impulse score calculation.
 """
 
 import logging
+import math
+import random
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Optional, Tuple
@@ -44,6 +46,9 @@ class ImpulseResult:
     threshold: float = 0.6
     above_threshold: bool = False
     factors: Dict[str, float] = field(default_factory=dict)
+    # WindMood fields
+    threshold_offset: float = 0.0
+    accumulated_impulse: float = 0.0
 
     @property
     def should_send(self) -> bool:
@@ -245,6 +250,10 @@ class ImpulseEngine:
         Calculate full impulse result for a conversation.
 
         Checks gates first, then calculates score if eligible.
+        Uses WindMood for natural variance:
+        - Bounded random walk for threshold drift
+        - Accumulated impulse across ticks
+        - Soft probability for final trigger decision
         """
         if now is None:
             now = datetime.now()
@@ -262,14 +271,44 @@ class ImpulseEngine:
                 factors={},
             )
 
-        # Calculate impulse score
+        # Get current state (includes threshold_offset, accumulated_impulse)
         state = self.state_manager.get_state(conversation_id)
-        factors = self._calculate_factors(state, conversation_id, now)
 
+        # Calculate current threshold with drift
+        current_threshold = self._get_current_threshold(state)
+
+        # Calculate impulse score
+        factors = self._calculate_factors(state, conversation_id, now)
         score = sum(factors.values())
         score = round(max(0.0, min(1.0, score)), 2)  # Clamp to [0, 1], round to 2 decimals
 
-        above_threshold = score >= self.config.impulse_threshold
+        # Accumulate impulse
+        prev_accumulated = state.accumulated_impulse if state else 0.0
+        new_accumulated = round(prev_accumulated + score, 2)
+
+        # Drift threshold (random walk with mean reversion)
+        new_offset = self._drift_threshold(state)
+
+        # Save updated state
+        self.state_manager.update_state(
+            conversation_id,
+            threshold_offset=new_offset,
+            accumulated_impulse=new_accumulated,
+        )
+
+        # Check if accumulated crosses threshold
+        crossed_threshold = new_accumulated >= current_threshold
+
+        # Soft probability if above threshold
+        should_trigger = False
+        if crossed_threshold:
+            trigger_probability = self._soft_trigger_probability(new_accumulated, current_threshold)
+            should_trigger = random.random() < trigger_probability
+
+            if should_trigger:
+                # Reset accumulator on trigger
+                self.state_manager.update_state(conversation_id, accumulated_impulse=0.0)
+                new_accumulated = 0.0
 
         # Record impulse check
         self.state_manager.record_impulse_check(conversation_id)
@@ -278,10 +317,50 @@ class ImpulseEngine:
             eligible=True,
             gate_result=gate_result,
             score=score,
-            threshold=self.config.impulse_threshold,
-            above_threshold=above_threshold,
+            threshold=current_threshold,
+            above_threshold=should_trigger,
             factors=factors,
+            threshold_offset=new_offset,
+            accumulated_impulse=new_accumulated,
         )
+
+    def _get_current_threshold(self, state: Optional[WindState]) -> float:
+        """Get current threshold with drift offset."""
+        base = self.config.impulse_threshold
+        if state and state.threshold_offset is not None:
+            return round(base + state.threshold_offset, 3)
+        return base
+
+    def _drift_threshold(self, state: Optional[WindState]) -> float:
+        """Apply random walk with mean reversion to threshold offset."""
+        current_offset = 0.0
+        if state and state.threshold_offset is not None:
+            current_offset = state.threshold_offset
+
+        # Random step
+        step = random.uniform(
+            -self.config.threshold_drift_step,
+            self.config.threshold_drift_step
+        )
+
+        # Mean reversion (pull toward 0)
+        reversion = -current_offset * self.config.threshold_mean_reversion
+
+        new_offset = current_offset + step + reversion
+
+        # Clamp to bounds
+        new_offset = max(
+            self.config.threshold_drift_min,
+            min(self.config.threshold_drift_max, new_offset)
+        )
+
+        return round(new_offset, 3)
+
+    def _soft_trigger_probability(self, accumulated: float, threshold: float) -> float:
+        """Sigmoid probability based on how far accumulated exceeds threshold."""
+        excess = accumulated - threshold
+        # Sigmoid: 0.5 at threshold, approaches 1.0 as excess grows
+        return 1.0 / (1.0 + math.exp(-self.config.soft_trigger_steepness * excess))
 
     def _calculate_factors(
         self,

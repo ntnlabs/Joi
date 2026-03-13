@@ -32,6 +32,15 @@ class WindConfig:
     topic_pressure_weight: float = 0.2
     fatigue_weight: float = 0.3
 
+    # WindMood: threshold drift bounds (random walk)
+    threshold_drift_min: float = -0.1  # Can drift 0.1 below baseline
+    threshold_drift_max: float = 0.1   # Can drift 0.1 above baseline
+    threshold_drift_step: float = 0.01  # Max change per tick
+    threshold_mean_reversion: float = 0.01  # 1% pull toward baseline per tick
+
+    # WindMood: soft probability settings
+    soft_trigger_steepness: float = 10.0  # Sigmoid steepness (higher = sharper)
+
     # Allowlist (conversation IDs eligible for Wind)
     allowlist: List[str] = field(default_factory=list)
 
@@ -56,6 +65,11 @@ class WindConfig:
             silence_cap_hours=data.get("silence_cap_hours", 24.0),
             topic_pressure_weight=data.get("topic_pressure_weight", 0.2),
             fatigue_weight=data.get("fatigue_weight", 0.3),
+            threshold_drift_min=data.get("threshold_drift_min", -0.1),
+            threshold_drift_max=data.get("threshold_drift_max", 0.1),
+            threshold_drift_step=data.get("threshold_drift_step", 0.01),
+            threshold_mean_reversion=data.get("threshold_mean_reversion", 0.01),
+            soft_trigger_steepness=data.get("soft_trigger_steepness", 10.0),
             allowlist=list(data.get("allowlist", [])),
             timezone=data.get("timezone", "Europe/Bratislava"),
         )
@@ -77,6 +91,11 @@ class WindConfig:
             "silence_cap_hours": self.silence_cap_hours,
             "topic_pressure_weight": self.topic_pressure_weight,
             "fatigue_weight": self.fatigue_weight,
+            "threshold_drift_min": self.threshold_drift_min,
+            "threshold_drift_max": self.threshold_drift_max,
+            "threshold_drift_step": self.threshold_drift_step,
+            "threshold_mean_reversion": self.threshold_mean_reversion,
+            "soft_trigger_steepness": self.soft_trigger_steepness,
             "allowlist": list(self.allowlist),
             "timezone": self.timezone,
         }
