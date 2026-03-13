@@ -240,7 +240,7 @@ The decision regarding the ultimate secure mobile communication platform will be
   - Flask HTTP server on port 8444 for outbound API
 
 - **Joi VM (172.22.22.2):**
-  - Ollama in Docker with GPU passthrough (GTX 1650)
+  - Ollama in Docker with GPU passthrough (NVIDIA)
   - Model: mannix/llama3.1-8b-abliterated (configurable via `JOI_OLLAMA_MODEL`)
   - Context window configurable via `JOI_OLLAMA_NUM_CTX`
   - FastAPI server on port 8443
