@@ -19,7 +19,7 @@ Complete list of configurable environment variables for Joi system.
 |----------|---------|-------------|
 | `JOI_MAX_INPUT_LENGTH` | `1500` | Max inbound message length (chars) |
 | `JOI_MAX_OUTPUT_LENGTH` | `2000` | Max outbound message length (chars) |
-| `JOI_SIGNAL_FORMAT_ENABLED` | `0` | Set to `1` to convert **bold** to Unicode bold for Signal |
+| `JOI_SIGNAL_FORMAT_ENABLED` | `1` | Set to `0` to disable Unicode bold conversion for Signal |
 
 ### LLM Settings
 
@@ -52,20 +52,15 @@ Prompts directory structure:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_MESH_URL` | `http://10.42.0.1:8444` | Mesh proxy URL for outbound messages |
-
-### HMAC Authentication
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JOI_HMAC_SECRET` | (required) | Shared secret — must match `MESH_HMAC_SECRET` on Mesh VM |
-| `JOI_HMAC_TIMESTAMP_TOLERANCE_MS` | `300000` | Timestamp tolerance in ms (default: 5 minutes) |
+| `JOI_MESH_POLICY_PATH` | `/var/lib/joi/policy/mesh-policy.json` | Mesh policy file path |
 
 ### Memory Settings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_MEMORY_DB` | `/var/lib/joi/memory.db` | SQLite database path |
-| `JOI_MEMORY_KEY` | (none) | SQLCipher encryption key (future) |
+| `JOI_MEMORY_KEY` | (none) | SQLCipher encryption key (inline) |
+| `JOI_MEMORY_KEY_FILE` | `/etc/joi/memory.key` | SQLCipher encryption key file path |
 | `JOI_NONCE_DB` | `/var/lib/joi/nonces.db` | Nonce replay-protection database |
 | `JOI_CONTEXT_MESSAGES` | `50` | Recent messages to include in LLM context |
 | `JOI_REQUIRE_ENCRYPTED_DB` | `1` | Require encrypted DB (fail startup if unavailable) |
@@ -113,6 +108,30 @@ Prompts directory structure:
 |----------|---------|-------------|
 | `JOI_RESPONSE_COOLDOWN_SECONDS` | `5.0` | Min seconds between responses in DMs |
 | `JOI_RESPONSE_COOLDOWN_GROUP_SECONDS` | `2.0` | Min seconds between responses in groups |
+| `JOI_OUTBOUND_MAX_PER_HOUR` | `120` | Max outbound messages per hour across all conversations |
+
+### Group Membership
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_MEMBERSHIP_REFRESH_MINUTES` | `15` | How often to refresh group membership cache |
+
+### Knowledge Ingestion
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_INGESTION_DIR` | `/var/lib/joi/ingestion` | Directory watched for new knowledge files |
+| `JOI_INGESTION_KEEP_FILES` | `0` | Set to `1` to keep source files after ingestion |
+| `JOI_INGESTION_CHUNK_SIZE` | `500` | Chunk size for RAG ingestion (tokens) |
+| `JOI_INGESTION_OVERLAP` | `50` | Chunk overlap for RAG ingestion (tokens) |
+
+### HMAC Authentication
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_HMAC_SECRET` | (required) | Shared secret — must match `MESH_HMAC_SECRET` on Mesh VM |
+| `JOI_HMAC_TIMESTAMP_TOLERANCE_MS` | `300000` | Timestamp tolerance in ms (default: 5 minutes) |
+| `JOI_HMAC_SECRET_FILE` | `/var/lib/joi/hmac.secret` | Path to rotated HMAC secret file (managed by joi-admin) |
 
 ### Scheduler (Wind/Tasks)
 
