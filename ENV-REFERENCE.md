@@ -8,9 +8,18 @@ Complete list of configurable environment variables for Joi system.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JOI_BIND_HOST` | `0.0.0.0` | API bind address |
+| `JOI_BIND_HOST` | `10.42.0.10` | API bind address (Nebula IP) |
 | `JOI_BIND_PORT` | `8443` | API port |
 | `JOI_LOG_LEVEL` | `INFO` | Logging level (DEBUG, INFO, WARNING, ERROR) |
+| `JOI_LOG_JSON` | `0` | Set to `1` for JSON structured logs |
+
+### Message Limits
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_MAX_INPUT_LENGTH` | `1500` | Max inbound message length (chars) |
+| `JOI_MAX_OUTPUT_LENGTH` | `2000` | Max outbound message length (chars) |
+| `JOI_SIGNAL_FORMAT_ENABLED` | `0` | Set to `1` to convert **bold** to Unicode bold for Signal |
 
 ### LLM Settings
 
@@ -19,6 +28,8 @@ Complete list of configurable environment variables for Joi system.
 | `JOI_OLLAMA_URL` | `http://localhost:11434` | Ollama API URL |
 | `JOI_OLLAMA_MODEL` | `llama3` | Model to use |
 | `JOI_LLM_TIMEOUT` | `180` | LLM request timeout in seconds |
+| `JOI_LLM_KEEP_ALIVE` | `30m` | How long to keep model in VRAM after request |
+| `JOI_OLLAMA_NUM_CTX` | (unset) | Override context window size (prefer setting in Modelfile) |
 
 ### System Prompts
 
@@ -40,7 +51,14 @@ Prompts directory structure:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JOI_MESH_URL` | `http://mesh:8444` | Mesh proxy URL for outbound messages |
+| `JOI_MESH_URL` | `http://10.42.0.1:8444` | Mesh proxy URL for outbound messages |
+
+### HMAC Authentication
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_HMAC_SECRET` | (required) | Shared secret — must match `MESH_HMAC_SECRET` on Mesh VM |
+| `JOI_HMAC_TIMESTAMP_TOLERANCE_MS` | `300000` | Timestamp tolerance in ms (default: 5 minutes) |
 
 ### Memory Settings
 
@@ -48,16 +66,23 @@ Prompts directory structure:
 |----------|---------|-------------|
 | `JOI_MEMORY_DB` | `/var/lib/joi/memory.db` | SQLite database path |
 | `JOI_MEMORY_KEY` | (none) | SQLCipher encryption key (future) |
-| `JOI_CONTEXT_MESSAGES` | `40` | Recent messages to include in LLM context |
+| `JOI_NONCE_DB` | `/var/lib/joi/nonces.db` | Nonce replay-protection database |
+| `JOI_CONTEXT_MESSAGES` | `50` | Recent messages to include in LLM context |
 | `JOI_REQUIRE_ENCRYPTED_DB` | `1` | Require encrypted DB (fail startup if unavailable) |
 
-### Memory Consolidation
+### Memory Consolidation / Compaction
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JOI_CONSOLIDATION_SILENCE_HOURS` | `1` | Hours of silence before consolidation |
-| `JOI_CONSOLIDATION_MAX_MESSAGES` | `200` | Force consolidation at this message count |
-| `JOI_CONSOLIDATION_ARCHIVE` | `0` | Set to `1` to archive instead of delete |
+| `JOI_COMPACT_BATCH_SIZE` | `20` | Messages to compact when context overflows |
+| `JOI_CONSOLIDATION_ARCHIVE` | `0` | Set to `1` to archive instead of delete on compaction |
+| `JOI_CONSOLIDATION_MODEL` | (unset) | Optional separate model for consolidation (e.g. `joi-consolidator`) |
+
+### Wind Engagement
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_ENGAGEMENT_MODEL` | (unset) | Optional model for engagement classification (e.g. `joi-engagement`) |
 
 ### RAG (Knowledge Retrieval)
 
@@ -66,12 +91,28 @@ Prompts directory structure:
 | `JOI_RAG_ENABLED` | `1` | Enable RAG knowledge retrieval |
 | `JOI_RAG_MAX_TOKENS` | `500` | Max tokens for RAG context |
 
+### Facts & Summaries FTS
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_FACTS_FTS_ENABLED` | `1` | Enable facts full-text search context injection |
+| `JOI_FACTS_FTS_MAX_TOKENS` | `300` | Max tokens for facts FTS context |
+| `JOI_SUMMARIES_FTS_ENABLED` | `1` | Enable summaries full-text search context injection |
+| `JOI_SUMMARIES_FTS_MAX_TOKENS` | `400` | Max tokens for summaries FTS context |
+
 ### Time Awareness
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_TIME_AWARENESS` | `0` | Inject current datetime into system prompt |
 | `JOI_TIMEZONE` | `Europe/Bratislava` | User timezone (IANA format) |
+
+### Response Cooldown
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_RESPONSE_COOLDOWN_SECONDS` | `5.0` | Min seconds between responses in DMs |
+| `JOI_RESPONSE_COOLDOWN_GROUP_SECONDS` | `2.0` | Min seconds between responses in groups |
 
 ### Scheduler (Wind/Tasks)
 
@@ -92,75 +133,27 @@ Prompts directory structure:
 | `SIGNAL_ACCOUNT` | (required) | Signal phone number (E.164 format) |
 | `SIGNAL_CLI_BIN` | `/usr/local/bin/signal-cli` | Path to signal-cli binary |
 | `SIGNAL_CLI_CONFIG_DIR` | `/var/lib/signal-cli` | signal-cli config directory |
+| `SIGNAL_CLI_SOCKET` | `/var/run/signal-cli/socket` | signal-cli socket path (socket mode) |
 
 ### Worker Settings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MESH_WORKER_HTTP_PORT` | `8444` | HTTP port for outbound API |
-| `MESH_SIGNAL_POLL_SECONDS` | `5` | Notification poll interval |
+| `MESH_BIND_HOST` | `0.0.0.0` | Bind address |
+| `MESH_SIGNAL_MODE` | `stdio` | Signal CLI mode (`stdio` or `socket`) |
 | `MESH_LOG_LEVEL` | `INFO` | Logging level |
+| `MESH_LOG_JSON` | `0` | Set to `1` for JSON structured logs |
+| `MESH_LOG_DIR` | `/var/log/mesh-proxy` | Log directory |
 
 ### Forwarding Settings
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MESH_ENABLE_FORWARD` | `0` | Set to `1` to enable forwarding to Joi |
-| `MESH_JOI_INBOUND_URL` | `http://joi:8443/api/v1/message/inbound` | Joi API URL |
+| `MESH_JOI_URL` | (required) | Joi API base URL (e.g. `http://10.42.0.10:8443`) |
 | `MESH_FORWARD_TIMEOUT` | `120` | Timeout for Joi requests in seconds |
-
----
-
-## Example Configurations
-
-### Joi API (`/etc/default/joi-api`)
-
-```bash
-# Core
-JOI_BIND_HOST=0.0.0.0
-JOI_BIND_PORT=8443
-JOI_LOG_LEVEL=INFO
-
-# LLM
-JOI_OLLAMA_URL=http://localhost:11434
-JOI_OLLAMA_MODEL=llama3
-JOI_LLM_TIMEOUT=180
-
-# Mesh
-JOI_MESH_URL=http://172.22.22.1:8444
-
-# Memory
-JOI_MEMORY_DB=/var/lib/joi/memory.db
-JOI_CONTEXT_MESSAGES=40
-
-# Consolidation
-JOI_CONSOLIDATION_SILENCE_HOURS=1
-JOI_CONSOLIDATION_MAX_MESSAGES=200
-JOI_CONSOLIDATION_ARCHIVE=0
-
-# Prompts (optional, uses defaults if not set)
-# JOI_PROMPTS_DIR=/var/lib/joi/prompts
-```
-
-### Mesh Signal Worker (`/etc/default/mesh-signal-worker`)
-
-```bash
-# Signal
-SIGNAL_ACCOUNT=+<COUNTRY><NUMBER>
-SIGNAL_CLI_BIN=/usr/local/bin/signal-cli
-SIGNAL_CLI_CONFIG_DIR=/var/lib/signal-cli
-
-# Worker
-MESH_WORKER_HTTP_PORT=8444
-MESH_HMAC_SECRET=<64-char-hex>
-
-# Forwarding
-MESH_ENABLE_FORWARD=1
-MESH_JOI_INBOUND_URL=http://172.22.22.2:8443/api/v1/message/inbound
-MESH_FORWARD_TIMEOUT=120
-```
-
-Note: Mesh is stateless. Policy is pushed from Joi via `/config/sync`, not read from file.
+| `MESH_HMAC_SECRET` | (required) | Shared secret — must match `JOI_HMAC_SECRET` on Joi VM |
 
 ---
 
@@ -169,18 +162,20 @@ Note: Mesh is stateless. Policy is pushed from Joi via `/config/sync`, not read 
 ### Joi VM
 
 | Path | Purpose |
-|------|---------|
+|------|---------||
 | `/etc/default/joi-api` | Environment variables |
 | `/var/lib/joi/memory.db` | SQLite database |
+| `/var/lib/joi/nonces.db` | Nonce replay-protection database |
 | `/var/lib/joi/prompts/` | Per-user and per-group system prompts |
 | `/var/lib/joi/prompts/default.txt` | Default system prompt |
 | `/var/lib/joi/prompts/users/<phone>.txt` | Per-user prompts for DMs |
 | `/var/lib/joi/prompts/groups/<group_id>.txt` | Per-group prompts |
+| `/var/lib/joi/policy/mesh-policy.json` | Mesh policy (pushed from Joi to Mesh) |
 
 ### Mesh VM
 
 | Path | Purpose |
-|------|---------|
+|------|---------||
 | `/etc/default/mesh-signal-worker` | Environment variables (incl. initial HMAC secret) |
 | `/var/lib/signal-cli/` | Signal account data |
 
