@@ -239,7 +239,10 @@ CREATE TABLE IF NOT EXISTS wind_state (
     proactive_day_bucket TEXT,
     unanswered_proactive_count INTEGER DEFAULT 0,
     wind_snooze_until TEXT,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    -- WindMood columns
+    threshold_offset REAL DEFAULT NULL,
+    accumulated_impulse REAL DEFAULT 0.0
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -607,6 +610,20 @@ class MemoryStore:
                 logger.info("Migration: Adding 'due_at' column to pending_topics table")
                 conn.execute("ALTER TABLE pending_topics ADD COLUMN due_at TEXT")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_pending_topics_due ON pending_topics(due_at, status)")
+                conn.commit()
+
+        # Check wind_state table for WindMood columns (v7)
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='wind_state'")
+        if cursor.fetchone():
+            cursor = conn.execute("PRAGMA table_info(wind_state)")
+            wind_columns = {row[1] for row in cursor.fetchall()}
+            if "threshold_offset" not in wind_columns:
+                logger.info("Migration: Adding 'threshold_offset' column to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN threshold_offset REAL DEFAULT NULL")
+                conn.commit()
+            if "accumulated_impulse" not in wind_columns:
+                logger.info("Migration: Adding 'accumulated_impulse' column to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN accumulated_impulse REAL DEFAULT 0.0")
                 conn.commit()
 
         # Check FTS integrity and rebuild if needed
