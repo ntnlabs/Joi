@@ -13,20 +13,15 @@
 # Signal account phone number (E.164 format)
 SIGNAL_ACCOUNT=+<COUNTRY><NUMBER>
 
-# Path to signal-cli binary and config
-SIGNAL_CLI_BIN=/usr/local/bin/signal-cli
-SIGNAL_CLI_CONFIG_DIR=/var/lib/signal-cli
-
 # HMAC shared secret (64 hex chars, must match Joi)
 MESH_HMAC_SECRET=<64-char-hex>
 
-# HTTP port for outbound API
-MESH_WORKER_HTTP_PORT=8444
-
 # Forwarding to Joi
 MESH_ENABLE_FORWARD=1
-MESH_JOI_INBOUND_URL=http://172.22.22.2:8443/api/v1/message/inbound
+MESH_JOI_URL=http://10.42.0.10:8443
 ```
+
+See `ENV-REFERENCE.md` for full variable listing and defaults.
 
 **Notes**:
 - `MESH_HMAC_SECRET` is the initial seed. Rotated keys are pushed from Joi and stored in memory.
@@ -47,38 +42,15 @@ Signal account data directory. Contains:
 
 ### /etc/default/joi-api
 
+Start from `execution/joi/systemd/joi-api.default` and set the secrets:
+
 ```bash
-# API settings
-JOI_BIND_HOST=0.0.0.0
-JOI_BIND_PORT=8443
-JOI_LOG_LEVEL=INFO
-
-# Ollama LLM
-JOI_OLLAMA_URL=http://localhost:11434
-JOI_OLLAMA_MODEL=llama3
-JOI_LLM_TIMEOUT=180
-
-# Mesh proxy (Nebula IP)
-JOI_MESH_URL=http://10.42.0.1:8444
-
-# Memory database
-JOI_MEMORY_DB=/var/lib/joi/memory.db
-JOI_CONTEXT_MESSAGES=40
-
-# Consolidation
-JOI_CONSOLIDATION_SILENCE_HOURS=1
-JOI_CONSOLIDATION_MAX_MESSAGES=200
-JOI_CONSOLIDATION_ARCHIVE=0
-
-# RAG
-JOI_RAG_ENABLED=1
-JOI_RAG_MAX_TOKENS=500
-
-# HMAC shared secret (64 hex chars, must match mesh)
-MESH_HMAC_SECRET=<64-char-hex>
+# HMAC shared secret (64 hex chars, must match MESH_HMAC_SECRET on Mesh VM)
+# Generate with: openssl rand -hex 32
+JOI_HMAC_SECRET=<64-char-hex>
 
 # Future: SQLCipher encryption key
-# JOI_MEMORY_KEY=<generated-key>
+# JOI_MEMORY_KEY=<generate-with-openssl-rand-base64-32>
 ```
 
 ### /var/lib/joi/policy/mesh-policy.json
@@ -129,10 +101,7 @@ Per-user and per-group system prompts. Directory structure:
 
 ### /var/lib/joi/memory.db
 
-SQLite database containing:
-- All conversation history
-- User messages and Joi responses
-- System state
+SQLite database containing all conversation history, facts, and system state.
 
 **Contains sensitive conversation content** - encrypt at rest when SQLCipher is enabled.
 
@@ -153,6 +122,11 @@ Before deploying, verify:
 
 ## Regenerating Secrets
 
+### HMAC Secret
+Generate: `openssl rand -hex 32`
+Set on both VMs: `JOI_HMAC_SECRET` (Joi) and `MESH_HMAC_SECRET` (Mesh).
+Use `joi-admin hmac rotate` to rotate without restart.
+
 ### Signal Account
 If compromised, re-register on a new number. Old conversations are lost.
 
@@ -166,7 +140,7 @@ Note: Changing key requires re-creating the database.
 ## File Permissions Reference
 
 ```bash
-# Mesh VM (stateless - only env and signal-cli data)
+# Mesh VM
 sudo chmod 640 /etc/default/mesh-signal-worker
 sudo chown root:signal /etc/default/mesh-signal-worker
 
