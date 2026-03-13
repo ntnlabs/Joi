@@ -128,9 +128,8 @@ class WindDecisionLogger:
 
         log_id = cursor.lastrowid or 0
 
-        # Check if state changed (use rounded score to match log format)
-        score_rounded = round(impulse_score or 0.0, 2)
-        current_state = (decision, score_rounded, skip_reason)
+        # Check if state changed (score is already rounded in impulse engine)
+        current_state = (decision, impulse_score or 0.0, skip_reason)
         last_state = self._last_state.get(conversation_id)
 
         # Only log INFO if state changed (suppresses identical repeats)
