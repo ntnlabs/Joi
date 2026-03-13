@@ -27,6 +27,14 @@ class WindState:
     # WindMood: threshold drift and accumulator
     threshold_offset: Optional[float] = None  # NULL = use baseline from config
     accumulated_impulse: float = 0.0
+    # Engagement tracking (Phase 4a)
+    engagement_score: float = 0.5  # Running EMA of response quality (0.0-1.0)
+    total_proactives_sent: int = 0
+    total_engaged: int = 0
+    total_ignored: int = 0
+    total_deflected: int = 0
+    last_engaged_at: Optional[datetime] = None
+    last_deflected_at: Optional[datetime] = None
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -75,7 +83,9 @@ class WindStateManager:
             SELECT conversation_id, last_user_interaction_at, last_outbound_at,
                    last_proactive_sent_at, last_impulse_check_at, proactive_sent_today,
                    proactive_day_bucket, unanswered_proactive_count, wind_snooze_until,
-                   updated_at, threshold_offset, accumulated_impulse
+                   updated_at, threshold_offset, accumulated_impulse,
+                   engagement_score, total_proactives_sent, total_engaged,
+                   total_ignored, total_deflected, last_engaged_at, last_deflected_at
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -98,6 +108,13 @@ class WindStateManager:
             updated_at=_parse_datetime(row["updated_at"]),
             threshold_offset=row["threshold_offset"],  # NULL preserved as None
             accumulated_impulse=row["accumulated_impulse"] or 0.0,
+            engagement_score=row["engagement_score"] if row["engagement_score"] is not None else 0.5,
+            total_proactives_sent=row["total_proactives_sent"] or 0,
+            total_engaged=row["total_engaged"] or 0,
+            total_ignored=row["total_ignored"] or 0,
+            total_deflected=row["total_deflected"] or 0,
+            last_engaged_at=_parse_datetime(row["last_engaged_at"]),
+            last_deflected_at=_parse_datetime(row["last_deflected_at"]),
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -174,6 +191,7 @@ class WindStateManager:
         - proactive_sent_today (incremented, or reset if new day)
         - proactive_day_bucket
         - unanswered_proactive_count (incremented)
+        - total_proactives_sent (incremented)
 
         Uses atomic SQL update to avoid read-modify-write race with
         record_user_interaction (which resets unanswered_proactive_count).
@@ -200,6 +218,7 @@ class WindStateManager:
                 END,
                 proactive_day_bucket = ?,
                 unanswered_proactive_count = unanswered_proactive_count + 1,
+                total_proactives_sent = COALESCE(total_proactives_sent, 0) + 1,
                 updated_at = ?
             WHERE conversation_id = ?
             """,
@@ -213,7 +232,8 @@ class WindStateManager:
         logger.info("Recorded proactive sent", extra={
             "conversation_id": conversation_id,
             "today": state.proactive_sent_today,
-            "unanswered": state.unanswered_proactive_count
+            "unanswered": state.unanswered_proactive_count,
+            "total": state.total_proactives_sent
         })
 
     def record_user_interaction(self, conversation_id: str) -> None:
@@ -363,3 +383,139 @@ class WindStateManager:
             }
             for row in cursor.fetchall()
         ]
+
+    # --- Phase 4a: Engagement tracking methods ---
+
+    def record_engagement(
+        self,
+        conversation_id: str,
+        outcome: str,
+        quality: float = 0.0,
+        ema_alpha: float = 0.2,
+    ) -> None:
+        """
+        Record an engagement outcome and update running engagement score.
+
+        Args:
+            conversation_id: Conversation to update
+            outcome: 'engaged', 'ignored', or 'deflected'
+            quality: Response quality 0.0-1.0 (only meaningful for 'engaged')
+            ema_alpha: EMA weight for new value (default 0.2 = slow adaptation)
+        """
+        now = datetime.now()
+        self.get_or_create_state(conversation_id)
+        conn = self._connect()
+
+        # Determine counter to increment and quality for EMA
+        if outcome == "engaged":
+            counter_col = "total_engaged"
+            timestamp_col = "last_engaged_at"
+            ema_input = quality  # Use actual quality
+        elif outcome == "ignored":
+            counter_col = "total_ignored"
+            timestamp_col = None
+            ema_input = 0.0  # Ignored = 0 quality
+        elif outcome == "deflected":
+            counter_col = "total_deflected"
+            timestamp_col = "last_deflected_at"
+            ema_input = 0.0  # Deflected = 0 quality
+        else:
+            logger.warning("Unknown engagement outcome", extra={"outcome": outcome})
+            return
+
+        # Build dynamic SQL for the update
+        # EMA formula: new_score = (1 - alpha) * old_score + alpha * new_value
+        set_parts = [
+            f"{counter_col} = COALESCE({counter_col}, 0) + 1",
+            f"engagement_score = (1.0 - {ema_alpha}) * COALESCE(engagement_score, 0.5) + {ema_alpha} * {ema_input}",
+            "updated_at = ?",
+        ]
+        params = [_format_datetime(now)]
+
+        if timestamp_col:
+            set_parts.append(f"{timestamp_col} = ?")
+            params.append(_format_datetime(now))
+
+        params.append(conversation_id)
+
+        sql = f"""
+            UPDATE wind_state
+            SET {', '.join(set_parts)}
+            WHERE conversation_id = ?
+        """
+
+        conn.execute(sql, params)
+        conn.commit()
+
+        # Log with fresh state
+        state = self.get_state(conversation_id)
+        logger.info("Recorded engagement", extra={
+            "conversation_id": conversation_id,
+            "outcome": outcome,
+            "quality": quality,
+            "engagement_score": round(state.engagement_score, 3) if state else 0.5,
+        })
+
+    def get_engagement_stats(self, conversation_id: str) -> dict:
+        """
+        Get engagement statistics for a conversation.
+
+        Returns dict with all engagement metrics.
+        """
+        state = self.get_state(conversation_id)
+        if not state:
+            return {
+                "conversation_id": conversation_id,
+                "engagement_score": 0.5,
+                "total_proactives_sent": 0,
+                "total_engaged": 0,
+                "total_ignored": 0,
+                "total_deflected": 0,
+                "engagement_rate": 0.0,
+                "last_engaged_at": None,
+                "last_deflected_at": None,
+            }
+
+        total_responses = state.total_engaged + state.total_ignored + state.total_deflected
+        engagement_rate = state.total_engaged / total_responses if total_responses > 0 else 0.0
+
+        return {
+            "conversation_id": conversation_id,
+            "engagement_score": round(state.engagement_score, 3),
+            "total_proactives_sent": state.total_proactives_sent,
+            "total_engaged": state.total_engaged,
+            "total_ignored": state.total_ignored,
+            "total_deflected": state.total_deflected,
+            "engagement_rate": round(engagement_rate, 3),
+            "last_engaged_at": state.last_engaged_at.isoformat() if state.last_engaged_at else None,
+            "last_deflected_at": state.last_deflected_at.isoformat() if state.last_deflected_at else None,
+        }
+
+    def get_all_engagement_stats(self) -> list[dict]:
+        """Get engagement stats for all conversations."""
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT conversation_id, engagement_score, total_proactives_sent,
+                   total_engaged, total_ignored, total_deflected,
+                   last_engaged_at, last_deflected_at
+            FROM wind_state
+            ORDER BY conversation_id
+            """
+        )
+        results = []
+        for row in cursor.fetchall():
+            total_responses = (row["total_engaged"] or 0) + (row["total_ignored"] or 0) + (row["total_deflected"] or 0)
+            engagement_rate = (row["total_engaged"] or 0) / total_responses if total_responses > 0 else 0.0
+            results.append({
+                "conversation_id": row["conversation_id"],
+                "engagement_score": round(row["engagement_score"] or 0.5, 3),
+                "total_proactives_sent": row["total_proactives_sent"] or 0,
+                "total_engaged": row["total_engaged"] or 0,
+                "total_ignored": row["total_ignored"] or 0,
+                "total_deflected": row["total_deflected"] or 0,
+                "engagement_rate": round(engagement_rate, 3),
+                "last_engaged_at": row["last_engaged_at"],
+                "last_deflected_at": row["last_deflected_at"],
+            })
+        return results

@@ -404,13 +404,23 @@ class ImpulseEngine:
             fatigue_damper = -fatigue_ratio * self.config.fatigue_weight
         factors["fatigue"] = fatigue_damper
 
+        # Phase 4a: Engagement factor (boost/dampen based on engagement score)
+        # engagement_score: 0.5 = neutral, >0.5 = boost, <0.5 = dampen
+        engagement_contribution = 0.0
+        if state:
+            # Center around 0.5: score 0.5 = 0 contribution, 1.0 = +weight, 0.0 = -weight
+            engagement_deviation = state.engagement_score - 0.5
+            engagement_contribution = engagement_deviation * self.config.engagement_weight * 2
+        factors["engagement"] = engagement_contribution
+
         logger.debug(
-            "Impulse factors for %s: base=%.2f silence=%.2f pressure=%.2f fatigue=%.2f",
+            "Impulse factors for %s: base=%.2f silence=%.2f pressure=%.2f fatigue=%.2f engagement=%.2f",
             conversation_id,
             factors["base"],
             factors["silence"],
             factors["topic_pressure"],
             factors["fatigue"],
+            factors["engagement"],
         )
 
         return factors

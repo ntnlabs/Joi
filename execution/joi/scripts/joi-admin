@@ -150,10 +150,15 @@ WIND SUBCOMMANDS:
     show-windmood [conversation_id]   Show WindMood state (threshold offset, accumulated)
     reset-windmood [conversation_id]  Reset WindMood to defaults (offset=NULL, accumulated=0)
     set-windmood <conversation_id>    Fine-tune WindMood values
+    show-engagement [conversation_id] Show engagement stats (score, sent/engaged/ignored/deflected)
+    show-feedback [conversation_id]   Show per-topic-family feedback (interest/rejection weights)
+    topic-history [conversation_id]   Show recent topics with outcomes
+    clear-cooldowns <conversation_id> Clear all topic family cooldowns
 
 WIND OPTIONS:
     --offset VALUE        Set threshold_offset (-0.1 to 0.1)
     --accumulated VALUE   Set accumulated_impulse (>= 0)
+    --limit N             Limit results (for topic-history, default: 20)
 
 WIND EXAMPLES:
     joi-admin wind show-windmood                        # Show all conversations
@@ -162,6 +167,12 @@ WIND EXAMPLES:
     joi-admin wind reset-windmood +123456789            # Reset specific conversation
     joi-admin wind set-windmood +123 --offset 0.05      # Fine-tune offset
     joi-admin wind set-windmood +123 --accumulated 0.3  # Fine-tune accumulator
+    joi-admin wind show-engagement                      # Show all engagement stats
+    joi-admin wind show-engagement +123456789           # Show specific conversation
+    joi-admin wind show-feedback +123456789             # Show topic family feedback
+    joi-admin wind topic-history +123456789             # Show recent topics
+    joi-admin wind topic-history +123456789 --limit 50  # Show more topics
+    joi-admin wind clear-cooldowns +123456789           # Clear all cooldowns
 
 EOF
     exit 0
@@ -1424,8 +1435,191 @@ SQL
             [[ -n "$accumulated" ]] && echo "  accumulated_impulse = $accumulated"
             ;;
 
+        show-engagement)
+            local conversation="${1:-}"
+
+            local where_clause=""
+            if [[ -n "$conversation" ]]; then
+                local conversation_escaped
+                conversation_escaped=$(sql_escape_literal "$conversation")
+                where_clause="WHERE conversation_id = '$conversation_escaped'"
+            fi
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT
+    conversation_id,
+    COALESCE(engagement_score, 0.5),
+    COALESCE(total_proactives_sent, 0),
+    COALESCE(total_engaged, 0),
+    COALESCE(total_ignored, 0),
+    COALESCE(total_deflected, 0),
+    COALESCE(last_engaged_at, ''),
+    COALESCE(last_deflected_at, '')
+FROM wind_state
+$where_clause
+ORDER BY conversation_id;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No engagement stats found${conversation:+ for conversation '$conversation'}."
+                exit 0
+            fi
+
+            printf "%-28s  %8s  %6s  %6s  %6s  %6s  %s\n" \
+                "conversation_id" "score" "sent" "engd" "ignrd" "deflc" "last_engaged"
+            printf "%-28s  %8s  %6s  %6s  %6s  %6s  %s\n" \
+                "---------------" "-----" "----" "----" "-----" "-----" "------------"
+            while IFS='|' read -r conv_id score sent engaged ignored deflected last_eng last_def; do
+                [[ -z "${conv_id}${score}" ]] && continue
+                printf "%-28s  %8.3f  %6d  %6d  %6d  %6d  %s\n" \
+                    "$conv_id" "$score" "$sent" "$engaged" "$ignored" "$deflected" "$last_eng"
+            done <<< "$rows"
+            ;;
+
+        show-feedback)
+            local conversation="${1:-}"
+            [[ -z "$conversation" ]] && error "show-feedback requires a conversation_id"
+
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT
+    topic_family,
+    COALESCE(rejection_weight, 0.0),
+    COALESCE(interest_weight, 0.0),
+    COALESCE(engagement_count, 0),
+    COALESCE(ignore_count, 0),
+    COALESCE(deflection_count, 0),
+    COALESCE(cooldown_until, ''),
+    COALESCE(updated_at, '')
+FROM topic_feedback
+WHERE conversation_id = '$conversation_escaped'
+ORDER BY topic_family;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No topic feedback found for conversation '$conversation'."
+                exit 0
+            fi
+
+            echo "Topic feedback for: $conversation"
+            echo ""
+            printf "%-20s  %8s  %8s  %6s  %6s  %6s  %s\n" \
+                "topic_family" "reject" "interest" "engd" "ignrd" "deflc" "cooldown_until"
+            printf "%-20s  %8s  %8s  %6s  %6s  %6s  %s\n" \
+                "------------" "------" "--------" "----" "-----" "-----" "--------------"
+            while IFS='|' read -r family reject interest engaged ignored deflected cooldown updated; do
+                [[ -z "${family}" ]] && continue
+                printf "%-20s  %8.2f  %8.2f  %6d  %6d  %6d  %s\n" \
+                    "$family" "$reject" "$interest" "$engaged" "$ignored" "$deflected" "$cooldown"
+            done <<< "$rows"
+            ;;
+
+        topic-history)
+            local conversation="${1:-}"
+            [[ -z "$conversation" ]] && error "topic-history requires a conversation_id"
+            shift || true
+
+            local limit="20"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --limit)
+                        [[ -z "${2:-}" ]] && error "--limit requires a number"
+                        [[ ! "$2" =~ ^[0-9]+$ ]] && error "--limit must be a positive integer"
+                        limit="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin wind topic-history <conversation_id> [--limit N]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'wind topic-history': $1"
+                        ;;
+                esac
+            done
+
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT
+    id,
+    topic_type,
+    substr(title, 1, 30),
+    status,
+    COALESCE(outcome, '-'),
+    COALESCE(retry_count, 0),
+    COALESCE(created_at, ''),
+    COALESCE(mentioned_at, '')
+FROM pending_topics
+WHERE conversation_id = '$conversation_escaped'
+ORDER BY created_at DESC
+LIMIT $limit;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No topics found for conversation '$conversation'."
+                exit 0
+            fi
+
+            echo "Topic history for: $conversation (limit $limit)"
+            echo ""
+            printf "%6s  %-12s  %-30s  %-12s  %-10s  %5s  %s\n" \
+                "id" "type" "title" "status" "outcome" "retry" "mentioned_at"
+            printf "%6s  %-12s  %-30s  %-12s  %-10s  %5s  %s\n" \
+                "--" "----" "-----" "------" "-------" "-----" "------------"
+            while IFS='|' read -r tid ttype title status outcome retry created mentioned; do
+                [[ -z "${tid}" ]] && continue
+                printf "%6d  %-12s  %-30s  %-12s  %-10s  %5d  %s\n" \
+                    "$tid" "$ttype" "$title" "$status" "$outcome" "$retry" "$mentioned"
+            done <<< "$rows"
+            ;;
+
+        clear-cooldowns)
+            local conversation="${1:-}"
+            [[ -z "$conversation" ]] && error "clear-cooldowns requires a conversation_id"
+
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+
+            local count
+            count=$(db_scalar "SELECT COUNT(*) FROM topic_feedback WHERE conversation_id = '$conversation_escaped' AND cooldown_until IS NOT NULL AND cooldown_until > datetime('now');")
+
+            if [[ "${count:-0}" == "0" ]]; then
+                echo "No active cooldowns found for conversation '$conversation'."
+                exit 0
+            fi
+
+            echo ""
+            echo "=== CLEAR COOLDOWNS ==="
+            echo "  Conversation: $conversation"
+            echo "  Active cooldowns: $count"
+            echo ""
+
+            read -p "Clear all cooldowns? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            local now
+            now=$(date -Iseconds)
+            db_exec "UPDATE topic_feedback SET cooldown_until = NULL, updated_at = '$now' WHERE conversation_id = '$conversation_escaped';"
+
+            info "Cleared $count cooldowns for '$conversation'"
+            ;;
+
         --help|-h)
-            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood> [OPTIONS]"
+            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood|show-engagement|show-feedback|topic-history|clear-cooldowns> [OPTIONS]"
             exit 0
             ;;
 

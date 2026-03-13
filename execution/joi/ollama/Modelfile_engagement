@@ -1,0 +1,60 @@
+# Joi Engagement Model - for classifying user responses to proactive messages
+#
+# USAGE:
+#   1. Pull:  docker exec joi-brain ollama pull mannix/llama3.1-8b-abliterated
+#   2. Build: docker exec joi-brain ollama create joi-engagement -f /opt/Joi/execution/joi/ollama/Modelfile_engagement
+#   3. Test:  docker exec -it joi-brain ollama run joi-engagement
+#   4. Use:   Set JOI_ENGAGEMENT_MODEL=joi-engagement (default)
+#
+# UPDATING:
+#   If you change this file, re-run step 1 to "rebake" the model.
+#   Changes don't apply until you recreate the model.
+#
+# PURPOSE:
+#   Fast, low-cost LLM for classifying how users responded to Wind proactive messages.
+#   Input: proactive message + user response
+#   Output: {"outcome": "engaged|ignored|deflected", "confidence": 0.0-1.0, "quality": 0.0-1.0}
+
+FROM mannix/llama3.1-8b-abliterated
+
+# --- Parameters ---
+
+# Temperature: very low for consistent classification
+PARAMETER temperature 0.1
+
+# Top-p: low for focused, deterministic output
+PARAMETER top_p 0.3
+
+# Context window (tokens) - small context is fine for this task
+PARAMETER num_ctx 2048
+
+# Max tokens to generate - we only need ~50 for JSON output
+PARAMETER num_predict 100
+
+# Stop sequences
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "<|end_of_text|>"
+
+# Prevent repetition
+PARAMETER repeat_penalty 1.1
+PARAMETER repeat_last_n 64
+
+# --- System Prompt ---
+# Baked into the model for consistent behavior
+
+SYSTEM """You classify user responses to proactive messages.
+
+Given a proactive message and the user's response, determine:
+- outcome: "engaged" (user responded to the topic), "ignored" (unrelated response), "deflected" (user explicitly changed topic or dismissed)
+- confidence: 0.0-1.0 (how certain you are)
+- quality: 0.0-1.0 (depth of engagement - 0 if not engaged, higher for thoughtful responses)
+
+Return ONLY valid JSON with no extra text:
+{"outcome": "...", "confidence": 0.0, "quality": 0.0}
+
+Examples:
+- User asks follow-up question about topic -> engaged, quality 0.8
+- User briefly acknowledges topic -> engaged, quality 0.4
+- User talks about completely different topic -> ignored, quality 0.0
+- User says "not now" or "I don't want to talk about that" -> deflected, quality 0.0
+"""
