@@ -677,14 +677,19 @@ def _detect_and_extract_fact(
     # Ask LLM to detect and extract in one call
     prompt = f"""Analyze this message: "{text}"
 
-Is the user telling me something about themselves that I should remember?
+Is the user TELLING me a fact about themselves that I should store?
 This includes: their name, preferences, facts about them, things they like/dislike,
 personal info, work info, or explicitly asking me to remember something.
+
+Rules:
+- If the user is ASKING a question (even one containing the word "remember"), return false.
+- If the user is TELLING me something factual about themselves, return true.
+- Casual chat, commands, and rhetorical questions are always false.
 
 If YES, extract the fact as JSON:
 {{"remember": true, "category": "personal|preference|work|routine|interest|relationship", "key": "short_id", "value": "the fact"}}
 
-If NO (just casual chat, questions, or commands), return:
+If NO, return:
 {{"remember": false}}
 
 Return ONLY valid JSON, nothing else:"""
