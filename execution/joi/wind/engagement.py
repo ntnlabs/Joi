@@ -124,7 +124,8 @@ class EngagementClassifier:
         prompt = self._build_classification_prompt(wind_message, user_response)
 
         try:
-            raw_response = self._llm_client(prompt, model=self._model)
+            llm_response = self._llm_client.generate(prompt, model=self._model)
+            raw_response = llm_response.text
             result = self._parse_llm_response(raw_response)
             result.raw_response = raw_response
             logger.debug("LLM engagement classification", extra={
