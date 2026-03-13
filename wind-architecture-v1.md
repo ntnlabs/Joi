@@ -1290,19 +1290,20 @@ Success criteria:
 - [x] No "always at 7 AM" pattern
 - [x] Natural day-to-day variance
 
-### Phase 4a: Engagement Foundation
-- **Response quality feedback**: learn from how user responds to proactive messages
-  - Short/dismissive → reduce future probability
-  - Engaged/long replies → increase probability
-  - Track per conversation
-- **Topic engagement tracking**: detect if user engaged, ignored, or deflected after proactive send
-  - Mark topic outcome: `engaged`, `ignored`, `deflected`
-  - Re-queue ignored topics for later retry (with decay)
-  - Deflection handling: decide whether to gently return or let it go
-- **Topic types**: tension (resolves), affinity (recurs), discovery (converts or dies)
-  - Different lifecycle behaviors per type
-  - Type-specific expiry and retry rules
-- **Negative feedback memory**: persist rejection signals across sessions
+### Phase 4a: Engagement Foundation ✓ *Complete (2026-03-13)*
+- [x] **Response quality feedback**: EMA engagement_score per conversation (0.5 neutral)
+  - Two-tier classification: direct reply (deterministic) → LLM → 12h timeout
+  - Model: `mannix/llama3.1-8b-abliterated` via `joi-engagement` Ollama model
+  - No keyword matching — works across languages
+- [x] **Topic engagement tracking**: detect if user engaged, ignored, or deflected
+  - `pending_topics.outcome`, `outcome_at`, `retry_count`, `sent_message_id`
+  - Lifecycle rules per topic type (tension/affinity/discovery/reminder/followup)
+  - Re-queue with retry_count tracking; lifecycle-aware expiry
+- [x] **Topic types with lifecycle**: type-specific retry and expiry behavior
+- [x] **Negative feedback memory**: `topic_feedback` table with rejection_weight, 5%/day decay
+  - Cooldown triggered at rejection_weight ≥ 0.7 (7-day block per family)
+- [x] **Impulse factor**: engagement_score feeds into impulse calculation (weight 0.2)
+- [x] **Admin commands**: show-engagement, show-feedback, topic-history, clear-cooldowns
 
 ### Phase 4b: Learning & Pursuit
 *Depends on: Phase 4a (needs engagement data)*
