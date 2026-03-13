@@ -109,6 +109,8 @@ class WindOrchestrator:
                 threshold=result.threshold,
                 factor_breakdown=result.factors,
                 skip_reason="below_threshold",
+                threshold_offset=result.threshold_offset,
+                accumulated_impulse=result.accumulated_impulse,
             )
             return False, "below_threshold", None, result.score
 
@@ -124,6 +126,8 @@ class WindOrchestrator:
                 threshold=result.threshold,
                 factor_breakdown=result.factors,
                 skip_reason="no_viable_topic",
+                threshold_offset=result.threshold_offset,
+                accumulated_impulse=result.accumulated_impulse,
             )
             return False, "no_viable_topic", None, result.score
 
@@ -139,18 +143,22 @@ class WindOrchestrator:
                 factor_breakdown=result.factors,
                 selected_topic_id=topic.id,
                 draft_message=f"[Shadow] Would send topic: {topic.title}",
+                threshold_offset=result.threshold_offset,
+                accumulated_impulse=result.accumulated_impulse,
             )
             logger.info(
-                "Wind shadow: would send to %s (score=%.2f, topic=#%d: %s)",
-                conversation_id, result.score, topic.id, topic.title
+                "Wind shadow: would send to %s (score=%.2f, threshold=%.2f, accum=%.2f, topic=#%d: %s)",
+                conversation_id, result.score, result.threshold, result.accumulated_impulse,
+                topic.id, topic.title
             )
             return False, "shadow_mode", topic, result.score
 
         # Live mode: signal that we should send
         # Caller (scheduler) handles actual LLM generation and sending
         logger.info(
-            "Wind live: triggering send to %s (score=%.2f, topic=#%d: %s)",
-            conversation_id, result.score, topic.id, topic.title
+            "Wind live: triggering send to %s (score=%.2f, threshold=%.2f, accum=%.2f, topic=#%d: %s)",
+            conversation_id, result.score, result.threshold, result.accumulated_impulse,
+            topic.id, topic.title
         )
         return True, None, topic, result.score
 

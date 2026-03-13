@@ -52,6 +52,7 @@ COMMANDS:
     rag         Inspect and manage RAG knowledge sources/scopes
     summaries   Read-only context summary inspection
     fts         Check and rebuild FTS (full-text search) indexes
+    wind        Inspect and manage Wind proactive messaging state
 
 PURGE USAGE:
     joi-admin purge [FLAGS]
@@ -141,6 +142,26 @@ FTS EXAMPLES:
     joi-admin fts status                        # Check all FTS indexes
     joi-admin fts rebuild                       # Rebuild all FTS indexes
     joi-admin fts rebuild --index knowledge_fts # Rebuild specific index
+
+WIND USAGE:
+    joi-admin wind <SUBCOMMAND> [OPTIONS]
+
+WIND SUBCOMMANDS:
+    show-windmood [conversation_id]   Show WindMood state (threshold offset, accumulated)
+    reset-windmood [conversation_id]  Reset WindMood to defaults (offset=NULL, accumulated=0)
+    set-windmood <conversation_id>    Fine-tune WindMood values
+
+WIND OPTIONS:
+    --offset VALUE        Set threshold_offset (-0.1 to 0.1)
+    --accumulated VALUE   Set accumulated_impulse (>= 0)
+
+WIND EXAMPLES:
+    joi-admin wind show-windmood                        # Show all conversations
+    joi-admin wind show-windmood +123456789             # Show specific conversation
+    joi-admin wind reset-windmood                       # Reset all to defaults
+    joi-admin wind reset-windmood +123456789            # Reset specific conversation
+    joi-admin wind set-windmood +123 --offset 0.05      # Fine-tune offset
+    joi-admin wind set-windmood +123 --accumulated 0.3  # Fine-tune accumulator
 
 EOF
     exit 0
@@ -1233,6 +1254,187 @@ cmd_fts() {
     esac
 }
 
+# Wind command for WindMood management
+cmd_wind() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    local subcommand="${1:-}"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood> [OPTIONS]"
+    shift || true
+
+    case "$subcommand" in
+        show-windmood)
+            local conversation="${1:-}"
+
+            local where_clause=""
+            if [[ -n "$conversation" ]]; then
+                local conversation_escaped
+                conversation_escaped=$(sql_escape_literal "$conversation")
+                where_clause="WHERE conversation_id = '$conversation_escaped'"
+            fi
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT
+    conversation_id,
+    COALESCE(threshold_offset, 'NULL'),
+    COALESCE(accumulated_impulse, 0.0),
+    COALESCE(updated_at, '')
+FROM wind_state
+$where_clause
+ORDER BY conversation_id;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No WindMood state found${conversation:+ for conversation '$conversation'}."
+                exit 0
+            fi
+
+            printf "%-40s  %12s  %12s  %s\n" "conversation_id" "offset" "accumulated" "updated_at"
+            printf "%-40s  %12s  %12s  %s\n" "---------------" "------" "-----------" "----------"
+            while IFS='|' read -r conv_id offset accum updated; do
+                [[ -z "${conv_id}${offset}${accum}${updated}" ]] && continue
+                printf "%-40s  %12s  %12.2f  %s\n" "$conv_id" "$offset" "$accum" "$updated"
+            done <<< "$rows"
+            ;;
+
+        reset-windmood)
+            local conversation="${1:-}"
+
+            local count
+            if [[ -n "$conversation" ]]; then
+                local conversation_escaped
+                conversation_escaped=$(sql_escape_literal "$conversation")
+                count=$(db_scalar "SELECT COUNT(*) FROM wind_state WHERE conversation_id = '$conversation_escaped';")
+            else
+                count=$(db_scalar "SELECT COUNT(*) FROM wind_state;")
+            fi
+
+            if [[ "${count:-0}" == "0" ]]; then
+                echo "No WindMood state found${conversation:+ for conversation '$conversation'}."
+                exit 0
+            fi
+
+            echo ""
+            echo "=== WINDMOOD RESET SUMMARY ==="
+            [[ -n "$conversation" ]] && echo "  Conversation: $conversation" || echo "  Scope: ALL conversations"
+            echo "  Affected: $count"
+            echo "  Action: Set threshold_offset=NULL, accumulated_impulse=0"
+            echo ""
+
+            read -p "Reset WindMood state? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            local now
+            now=$(date -Iseconds)
+            if [[ -n "$conversation" ]]; then
+                db_exec "UPDATE wind_state SET threshold_offset = NULL, accumulated_impulse = 0.0, updated_at = '$now' WHERE conversation_id = '$conversation_escaped';"
+            else
+                db_exec "UPDATE wind_state SET threshold_offset = NULL, accumulated_impulse = 0.0, updated_at = '$now';"
+            fi
+
+            info "Reset WindMood for $count conversation(s)"
+            ;;
+
+        set-windmood)
+            local conversation="${1:-}"
+            [[ -z "$conversation" ]] && error "set-windmood requires a conversation_id"
+            shift || true
+
+            local offset=""
+            local accumulated=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --offset)
+                        [[ -z "${2:-}" ]] && error "--offset requires a value"
+                        offset="$2"
+                        shift 2
+                        ;;
+                    --accumulated)
+                        [[ -z "${2:-}" ]] && error "--accumulated requires a value"
+                        accumulated="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin wind set-windmood <conversation_id> [--offset VALUE] [--accumulated VALUE]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'wind set-windmood': $1"
+                        ;;
+                esac
+            done
+
+            if [[ -z "$offset" && -z "$accumulated" ]]; then
+                error "set-windmood requires at least --offset or --accumulated"
+            fi
+
+            # Validate offset range
+            if [[ -n "$offset" ]]; then
+                if ! [[ "$offset" =~ ^-?[0-9]*\.?[0-9]+$ ]]; then
+                    error "--offset must be a number (e.g., 0.05, -0.03)"
+                fi
+                local offset_check
+                offset_check=$(echo "$offset" | awk '{ if ($1 < -0.1 || $1 > 0.1) print "bad" }')
+                if [[ "$offset_check" == "bad" ]]; then
+                    error "--offset must be between -0.1 and 0.1"
+                fi
+            fi
+
+            # Validate accumulated range
+            if [[ -n "$accumulated" ]]; then
+                if ! [[ "$accumulated" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+                    error "--accumulated must be a non-negative number"
+                fi
+            fi
+
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+
+            # Check if conversation exists
+            local exists
+            exists=$(db_scalar "SELECT COUNT(*) FROM wind_state WHERE conversation_id = '$conversation_escaped';")
+            if [[ "${exists:-0}" == "0" ]]; then
+                error "No WindMood state found for conversation '$conversation'"
+            fi
+
+            # Build update
+            local set_parts=()
+            local now
+            now=$(date -Iseconds)
+            [[ -n "$offset" ]] && set_parts+=("threshold_offset = $offset")
+            [[ -n "$accumulated" ]] && set_parts+=("accumulated_impulse = $accumulated")
+            set_parts+=("updated_at = '$now'")
+
+            local set_clause
+            set_clause=$(IFS=', '; echo "${set_parts[*]}")
+
+            db_exec "UPDATE wind_state SET $set_clause WHERE conversation_id = '$conversation_escaped';"
+
+            info "Updated WindMood for '$conversation'"
+            [[ -n "$offset" ]] && echo "  threshold_offset = $offset"
+            [[ -n "$accumulated" ]] && echo "  accumulated_impulse = $accumulated"
+            ;;
+
+        --help|-h)
+            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood> [OPTIONS]"
+            exit 0
+            ;;
+
+        *)
+            error "Unknown wind subcommand: $subcommand"
+            ;;
+    esac
+}
+
 # Main purge command
 cmd_purge() {
     local do_contexts=false
@@ -1448,6 +1650,10 @@ main() {
         fts)
             check_root
             cmd_fts "$@"
+            ;;
+        wind)
+            check_root
+            cmd_wind "$@"
             ;;
         --help|-h)
             usage

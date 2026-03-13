@@ -24,6 +24,9 @@ class WindState:
     unanswered_proactive_count: int = 0
     wind_snooze_until: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # WindMood: threshold drift and accumulator
+    threshold_offset: Optional[float] = None  # NULL = use baseline from config
+    accumulated_impulse: float = 0.0
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -72,7 +75,7 @@ class WindStateManager:
             SELECT conversation_id, last_user_interaction_at, last_outbound_at,
                    last_proactive_sent_at, last_impulse_check_at, proactive_sent_today,
                    proactive_day_bucket, unanswered_proactive_count, wind_snooze_until,
-                   updated_at
+                   updated_at, threshold_offset, accumulated_impulse
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -93,6 +96,8 @@ class WindStateManager:
             unanswered_proactive_count=row["unanswered_proactive_count"] or 0,
             wind_snooze_until=_parse_datetime(row["wind_snooze_until"]),
             updated_at=_parse_datetime(row["updated_at"]),
+            threshold_offset=row["threshold_offset"],  # NULL preserved as None
+            accumulated_impulse=row["accumulated_impulse"] or 0.0,
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -295,3 +300,66 @@ class WindStateManager:
         conn = self._connect()
         cursor = conn.execute("SELECT conversation_id FROM wind_state")
         return [row["conversation_id"] for row in cursor.fetchall()]
+
+    def reset_windmood(self, conversation_id: Optional[str] = None) -> int:
+        """
+        Reset WindMood values to defaults.
+
+        Sets threshold_offset=NULL (use baseline) and accumulated_impulse=0.
+
+        Args:
+            conversation_id: Reset one conversation, or None for all
+
+        Returns:
+            Number of conversations reset
+        """
+        conn = self._connect()
+
+        if conversation_id:
+            cursor = conn.execute(
+                """
+                UPDATE wind_state
+                SET threshold_offset = NULL, accumulated_impulse = 0.0, updated_at = ?
+                WHERE conversation_id = ?
+                """,
+                (_format_datetime(datetime.now()), conversation_id)
+            )
+        else:
+            cursor = conn.execute(
+                """
+                UPDATE wind_state
+                SET threshold_offset = NULL, accumulated_impulse = 0.0, updated_at = ?
+                """,
+                (_format_datetime(datetime.now()),)
+            )
+
+        conn.commit()
+        count = cursor.rowcount
+        logger.info("Reset WindMood", extra={
+            "conversation_id": conversation_id or "all",
+            "count": count
+        })
+        return count
+
+    def get_windmood_states(self) -> list[dict]:
+        """
+        Get WindMood state for all conversations.
+
+        Returns list of dicts with conversation_id, threshold_offset, accumulated_impulse.
+        """
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT conversation_id, threshold_offset, accumulated_impulse
+            FROM wind_state
+            ORDER BY conversation_id
+            """
+        )
+        return [
+            {
+                "conversation_id": row["conversation_id"],
+                "threshold_offset": row["threshold_offset"],
+                "accumulated_impulse": row["accumulated_impulse"] or 0.0,
+            }
+            for row in cursor.fetchall()
+        ]
