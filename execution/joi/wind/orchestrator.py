@@ -52,12 +52,21 @@ class WindOrchestrator:
 
     def update_config(self, config: WindConfig) -> None:
         """Update Wind configuration."""
+        old = self.config
+        config_changed = (
+            old.enabled != config.enabled or
+            old.shadow_mode != config.shadow_mode or
+            old.allowlist != config.allowlist
+        )
+
         self.config = config
         self.impulse_engine.config = config
-        logger.info(
-            "Wind config updated: enabled=%s shadow_mode=%s allowlist=%d",
-            config.enabled, config.shadow_mode, len(config.allowlist)
-        )
+
+        if config_changed:
+            logger.info(
+                "Wind config updated: enabled=%s shadow_mode=%s allowlist=%d",
+                config.enabled, config.shadow_mode, len(config.allowlist)
+            )
 
     def check_impulse(
         self,
@@ -211,7 +220,7 @@ class WindOrchestrator:
         to_send = sum(1 for _, should_send, _, _, _ in results if should_send)
 
         if checked > 0:
-            logger.info(
+            logger.debug(
                 "Wind tick: checked %d conversations, %d to send",
                 checked, to_send
             )
