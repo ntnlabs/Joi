@@ -151,6 +151,7 @@ WIND SUBCOMMANDS:
     reset-windmood [conversation_id]  Reset WindMood to defaults (offset=NULL, accumulated=0)
     set-windmood <conversation_id>    Fine-tune WindMood values
     show-engagement [conversation_id] Show engagement stats (score, sent/engaged/ignored/deflected)
+    reset-engagement [conversation_id] Reset engagement score to 0.5 and clear counters
     show-feedback [conversation_id]   Show per-topic-family feedback (interest/rejection weights)
     topic-history [conversation_id]   Show recent topics with outcomes
     clear-cooldowns <conversation_id> Clear all topic family cooldowns
@@ -169,6 +170,8 @@ WIND EXAMPLES:
     joi-admin wind set-windmood +123 --accumulated 0.3  # Fine-tune accumulator
     joi-admin wind show-engagement                      # Show all engagement stats
     joi-admin wind show-engagement +123456789           # Show specific conversation
+    joi-admin wind reset-engagement                     # Reset all engagement to neutral
+    joi-admin wind reset-engagement +123456789          # Reset specific conversation
     joi-admin wind show-feedback +123456789             # Show topic family feedback
     joi-admin wind topic-history +123456789             # Show recent topics
     joi-admin wind topic-history +123456789 --limit 50  # Show more topics
@@ -1618,8 +1621,31 @@ SQL
             info "Cleared $count cooldowns for '$conversation'"
             ;;
 
+        reset-engagement)
+            local conversation="${1:-}"
+
+            local now
+            now=$(date -Iseconds)
+
+            if [[ -n "$conversation" ]]; then
+                local conversation_escaped
+                conversation_escaped=$(sql_escape_literal "$conversation")
+                local count
+                count=$(db_scalar "SELECT COUNT(*) FROM wind_state WHERE conversation_id = '$conversation_escaped';")
+                [[ "$count" -eq 0 ]] && error "No wind state found for '$conversation'"
+                db_exec "UPDATE wind_state SET engagement_score = 0.5, total_engaged = 0, total_ignored = 0, total_deflected = 0, last_engaged_at = NULL, last_deflected_at = NULL, updated_at = '$now' WHERE conversation_id = '$conversation_escaped';"
+                info "Reset engagement for '$conversation' (score → 0.5, counters → 0)"
+            else
+                local count
+                count=$(db_scalar "SELECT COUNT(*) FROM wind_state;")
+                [[ "$count" -eq 0 ]] && error "No wind state found"
+                db_exec "UPDATE wind_state SET engagement_score = 0.5, total_engaged = 0, total_ignored = 0, total_deflected = 0, last_engaged_at = NULL, last_deflected_at = NULL, updated_at = '$now';"
+                info "Reset engagement for all conversations (score → 0.5, counters → 0)"
+            fi
+            ;;
+
         --help|-h)
-            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood|show-engagement|show-feedback|topic-history|clear-cooldowns> [OPTIONS]"
+            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood|show-engagement|reset-engagement|show-feedback|topic-history|clear-cooldowns> [OPTIONS]"
             exit 0
             ;;
 
