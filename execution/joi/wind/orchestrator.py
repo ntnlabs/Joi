@@ -403,6 +403,11 @@ class WindOrchestrator:
                 )
                 if matched:
                     directly_replied_topic_id = matched.id
+                    logger.info("Direct reply matched Wind topic", extra={
+                        "conversation_id": conversation_id,
+                        "topic_id": matched.id,
+                        "signal_ts": signal_ts,
+                    })
                     result = EngagementResult(
                         outcome=EngagementClassifier.OUTCOME_ENGAGED,
                         confidence=1.0,
