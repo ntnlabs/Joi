@@ -267,7 +267,7 @@ class ImpulseEngine:
         factors = self._calculate_factors(state, conversation_id, now)
 
         score = sum(factors.values())
-        score = max(0.0, min(1.0, score))  # Clamp to [0, 1]
+        score = round(max(0.0, min(1.0, score)), 2)  # Clamp to [0, 1], round to 2 decimals
 
         above_threshold = score >= self.config.impulse_threshold
 
