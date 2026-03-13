@@ -22,7 +22,7 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 | 2026-03-03 | **Signal Unicode formatting** - Optional post-processor converts **bold** markdown to Unicode bold (Signal doesn't render markdown) |
 | 2026-03-01 | **Per-conversation memory settings** - Context size and compaction batch configurable per user/group via files |
 | 2026-02-28 | **FTS5 query filtering** - Facts and summaries injected into prompts via full-text search relevance rather than bulk loading; per-conversation consolidation model override |
-| 2026-02-26 | **GPU deployment & RAG/privacy fixes** - Switched to RTX A2000 12GB; configurable output length; RAG context visibility in debug |
+| 2026-02-26 | **GPU deployment & RAG/privacy fixes** - GPU deployment; configurable output length; RAG context visibility in debug |
 | 2026-02-20 | **Document receiving via Signal** - Users can send .txt/.md files via Signal for RAG ingestion; type/size validation, auto-forwarding to Joi, scoped knowledge storage |
 | 2026-02-20 | **Self-describing facts** - Facts include person names in values ("Peter is a developer"), unified conversation_id storage |
 | 2026-02-19 | **Count-based memory compaction** - Fixed memory drift bug: compact oldest N messages when context exceeded |
@@ -65,7 +65,7 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 | LLM (engagement) | joi-engagement | Custom Modelfile, classifies Wind engagement outcomes |
 | LLM Runtime | Ollama | All models local, no cloud calls |
 | LLM Requirements | Uncensored + Slovak | No restrictive filters, good Slovak support |
-| Hardware | ASUS NUC 13 Pro + RTX A2000 12GB | Proxmox host with GPU passthrough |
+| Hardware | ASUS NUC 13 Pro + NVIDIA GPU | Proxmox host with GPU passthrough |
 | Virtualization | Proxmox VE | Joi runs as isolated VM |
 | Messaging | Signal | Via secure proxy VM (Interactive Channel) |
 | Mesh VPN | Nebula | All VMs on encrypted mesh |
@@ -87,7 +87,7 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 └───────────────────────────┬─────────────────────────────────────┘
                             │ Nebula mesh VPN
 ┌───────────────────────────▼─────────────────────────────────────┐
-│       ASUS NUC 13 Pro (Proxmox Host) ──TB4──► eGPU (RTX A2000)  │
+│       ASUS NUC 13 Pro (Proxmox Host) ──TB4──► eGPU (NVIDIA)      │
 │  ┌────────────────────────────────────────────────────────────┐ │
 │  │                      joi VM (GPU Passthrough)              │ │
 │  │  ┌──────────────────────────────────────────────────────┐  │ │
