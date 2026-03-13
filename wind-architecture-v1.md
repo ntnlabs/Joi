@@ -1308,14 +1308,22 @@ Success criteria:
 ### Phase 4b: Learning & Pursuit
 *Depends on: Phase 4a (needs engagement data)*
 
+> **Design note**: Phase 4a introduced downward pressure only (rejection_weight → cooldown/block).
+> Phase 4b adds the upward direction (interest_weight → affinity bonus). Together they make the
+> system symmetric: topics that bore or annoy fade away, topics that resonate come back more.
+
 - **Pursuit state machine**: bounded stubbornness, multi-attempt topics
   - Track attempt count per topic
   - Configurable max attempts before giving up
   - Back-off timing between attempts
-- **Topic Affinity Model**: learn user interests from engagement patterns
-  - Feed engagement signals from 4a
-  - Weight future topic selection by affinity scores
-  - Recurring topics for high-affinity subjects
+- **Topic Affinity Model**: symmetric counterpart to rejection_weight accumulation
+  - `interest_weight` (already in `topic_feedback` schema) accumulates on engagements
+  - High `interest_weight` for a family → affinity bonus in topic selection or impulse scoring
+  - Bonus is a lower effective barrier: high-affinity families get surfaced more readily
+  - Accumulation is gradual (mirrors rejection: multiple engagements needed to earn it)
+  - No hard cap on interest_weight, but bonus effect should be bounded (don't spam one topic)
+  - Decay rate slower than rejection (interest should persist longer than annoyance fades)
+  - Recurring topics for high-affinity subjects — system learns what the user actually likes talking about
 
 ### Phase 4c: Intelligence
 *Depends on: Phase 4b (benefits from affinity data)*
