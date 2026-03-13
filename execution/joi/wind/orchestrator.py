@@ -389,15 +389,36 @@ class WindOrchestrator:
         Evaluate topics awaiting response against user's message.
 
         For each pending topic:
-        1. Try direct reply detection
+        1. Try direct reply detection (Signal quote timestamp match)
         2. If not direct reply, use LLM classification
         3. Apply outcome and lifecycle rules
         """
-        topics = self.topic_manager.get_topics_awaiting_response(conversation_id)
-        if not topics:
-            return
+        # Direct reply fast path — if user quoted a message, find the matching topic
+        directly_replied_topic_id = None
+        if reply_to_id:
+            try:
+                signal_ts = int(reply_to_id)
+                matched = self.topic_manager.get_topic_by_signal_timestamp(
+                    conversation_id, signal_ts
+                )
+                if matched:
+                    directly_replied_topic_id = matched.id
+                    result = EngagementResult(
+                        outcome=EngagementClassifier.OUTCOME_ENGAGED,
+                        confidence=1.0,
+                        quality=0.8,
+                        method="direct_reply",
+                    )
+                    self._apply_engagement_outcome(matched, result)
+            except (ValueError, TypeError):
+                pass  # reply_to_id not a valid Signal timestamp
 
+        # LLM/timeout path for remaining pending topics
+        topics = self.topic_manager.get_topics_awaiting_response(conversation_id)
         for topic in topics:
+            if topic.id == directly_replied_topic_id:
+                continue  # already handled above
+
             # Skip if no sent_message_id (shouldn't happen, but defensive)
             if not topic.sent_message_id:
                 continue
@@ -411,7 +432,7 @@ class WindOrchestrator:
                 wind_message_id=topic.sent_message_id,
                 mentioned_at=topic.mentioned_at or datetime.now(),
                 user_response=user_message,
-                user_response_reply_to=reply_to_id,
+                user_response_reply_to=None,  # direct reply handled above
             )
 
             if result:

@@ -1415,6 +1415,7 @@ def receive_message(msg: InboundMessage):
         return InboundResponse(status="ok", message_id=msg.message_id)
 
     # Store inbound message (always store for context, sanitized)
+    quote_reply_to_id = msg.quote.get("message_id") if msg.quote else None
     msg_row_id = memory.store_message(
         message_id=msg.message_id,
         direction="inbound",
@@ -1422,7 +1423,7 @@ def receive_message(msg: InboundMessage):
         content_text=user_text,
         timestamp=msg.timestamp,
         conversation_id=msg.conversation.id,
-        reply_to_id=msg.quote.get("message_id") if msg.quote else None,
+        reply_to_id=quote_reply_to_id,
         sender_id=msg.sender.transport_id,
         sender_name=msg.sender.display_name,
     )
@@ -1436,7 +1437,11 @@ def receive_message(msg: InboundMessage):
         return InboundResponse(status="ok", message_id=msg.message_id)
 
     # Record user interaction for Wind (resets unanswered counter, updates silence timer)
-    wind_orchestrator.record_user_interaction(msg.conversation.id)
+    wind_orchestrator.record_user_interaction(
+        msg.conversation.id,
+        message_text=user_text,
+        reply_to_id=quote_reply_to_id,
+    )
 
     # All facts (explicit and inferred) use conversation_id as key
     # - DMs: phone number (per-user scope)

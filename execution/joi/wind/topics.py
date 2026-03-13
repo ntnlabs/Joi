@@ -536,6 +536,33 @@ class TopicManager:
 
         return [self._row_to_topic(row) for row in cursor.fetchall()]
 
+    def get_topic_by_signal_timestamp(
+        self,
+        conversation_id: str,
+        signal_timestamp_ms: int,
+        tolerance_ms: int = 5000,
+    ) -> Optional[PendingTopic]:
+        """
+        Find a pending topic whose sent message timestamp matches a Signal quote ID.
+
+        Signal quote IDs are the sender's envelope timestamp (ms). We match against
+        the stored message timestamp via JOIN with messages table.
+        Tolerance of 5s covers any delay between store_message() and signal-cli send.
+        """
+        conn = self._connect()
+        row = conn.execute(
+            """
+            SELECT pt.* FROM pending_topics pt
+            JOIN messages m ON m.message_id = pt.sent_message_id
+            WHERE pt.conversation_id = ?
+              AND pt.status = ?
+              AND ABS(m.timestamp - ?) <= ?
+            LIMIT 1
+            """,
+            (conversation_id, self.STATUS_AWAITING_RESPONSE, signal_timestamp_ms, tolerance_ms),
+        ).fetchone()
+        return self._row_to_topic(row) if row else None
+
     def get_topic_by_message_id(self, message_id: str) -> Optional[PendingTopic]:
         """Get topic by the message_id of the Wind message that mentioned it."""
         conn = self._connect()
