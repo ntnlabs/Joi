@@ -2,7 +2,7 @@
 
 > Focused design for Joi's proactive "Wind" behavior.
 > Version: 1.0 (Draft)
-> Last updated: 2026-02-22
+> Last updated: 2026-03-13
 
 ## Purpose
 
@@ -1265,30 +1265,30 @@ Success criteria:
 - No spam complaints
 - User engagement on some topics
 
-### Phase 3: Tuning ← CURRENT
+### Phase 3: Tuning ✅
 Tuning existing behavior + adding natural variance (no new LLM calls needed).
 
 **Config tuning:**
-- Observe real behavior patterns
-- Adjust factor weights, thresholds, dampers
-- Tune quiet windows based on activity patterns
-- Improve topic ranking and dedupe
-- Relax caps toward intended companion defaults
+- [x] Observe real behavior patterns
+- [x] Adjust factor weights, thresholds, dampers
+- [x] Tune quiet windows based on activity patterns
+- [x] Improve topic ranking and dedupe
+- [x] Relax caps toward intended companion defaults
 
-**Natural variance (from v2 ideas):**
-- **Daily mood (momentum-based)**: smooth transitions, influenced by yesterday's engagement
-- **Day-of-week personality**: different profiles (weekday task-focused, weekend relaxed)
-- **Probability-based triggering**: score becomes probability, not hard threshold
-- **Momentum (upward only)**: engaging conversations boost next-day impulse
+**Natural variance (WindMood):**
+- [x] **Bounded random walk**: threshold drifts slowly over time (±0.1 from baseline)
+- [x] **Accumulated impulse**: score accumulates across ticks, triggers when crossing threshold
+- [x] **Soft probability**: sigmoid-based trigger probability, not hard threshold
+- [x] **Per-conversation persistence**: drift and accumulation survive restarts (stored in DB)
 
 **Context management:**
-- **Compact before Wind**: trigger consolidation before sending new topic (see Context Management section)
-- **Topic-first prompting**: structure prompt with topic as focus, context as background
+- [x] **Compact before Wind**: trigger consolidation before sending new topic
+- [x] **Topic-first prompting**: structure prompt with topic as focus, context as background
 
 Success criteria:
-- Wind doesn't feel robotic or predictable
-- No "always at 7 AM" pattern
-- Natural day-to-day variance
+- [x] Wind doesn't feel robotic or predictable
+- [x] No "always at 7 AM" pattern
+- [x] Natural day-to-day variance
 
 ### Phase 4a: Engagement Foundation
 - **Response quality feedback**: learn from how user responds to proactive messages
@@ -1341,7 +1341,29 @@ Success criteria:
   - Track when user typically responds
   - Shift quiet windows based on observed patterns
 
-Together, Phase 4a-4c transform Wind from "queue-based reminders" to "genuine companion initiative."
+### Phase 4d: Personality Variance
+*Depends on: Phase 3 (WindMood foundation)*
+
+Extends WindMood with higher-level personality features that shape engagement over days/weeks.
+
+- **Daily mood (momentum-based)**: smooth transitions influenced by yesterday's engagement
+  - Mood multiplier (0.7-1.3) affecting impulse scores
+  - Good conversations lift mood, inactivity drifts it down
+  - Persist per conversation in wind_state
+- **Day-of-week personality**: different profiles by day
+  - Weekdays: more task-focused, check-ins about work/plans
+  - Weekends: more relaxed, casual topics, lighter mood
+  - Monday: week ahead check-in
+  - Friday: lighter, wind-down mood
+- **Momentum (upward only)**: engaging conversations boost next-day impulse
+  - Never goes below baseline (Joi shouldn't go quiet if user is quiet)
+  - Measures: message count, response length, conversation duration
+- **30-day cycle (optional)**: longer-term mood rhythm layered on daily variance
+  - Adds ~30 day rhythm to baseline mood
+  - Some weeks slightly more energetic/chatty
+  - Config: `mood_cycle_enabled` (default: true)
+
+Together, Phase 4a-4d transform Wind from "queue-based reminders" to "genuine companion initiative."
 
 ## Integration Points (Current Codebase)
 
