@@ -1594,6 +1594,59 @@ User messages                Wind metadata extraction
 - **Energy matching**: User will just say "busy" - not useful signal
 - **Separate smaller model**: Cold start issues, model juggling complexity
 
+## Nice to Have (Future Exploration)
+
+Ideas worth exploring from SOMA project review and other sources.
+
+### From SOMA: Smarter Fact Decay
+
+Prune old low-confidence facts automatically during consolidation:
+- Facts older than N days (e.g., 30)
+- Below confidence threshold (e.g., 0.5)
+- Not marked as important
+- Never/rarely accessed (if tracking access)
+
+Low effort, helps prevent memory bloat.
+
+### From SOMA: Quiet Hours Deep Consolidation
+
+Run deeper cleanup during off-peak hours:
+- Merge similar/duplicate facts
+- Prune stale low-confidence facts
+- Strengthen frequently-accessed facts
+- Archive old summaries
+
+Can piggyback on existing quiet hours infrastructure.
+
+### From SOMA: Failed Query Logging
+
+Track queries where:
+- RAG returned no results
+- LLM confidence was low
+- User had to rephrase or clarify
+
+Useful for identifying knowledge gaps and improving over time.
+
+### Self-Improvement (Autonomous)
+
+Not SOMA's over-engineered 178-arbiter approach, but autonomous nonetheless.
+
+Different approach to be designed later. Core idea: Joi learns from interaction patterns and improves without manual intervention.
+
+Possible signals to learn from:
+- User corrections ("No, I meant...")
+- Repeated clarifications on same topic
+- Low engagement after proactive messages
+- Explicit feedback ("That's not helpful")
+
+Could feed into:
+- Fact confidence adjustments
+- Topic affinity updates
+- Response style adaptation
+- Knowledge gap filling
+
+Details TBD.
+
 ## Summary
 
 Wind v1 should be:
