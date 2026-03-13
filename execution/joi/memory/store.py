@@ -123,7 +123,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 # SQL for creating tables
 SCHEMA_SQL = """
@@ -242,7 +242,15 @@ CREATE TABLE IF NOT EXISTS wind_state (
     updated_at TEXT NOT NULL,
     -- WindMood columns
     threshold_offset REAL DEFAULT NULL,
-    accumulated_impulse REAL DEFAULT 0.0
+    accumulated_impulse REAL DEFAULT 0.0,
+    -- Engagement tracking columns (Phase 4a)
+    engagement_score REAL DEFAULT 0.5,
+    total_proactives_sent INTEGER DEFAULT 0,
+    total_engaged INTEGER DEFAULT 0,
+    total_ignored INTEGER DEFAULT 0,
+    total_deflected INTEGER DEFAULT 0,
+    last_engaged_at TEXT,
+    last_deflected_at TEXT
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -259,12 +267,37 @@ CREATE TABLE IF NOT EXISTS pending_topics (
     due_at TEXT,
     mentioned_at TEXT,
     novelty_key TEXT,
-    source_event_id TEXT
+    source_event_id TEXT,
+    -- Engagement tracking columns (Phase 4a)
+    outcome TEXT DEFAULT NULL,
+    outcome_at TEXT DEFAULT NULL,
+    retry_count INTEGER DEFAULT 0,
+    last_retry_at TEXT DEFAULT NULL,
+    sent_message_id TEXT DEFAULT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pending_topics_conv_status
     ON pending_topics(conversation_id, status);
 CREATE INDEX IF NOT EXISTS idx_pending_topics_due
     ON pending_topics(due_at, status);
+
+-- Topic feedback table (per-conversation topic family preferences)
+CREATE TABLE IF NOT EXISTS topic_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    topic_family TEXT NOT NULL,
+    rejection_weight REAL DEFAULT 0.0,
+    interest_weight REAL DEFAULT 0.0,
+    engagement_count INTEGER DEFAULT 0,
+    ignore_count INTEGER DEFAULT 0,
+    deflection_count INTEGER DEFAULT 0,
+    last_positive_at TEXT,
+    last_negative_at TEXT,
+    cooldown_until TEXT,
+    updated_at TEXT NOT NULL,
+    UNIQUE(conversation_id, topic_family)
+);
+CREATE INDEX IF NOT EXISTS idx_topic_feedback_conv
+    ON topic_feedback(conversation_id);
 
 -- Wind decision log table (observability)
 CREATE TABLE IF NOT EXISTS wind_decision_log (
@@ -624,6 +657,31 @@ class MemoryStore:
             if "accumulated_impulse" not in wind_columns:
                 logger.info("Migration: Adding 'accumulated_impulse' column to wind_state table")
                 conn.execute("ALTER TABLE wind_state ADD COLUMN accumulated_impulse REAL DEFAULT 0.0")
+                conn.commit()
+            # Phase 4a engagement tracking columns (v8)
+            if "engagement_score" not in wind_columns:
+                logger.info("Migration: Adding engagement tracking columns to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN engagement_score REAL DEFAULT 0.5")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN total_proactives_sent INTEGER DEFAULT 0")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN total_engaged INTEGER DEFAULT 0")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN total_ignored INTEGER DEFAULT 0")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN total_deflected INTEGER DEFAULT 0")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN last_engaged_at TEXT")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN last_deflected_at TEXT")
+                conn.commit()
+
+        # Check pending_topics table for engagement columns (v8)
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_topics'")
+        if cursor.fetchone():
+            cursor = conn.execute("PRAGMA table_info(pending_topics)")
+            topic_columns = {row[1] for row in cursor.fetchall()}
+            if "outcome" not in topic_columns:
+                logger.info("Migration: Adding engagement columns to pending_topics table")
+                conn.execute("ALTER TABLE pending_topics ADD COLUMN outcome TEXT DEFAULT NULL")
+                conn.execute("ALTER TABLE pending_topics ADD COLUMN outcome_at TEXT DEFAULT NULL")
+                conn.execute("ALTER TABLE pending_topics ADD COLUMN retry_count INTEGER DEFAULT 0")
+                conn.execute("ALTER TABLE pending_topics ADD COLUMN last_retry_at TEXT DEFAULT NULL")
+                conn.execute("ALTER TABLE pending_topics ADD COLUMN sent_message_id TEXT DEFAULT NULL")
                 conn.commit()
 
         # Check FTS integrity and rebuild if needed

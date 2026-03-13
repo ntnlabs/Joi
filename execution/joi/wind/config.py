@@ -31,6 +31,10 @@ class WindConfig:
     silence_cap_hours: float = 24.0
     topic_pressure_weight: float = 0.2
     fatigue_weight: float = 0.3
+    engagement_weight: float = 0.2  # Phase 4a: boost/dampen based on engagement score
+
+    # Phase 4a: Engagement tracking
+    ignore_timeout_hours: float = 12.0  # Hours before topic is considered ignored
 
     # WindMood: threshold drift bounds (random walk)
     threshold_drift_min: float = -0.1  # Can drift 0.1 below baseline
@@ -65,6 +69,8 @@ class WindConfig:
             silence_cap_hours=data.get("silence_cap_hours", 24.0),
             topic_pressure_weight=data.get("topic_pressure_weight", 0.2),
             fatigue_weight=data.get("fatigue_weight", 0.3),
+            engagement_weight=data.get("engagement_weight", 0.2),
+            ignore_timeout_hours=data.get("ignore_timeout_hours", 12.0),
             threshold_drift_min=data.get("threshold_drift_min", -0.1),
             threshold_drift_max=data.get("threshold_drift_max", 0.1),
             threshold_drift_step=data.get("threshold_drift_step", 0.01),
@@ -91,6 +97,8 @@ class WindConfig:
             "silence_cap_hours": self.silence_cap_hours,
             "topic_pressure_weight": self.topic_pressure_weight,
             "fatigue_weight": self.fatigue_weight,
+            "engagement_weight": self.engagement_weight,
+            "ignore_timeout_hours": self.ignore_timeout_hours,
             "threshold_drift_min": self.threshold_drift_min,
             "threshold_drift_max": self.threshold_drift_max,
             "threshold_drift_step": self.threshold_drift_step,
