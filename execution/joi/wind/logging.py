@@ -61,6 +61,8 @@ class WindDecisionLogger:
             db_connection_factory: Callable that returns a database connection
         """
         self._connect = db_connection_factory
+        # Cache last state per conversation: {conv_id: (decision, score_rounded, skip_reason)}
+        self._last_state: dict[str, tuple[str, float, str | None]] = {}
 
     def log_decision(
         self,
@@ -126,18 +128,13 @@ class WindDecisionLogger:
 
         log_id = cursor.lastrowid or 0
 
-        # Only log INFO for actual sends/shadow, skip decisions go to DEBUG
-        if decision == "skip":
-            logger.debug(
-                "Wind decision #%d: conv=%s eligible=%s decision=%s score=%.2f reason=%s",
-                log_id,
-                conversation_id[:16] if conversation_id else "?",
-                eligible,
-                decision,
-                impulse_score or 0.0,
-                skip_reason or "-",
-            )
-        else:
+        # Check if state changed (use rounded score to match log format)
+        score_rounded = round(impulse_score or 0.0, 2)
+        current_state = (decision, score_rounded, skip_reason)
+        last_state = self._last_state.get(conversation_id)
+
+        # Only log INFO if state changed (suppresses identical repeats)
+        if last_state != current_state:
             logger.info(
                 "Wind decision #%d: conv=%s eligible=%s decision=%s score=%.2f reason=%s",
                 log_id,
@@ -147,6 +144,7 @@ class WindDecisionLogger:
                 impulse_score or 0.0,
                 skip_reason or "-",
             )
+            self._last_state[conversation_id] = current_state
 
         return log_id
 
