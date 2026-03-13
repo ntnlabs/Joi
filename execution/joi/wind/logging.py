@@ -61,8 +61,8 @@ class WindDecisionLogger:
             db_connection_factory: Callable that returns a database connection
         """
         self._connect = db_connection_factory
-        # Cache last state per conversation: {conv_id: (decision, score, skip_reason)}
-        self._last_state: dict[str, tuple[str, float, str | None]] = {}
+        # Cache last state per conversation: {conv_id: (decision, skip_reason)}
+        self._last_state: dict[str, tuple[str, str | None]] = {}
 
     def log_decision(
         self,
@@ -128,8 +128,8 @@ class WindDecisionLogger:
 
         log_id = cursor.lastrowid or 0
 
-        # Check if state changed for this conversation
-        current_state = (decision, impulse_score or 0.0, skip_reason)
+        # Check if state changed for this conversation (ignore score drift)
+        current_state = (decision, skip_reason)
         last_state = self._last_state.get(conversation_id)
 
         # Always log at DEBUG
