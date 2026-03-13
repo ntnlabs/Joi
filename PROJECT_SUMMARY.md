@@ -1,6 +1,6 @@
 # Joi - Project Summary
 
-> Quick reference for understanding this project. Last updated: 2026-02-20
+> Quick reference for understanding this project. Last updated: 2026-03-13
 
 ## What is Joi?
 
@@ -8,16 +8,25 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 
 ## Project Status
 
-**Phase: Implementation** - Core system operational with defense-in-depth security.
+**Phase: Implementation** - Core system operational with defense-in-depth security. Wind proactive messaging live through Phase 4a (engagement tracking).
 
 ### Milestones
 
 | Date | Milestone |
 |------|-----------|
+| 2026-03-13 | **Wind Phase 4a: Engagement Foundation** - Feedback loop for proactive messages: direct reply detection, LLM classification (joi-engagement model), 12h timeout, per-topic-family rejection/interest weights, lifecycle rules per topic type |
+| 2026-03-13 | **Wind Phase 3: Natural Variance** - Organic threshold drift via bounded random walk, accumulated impulse, soft probability — Wind no longer fires at predictable intervals |
+| 2026-03-10 | **Code review & refactoring** - server.py reduced ~36% by extracting MessageQueue, Scheduler, AdminRoutes, GroupCache modules; security fixes from code review |
+| 2026-03-09 | **Wind Phase 2: Live proactive sends** - Full topic queue, impulse engine, shadow mode → live sends, reminder system |
+| 2026-03-09 | **Wind Phase 1: Foundation** - Shadow mode, state manager, topic manager, impulse scoring, decision logger |
+| 2026-03-03 | **Signal Unicode formatting** - Optional post-processor converts **bold** markdown to Unicode bold (Signal doesn't render markdown) |
+| 2026-03-01 | **Per-conversation memory settings** - Context size and compaction batch configurable per user/group via files |
+| 2026-02-28 | **FTS5 query filtering** - Facts and summaries injected into prompts via full-text search relevance rather than bulk loading; per-conversation consolidation model override |
+| 2026-02-26 | **GPU deployment & RAG/privacy fixes** - Switched to RTX A2000 12GB; configurable output length; RAG context visibility in debug |
 | 2026-02-20 | **Document receiving via Signal** - Users can send .txt/.md files via Signal for RAG ingestion; type/size validation, auto-forwarding to Joi, scoped knowledge storage |
-| 2026-02-20 | **Self-describing facts** - Facts include person names in values ("Peter is a developer"), unified conversation_id storage, fixed input label and retrieval key mismatches |
-| 2026-02-19 | **Count-based memory compaction** - Fixed memory drift bug: compact oldest N messages when context exceeded (no more "forgotten then remembered" summaries) |
-| 2026-02-19 | **Business mode DM group knowledge** - Configurable mode (companion/business) with optional DM access to group knowledge based on real Signal memberships |
+| 2026-02-20 | **Self-describing facts** - Facts include person names in values ("Peter is a developer"), unified conversation_id storage |
+| 2026-02-19 | **Count-based memory compaction** - Fixed memory drift bug: compact oldest N messages when context exceeded |
+| 2026-02-19 | **Business mode DM group knowledge** - Configurable mode (companion/business) with optional DM access to group knowledge |
 | 2026-02-19 | **Security gaps closed** - Joi HMAC fail-closed, bounded thread pool, outbound rate limiting, mesh status polling |
 | 2026-02-18 | **Stateless mesh architecture** - Mesh stores nothing on disk; all config pushed from Joi |
 | 2026-02-17 | **Config push system** - One-way Joi → mesh config sync with hash verification |
@@ -43,22 +52,25 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 | **Interactive Channel** | Human communication via Signal (bidirectional) |
 | **System Channel** | Machine-to-machine communication (type-agnostic, read/write/both per source) |
 | **LLM Services** | Isolated VMs for image generation, web search, TTS, code execution |
-| **Modes** | `companion` (personal, proactive/"Wind") or `business` (professional/shared, request-response; optional DM group knowledge via policy) |
+| **Modes** | `companion` (personal, proactive/Wind) or `business` (professional/shared, request-response; optional DM group knowledge via policy) |
+| **Wind** | Proactive messaging subsystem — topic queue, impulse engine, engagement tracking |
 
 ## Technology Stack
 
 | Component | Technology | Notes |
 |-----------|------------|-------|
-| LLM | Llama 3.1 8B abliterated | Primary - mannix/llama3.1-8b-abliterated |
-| LLM Config | Ollama Modelfile | Baked-in personality, per-user/group models |
+| LLM (main) | joi-personal | Custom Modelfile on mannix/llama3.1-8b-abliterated |
+| LLM (groups) | joi-group | Custom Modelfile, group-tuned personality |
+| LLM (consolidation) | joi-consolidator | Custom Modelfile, low temp, fact extraction |
+| LLM (engagement) | joi-engagement | Custom Modelfile, classifies Wind engagement outcomes |
+| LLM Runtime | Ollama | All models local, no cloud calls |
 | LLM Requirements | Uncensored + Slovak | No restrictive filters, good Slovak support |
-| Hardware | ASUS NUC 13 Pro + RTX 3060 eGPU | Proxmox host with GPU passthrough |
+| Hardware | ASUS NUC 13 Pro + RTX A2000 12GB | Proxmox host with GPU passthrough |
 | Virtualization | Proxmox VE | Joi runs as isolated VM |
 | Messaging | Signal | Via secure proxy VM (Interactive Channel) |
 | Mesh VPN | Nebula | All VMs on encrypted mesh |
 | System Channel | Generic API | openhab, Zabbix, actuators, LLM Services |
 | Database | SQLite + SQLCipher | Encrypted local storage |
-| Proxy Host | mesh.homelab.example | Ubuntu 24 LTS, 2GB RAM, 16GB disk |
 
 **LLM Policy:** Chinese models (Qwen, DeepSeek, etc.) are banned for security/trust reasons.
 
@@ -70,12 +82,12 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 └───────────────────────────┬─────────────────────────────────────┘
                             │
 ┌───────────────────────────▼─────────────────────────────────────┐
-│              mesh.homelab.example (Ubuntu 24 LTS)               │
+│              mesh VM (Ubuntu 24 LTS)                            │
 │              Signal bot + Nebula lighthouse                     │
 └───────────────────────────┬─────────────────────────────────────┘
                             │ Nebula mesh VPN
 ┌───────────────────────────▼─────────────────────────────────────┐
-│       ASUS NUC 13 Pro (Proxmox Host) ──TB4──► eGPU (RTX 3060)   │
+│       ASUS NUC 13 Pro (Proxmox Host) ──TB4──► eGPU (RTX A2000)  │
 │  ┌────────────────────────────────────────────────────────────┐ │
 │  │                      joi VM (GPU Passthrough)              │ │
 │  │  ┌──────────────────────────────────────────────────────┐  │ │
@@ -112,47 +124,38 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 9. **Mesh integrity**: Joi shuts down if mesh fails heartbeat (potential compromise)
 10. **Maintenance USB key**: Physical USB with Ed25519 key enables planned mesh maintenance
 
+## Directory Structure
+
+```
+execution/
+├── joi/                    # Joi VM — API, Wind, memory, config
+│   ├── api/                # FastAPI server, routes, scheduler, queue
+│   ├── wind/               # Proactive messaging subsystem
+│   ├── memory/             # SQLite/SQLCipher store
+│   ├── config/             # Settings, logging, prompts
+│   └── systemd/            # Service files and defaults
+└── mesh/
+    └── proxy/              # Mesh proxy service (Signal ↔ Joi)
+
+sysprep/                    # VM provisioning scripts (stage1–4)
+├── joi/
+└── mesh/
+```
+
 ## Documentation Files
 
 | File | Purpose |
 |------|---------|
-| `AGENTS.md` | Development guidelines, coding standards, planned structure |
-| `Joi-architecture-v2.md` | Current architecture (security-hardened) |
+| `CLAUDE.md` | Claude Code instructions for this project |
+| `AGENTS.md` | Development guidelines, coding standards |
+| `ENV-REFERENCE.md` | All environment variables with defaults |
+| `COMMS-MATRIX.md` | Network flows, ports, VM IPs |
+| `SENSITIVE-CONFIG.md` | Secrets and deployment checklist (not in git) |
+| `Joi-architecture-v3.md` | Current architecture (security-hardened) |
+| `wind-architecture-v1.md` | Wind proactive messaging full design |
 | `system-channel.md` | System Channel & LLM Services specification |
 | `agent-loop-design.md` | Agent behavior, impulse system, behavior modes |
 | `Joi-threat-model.md` | Threat analysis, attack surfaces, mitigations |
-
-## Planned Directory Structure
-
-```
-/src/           - Runtime code, adapters, and agents
-/tests/         - Unit and integration tests
-/assets/        - Diagrams and visual documentation
-```
-
-## Coding Standards (from AGENTS.md)
-
-- **Indentation**: 2 spaces (YAML/JSON), 4 spaces (Python)
-- **Commits**: Concise, imperative mood
-- **Secrets**: Never in repo, use `.env` files
-
-## Hardware Platform
-
-| Component | Product | Notes |
-|-----------|---------|-------|
-| Mini PC / Host | ASUS NUC 13 Pro NUC13ANHI7 | Proxmox VE, Thunderbolt 4 |
-| GPU | NVIDIA RTX 3060 12GB | eGPU enclosure via TB4 |
-| eGPU Enclosure | TBD | See hardware-budget-analysis.md |
-
-See `hardware-budget-analysis.md` for detailed budget and sourcing options.
-
-## Critical TODOs (from threat model)
-
-1. ~~Implement Proxy → Joi authentication~~ ✓ RESOLVED (Nebula mesh VPN)
-2. ~~Add prompt injection defenses~~ ✓ RESOLVED (see prompt-injection-defenses.md)
-3. ~~Protect Signal credentials~~ ✓ RESOLVED (LUKS + file permissions, documented in Joi-architecture-v2.md)
-4. ~~Enforce read-only constraints at all layers~~ ✓ RESOLVED (policy-engine.md)
-5. ~~Add rate limiting on agent actions~~ ✓ RESOLVED (policy-engine.md, 60/hr direct, unlimited critical)
 
 ## Future Improvements
 
@@ -168,7 +171,7 @@ Currently all summaries (last 7 days) are injected into every prompt. This can c
 | **Intent boost** | If user asks memory-style questions ("remember", "last time", "what did we decide") |
 | **Novelty penalty** | Down-rank if content already in context window or structured facts |
 
-Select top 1-3 summaries under token budget. Summaries stay core memory, but only relevant ones enter each turn.
+Select top 1-3 summaries under token budget.
 
 ### Joi Identity Registry
 Transport-agnostic user identity system for pinpoint-accurate fact attribution.
@@ -186,12 +189,8 @@ joi_users table:
   ]
 ```
 
-**Behavior:**
-- First encounter → create Joi identity, link available transport IDs
-- Subsequent encounters → lookup by transport ID, resolve to Joi identity
-- Facts stored under Joi identity (cross-transport, cross-conversation)
-
-**Scoping rules (unchanged):**
-- Group facts → scoped to group_id (privacy boundary)
-- DM facts → scoped to user's Joi identity
-- Business mode → explicit opt-in to bridge scopes
+### Wind Phases 4b–4d
+See `wind-architecture-v1.md` for full design:
+- **4b**: Topic Affinity Model — symmetric upward learning (interest_weight accumulation)
+- **4c**: WindMood — daily mood persistence, emotional variance
+- **4d**: Day-of-week personality variance
