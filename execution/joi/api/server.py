@@ -550,11 +550,10 @@ if HMAC_ENABLED:
         mesh_url=settings.mesh_url,
         policy_manager=policy_manager,
     )
-    # Check HMAC sync on startup to detect key mismatches early
-    sync_ok, sync_msg = hmac_rotator.check_mesh_sync()
+    # Check HMAC sync on startup — handles crash recovery for pending rotations
+    sync_ok = hmac_rotator.startup_sync_check()
     if not sync_ok:
         logger.warning("HMAC sync check failed on startup", extra={
-            "reason": sync_msg,
             "action": "hmac_sync_warning"
         })
     config_push_client = ConfigPushClient(
@@ -1274,6 +1273,18 @@ def ingest_document(req: DocumentIngestRequest):
             error="invalid_base64",
         )
 
+    # Enforce size limit (mesh caps at 1 MB before forwarding; 2 MB gives a safe margin)
+    _MAX_INGEST_BYTES = 2 * 1024 * 1024
+    if len(content) > _MAX_INGEST_BYTES:
+        logger.warning("Document rejected: content too large", extra={
+            "size_bytes": len(content),
+            "max_bytes": _MAX_INGEST_BYTES,
+        })
+        return DocumentIngestResponse(
+            status="error",
+            error="content_too_large",
+        )
+
     # Create scope directory if needed
     scope_dir = INGESTION_DIR / "input" / safe_scope
     try:
@@ -1509,6 +1520,8 @@ def receive_message(msg: InboundMessage):
         # Uses hybrid approach: keyword filter + LLM detection/extraction
         # Note: This is inside the queue to ensure all LLM calls are serialized
         if not msg.store_only:
+            if queue_msg.cancelled:
+                return InboundResponse(status="ok", message_id=msg.message_id)
             queue_msg.heartbeat()  # Signal still working
             pending_fact = _detect_and_extract_fact(
                 user_text,

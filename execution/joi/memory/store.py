@@ -123,7 +123,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 # SQL for creating tables
 SCHEMA_SQL = """
@@ -144,8 +144,7 @@ CREATE TABLE IF NOT EXISTS messages (
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     processed INTEGER NOT NULL DEFAULT 0,
     escalated INTEGER NOT NULL DEFAULT 0,
-    archived INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY (reply_to_id) REFERENCES messages(message_id)
+    archived INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC);
@@ -683,6 +682,50 @@ class MemoryStore:
                 conn.execute("ALTER TABLE pending_topics ADD COLUMN last_retry_at TEXT DEFAULT NULL")
                 conn.execute("ALTER TABLE pending_topics ADD COLUMN sent_message_id TEXT DEFAULT NULL")
                 conn.commit()
+
+        # Migration v9: Remove FK constraint on messages.reply_to_id
+        # Signal quote IDs are timestamps; they never match stored UUIDs, causing
+        # INSERT OR IGNORE to silently drop rows. reply_to_id is advisory only.
+        cursor = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'"
+        )
+        row = cursor.fetchone()
+        if row and row[0] and "FOREIGN KEY" in row[0]:
+            logger.info("Migration v9: Removing FK constraint from messages.reply_to_id")
+            conn.execute("""
+                CREATE TABLE messages_new (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    message_id TEXT UNIQUE NOT NULL,
+                    direction TEXT NOT NULL,
+                    channel TEXT NOT NULL DEFAULT 'direct',
+                    content_type TEXT NOT NULL,
+                    content_text TEXT,
+                    content_media_path TEXT,
+                    conversation_id TEXT,
+                    reply_to_id TEXT,
+                    sender_id TEXT,
+                    sender_name TEXT,
+                    timestamp INTEGER NOT NULL,
+                    created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+                    processed INTEGER NOT NULL DEFAULT 0,
+                    escalated INTEGER NOT NULL DEFAULT 0,
+                    archived INTEGER NOT NULL DEFAULT 0
+                )
+            """)
+            conn.execute("""
+                INSERT INTO messages_new SELECT
+                    id, message_id, direction, channel, content_type, content_text,
+                    content_media_path, conversation_id, reply_to_id, sender_id, sender_name,
+                    timestamp, created_at, processed, escalated, archived
+                FROM messages
+            """)
+            conn.execute("DROP TABLE messages")
+            conn.execute("ALTER TABLE messages_new RENAME TO messages")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_direction ON messages(direction, timestamp DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, timestamp DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_archived ON messages(archived, timestamp DESC)")
+            conn.commit()
 
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
