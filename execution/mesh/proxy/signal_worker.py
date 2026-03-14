@@ -1144,6 +1144,7 @@ def _process_attachments(
             logger.info("Document forwarded to Joi", extra={"filename": filename, "action": "document_forward"})
         except Exception as e:
             logger.error("Failed to forward document to Joi", extra={"error": str(e)})
+            attachment_path.unlink(missing_ok=True)
             continue
 
         # Delete attachment after successful forward
