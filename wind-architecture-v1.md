@@ -1715,6 +1715,22 @@ END;
 
 **Why fun**: Gives Joi awareness of its own memory being externally modified - like a digital "someone's talking about me" sense.
 
+## Known Bugs
+
+### Direct Reply Timestamp Mismatch
+**Status:** Open
+**Phase affected:** 4a (engagement tracking)
+
+When the user quotes a Wind message, the direct reply fast path (`method=direct_reply`) should match via Signal envelope timestamp. Instead it falls through to LLM classification (`method=llm`).
+
+**Root cause:** Joi stores outbound Wind messages with `timestamp=int(time.time() * 1000)` (Joi's local clock). Signal assigns its own envelope timestamp when processing the outbound message. The quote ID the user sends is Signal's timestamp — which differs from Joi's stored timestamp by more than the 5000ms tolerance in `get_topic_by_signal_timestamp()`.
+
+**Fix:** Capture the Signal-assigned envelope timestamp from signal-cli's send response and store that instead of `time.time()`. Requires changes to mesh send flow to return the Signal timestamp back to Joi.
+
+**Impact:** Low — LLM fallback correctly classifies engagement, just with slightly lower confidence (0.9 vs 1.0) and quality (0.7 vs 0.8).
+
+---
+
 ## Summary
 
 Wind v1 should be:
