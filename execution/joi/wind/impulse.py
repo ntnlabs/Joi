@@ -233,13 +233,24 @@ class ImpulseEngine:
         return state.proactive_sent_today < self.config.daily_cap
 
     def _check_silence(self, state: Optional[WindState], now: datetime) -> bool:
-        """Check if sufficient silence since last user interaction."""
+        """Check if sufficient silence since last user interaction.
+
+        Hot conversations (low gap EMA) require longer silence before Wind fires.
+        """
         if not state or not state.last_user_interaction_at:
-            # No recorded interaction - assume enough silence
             return True
 
         elapsed = (now - state.last_user_interaction_at).total_seconds()
-        return elapsed >= self.config.min_silence_seconds
+
+        if (
+            state.convo_gap_ema_seconds is not None
+            and state.convo_gap_ema_seconds <= self.config.active_convo_gap_seconds
+        ):
+            required = self.config.active_convo_silence_seconds
+        else:
+            required = self.config.min_silence_seconds
+
+        return elapsed >= required
 
     def calculate_impulse(
         self,

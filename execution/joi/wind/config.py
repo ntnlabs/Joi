@@ -22,6 +22,11 @@ class WindConfig:
     max_unanswered_streak: int = 2  # Stop after N unanswered proactives
     min_silence_seconds: int = 1800  # 30 min since last user msg
 
+    # Hot conversation suppression (Phase 5)
+    active_convo_gap_seconds: int = 120    # EMA <= this → hot conversation (2 min)
+    active_convo_silence_seconds: int = 3600  # required silence when hot (1 hour)
+    active_convo_ema_alpha: float = 0.3    # EMA smoothing factor
+
     # Impulse thresholds
     impulse_threshold: float = 0.6  # Minimum score to trigger
 
@@ -63,6 +68,9 @@ class WindConfig:
             daily_cap=data.get("daily_cap", 3),
             max_unanswered_streak=data.get("max_unanswered_streak", 2),
             min_silence_seconds=data.get("min_silence_seconds", 1800),
+            active_convo_gap_seconds=data.get("active_convo_gap_seconds", 120),
+            active_convo_silence_seconds=data.get("active_convo_silence_seconds", 3600),
+            active_convo_ema_alpha=data.get("active_convo_ema_alpha", 0.3),
             impulse_threshold=data.get("impulse_threshold", 0.6),
             base_impulse=data.get("base_impulse", 0.1),
             silence_weight=data.get("silence_weight", 0.3),
@@ -91,6 +99,9 @@ class WindConfig:
             "daily_cap": self.daily_cap,
             "max_unanswered_streak": self.max_unanswered_streak,
             "min_silence_seconds": self.min_silence_seconds,
+            "active_convo_gap_seconds": self.active_convo_gap_seconds,
+            "active_convo_silence_seconds": self.active_convo_silence_seconds,
+            "active_convo_ema_alpha": self.active_convo_ema_alpha,
             "impulse_threshold": self.impulse_threshold,
             "base_impulse": self.base_impulse,
             "silence_weight": self.silence_weight,

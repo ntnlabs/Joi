@@ -86,6 +86,9 @@ JOI_RAG_ENABLED=1
 # Chunk size and overlap for RAG ingestion (tokens)
 #JOI_INGESTION_CHUNK_SIZE=500
 #JOI_INGESTION_OVERLAP=50
+# Max document size in bytes (should match MESH_MAX_DOCUMENT_SIZE on Mesh VM)
+# Joi's ingest guard is 2x this value as a safety margin above the mesh cap
+#JOI_MAX_DOCUMENT_SIZE=1048576
 
 # --- Time Awareness ---
 # Set to 1 to inject current datetime into system prompt
