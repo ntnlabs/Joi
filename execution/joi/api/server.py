@@ -70,6 +70,8 @@ logger = logging.getLogger("joi.api")
 
 # Max input length (defense in depth - mesh enforces 1500 at transport)
 MAX_INPUT_LENGTH = int(os.getenv("JOI_MAX_INPUT_LENGTH", "1500"))
+# Max document size pushed by mesh (operators should match MESH_MAX_DOCUMENT_SIZE)
+JOI_MAX_DOCUMENT_SIZE = int(os.getenv("JOI_MAX_DOCUMENT_SIZE", str(1 * 1024 * 1024)))  # 1 MB default
 # Max output length (Signal supports up to ~6000 chars, but long messages can be annoying)
 MAX_OUTPUT_LENGTH = int(os.getenv("JOI_MAX_OUTPUT_LENGTH", "2000"))
 # Signal formatting - convert **bold** to Unicode bold (Signal doesn't support markdown)
@@ -1273,12 +1275,11 @@ def ingest_document(req: DocumentIngestRequest):
             error="invalid_base64",
         )
 
-    # Enforce size limit (mesh caps at 1 MB before forwarding; 2 MB gives a safe margin)
-    _MAX_INGEST_BYTES = 2 * 1024 * 1024
-    if len(content) > _MAX_INGEST_BYTES:
+    # Enforce size limit (2x mesh cap as a safety margin for direct API calls)
+    if len(content) > JOI_MAX_DOCUMENT_SIZE * 2:
         logger.warning("Document rejected: content too large", extra={
             "size_bytes": len(content),
-            "max_bytes": _MAX_INGEST_BYTES,
+            "max_bytes": JOI_MAX_DOCUMENT_SIZE * 2,
         })
         return DocumentIngestResponse(
             status="error",
@@ -1606,6 +1607,9 @@ def receive_message(msg: InboundMessage):
             "context_source": "custom" if custom_context else "default",
             "action": "llm_generate"
         })
+
+        # Emit typing indicator so user sees Joi is working
+        _send_typing_indicator(msg)
 
         queue_msg.heartbeat()  # Signal still working before LLM call
         llm_response = llm.chat(messages=chat_messages, system=enriched_prompt, model=custom_model)
@@ -1953,6 +1957,32 @@ def _maybe_run_consolidation() -> None:
             )
     except Exception as e:
         logger.error("Consolidation error", extra={"error": str(e)})
+
+
+def _send_typing_indicator(msg: InboundMessage) -> None:
+    """Send a typing indicator to Signal via Mesh. Fire-and-forget."""
+    url = f"{settings.mesh_url}/api/v1/typing"
+    payload = {
+        "recipient": {
+            "id": msg.sender.id,
+            "transport_id": msg.sender.transport_id,
+        },
+        "delivery": {
+            "target": msg.conversation.type,
+            "group_id": msg.conversation.id if msg.conversation.type == "group" else None,
+        },
+    }
+    try:
+        body = json.dumps(payload).encode("utf-8")
+        headers = {"Content-Type": "application/json"}
+        current_secret = _get_current_hmac_secret()
+        if current_secret:
+            hmac_headers = create_request_headers(body, current_secret)
+            headers.update(hmac_headers)
+        with httpx.Client(timeout=5.0) as client:
+            client.post(url, content=body, headers=headers)
+    except Exception as exc:
+        logger.debug("Typing indicator failed", extra={"error": str(exc)})
 
 
 def _send_to_mesh(
