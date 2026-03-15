@@ -408,11 +408,53 @@ purge_contexts() {
     info "  Deleted $count messages"
 }
 
-# Drop FTS5 triggers on user_facts before DELETE operations.
-# sqlcipher CLI has no FTS5 support so the triggers fail when fired.
-# Python recreates them via CREATE TRIGGER IF NOT EXISTS on next startup.
-drop_facts_fts_triggers() {
-    db_exec "DROP TRIGGER IF EXISTS facts_ai; DROP TRIGGER IF EXISTS facts_ad; DROP TRIGGER IF EXISTS facts_au;" >/dev/null 2>&1 || true
+# Delete facts via Python so FTS5 triggers fire correctly.
+# sqlcipher CLI has no FTS5 support; Python's sqlite3 does.
+# JOI_FACTS_DELETE_MODE: "id", "conversation", or "all"
+# JOI_FACTS_DELETE_VALUE: the id or conversation_id (unused for "all")
+delete_facts_with_python() {
+    local mode="$1"
+    local value="${2:-}"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        error "python3 not available; cannot delete facts safely without FTS5 support."
+    fi
+
+    local py_err
+    if ! py_err=$(PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+        JOI_MEMORY_DB="$MEMORY_DB" \
+        JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+        JOI_FACTS_DELETE_MODE="$mode" \
+        JOI_FACTS_DELETE_VALUE="$value" \
+        python3 <<'PY' 2>&1 >/dev/null
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}")
+    sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    mode  = os.environ["JOI_FACTS_DELETE_MODE"]
+    value = os.environ.get("JOI_FACTS_DELETE_VALUE", "")
+    if mode == "id":
+        conn.execute("DELETE FROM user_facts WHERE id = ?", (int(value),))
+    elif mode == "conversation":
+        conn.execute("DELETE FROM user_facts WHERE conversation_id = ?", (value,))
+    elif mode == "all":
+        conn.execute("DELETE FROM user_facts")
+    else:
+        print(f"unknown_mode: {mode}")
+        sys.exit(1)
+    conn.commit()
+except Exception as e:
+    print(f"delete_failed: {e}")
+    sys.exit(1)
+PY
+    ); then
+        error "Failed to delete facts via Python: ${py_err}"
+    fi
 }
 
 # Purge user facts
@@ -425,17 +467,16 @@ purge_facts() {
         return
     fi
 
-    drop_facts_fts_triggers
     if [[ -n "$conversation" ]]; then
         local conversation_escaped
         conversation_escaped=$(sql_escape_literal "$conversation")
         echo "Purging facts for conversation: $conversation"
         count=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE conversation_id = '$conversation_escaped';")
-        db_exec "DELETE FROM user_facts WHERE conversation_id = '$conversation_escaped';" >/dev/null
+        delete_facts_with_python "conversation" "$conversation"
     else
         echo "Purging ALL facts"
         count=$(db_scalar "SELECT COUNT(*) FROM user_facts;")
-        db_exec "DELETE FROM user_facts;" >/dev/null
+        delete_facts_with_python "all"
     fi
 
     info "  Deleted $count facts"
@@ -2143,8 +2184,7 @@ SQL
                 | awk 'NF && $0 != "ok"' | head -1)
             echo "Deleting fact #$fact_id: $row"
 
-            drop_facts_fts_triggers
-            db_exec "DELETE FROM user_facts WHERE id = $fact_id;" >/dev/null
+            delete_facts_with_python "id" "$fact_id"
             info "Deleted fact #$fact_id"
             ;;
 
@@ -2195,13 +2235,10 @@ SQL
                 exit 1
             fi
 
-            drop_facts_fts_triggers
             if [[ -n "$conversation" ]]; then
-                local conv_esc
-                conv_esc=$(sql_escape_literal "$conversation")
-                db_exec "DELETE FROM user_facts WHERE conversation_id = '$conv_esc';" >/dev/null
+                delete_facts_with_python "conversation" "$conversation"
             else
-                db_exec "DELETE FROM user_facts;" >/dev/null
+                delete_facts_with_python "all"
             fi
 
             info "Deleted $count fact(s)"
