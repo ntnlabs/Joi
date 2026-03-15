@@ -123,7 +123,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # SQL for creating tables
 SCHEMA_SQL = """
@@ -318,6 +318,24 @@ CREATE TABLE IF NOT EXISTS wind_decision_log (
 );
 CREATE INDEX IF NOT EXISTS idx_wind_log_conv_ts
     ON wind_decision_log(conversation_id, timestamp);
+
+-- Reminders table (standalone, not part of Wind)
+CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    recurrence TEXT,
+    created_at TEXT NOT NULL,
+    fired_at TEXT,
+    expires_at TEXT,
+    snooze_count INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_due
+    ON reminders(due_at, status);
+CREATE INDEX IF NOT EXISTS idx_reminders_conv
+    ON reminders(conversation_id, status);
 
 -- FTS5 virtual table for full-text search
 CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
