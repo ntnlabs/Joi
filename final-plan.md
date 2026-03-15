@@ -219,6 +219,142 @@ This layer includes a dedicated and budgeted effort for rigorous security testin
 
 ---
 
+## Layer 5: Wind — Proactive Presence
+
+**Core Goal:** Joi initiates contact unprompted, at the right moment, about the right thing,
+in a way that improves over time. Not a notification system — a presence.
+
+Wind was built outside the original layer plan and is now fully operational. This layer
+documents what was built and what the phases mean.
+
+---
+
+### Phase 0: Shadow Mode ✅
+*Commit: `df6a64b`*
+
+The full impulse pipeline is built and running but sends nothing. Every tick logs what
+*would* have been sent and why. Purpose: validate the scoring logic and gate behaviour
+before any real messages go out.
+
+**What was built:**
+- Background scheduler (60s tick)
+- `WindOrchestrator` + `ImpulseEngine`
+- Hard gates: quiet hours, daily cap, min silence, unanswered streak
+- Impulse score from: base + silence factor + topic pressure + fatigue
+- `pending_topics` table and `TopicManager`
+- `WindDecisionLogger` for full observability
+- `WindStateManager` per-conversation state
+
+---
+
+### Phase 1: Live Sends ✅
+*Commit: `8000dc0`*
+
+Shadow mode removed from the default path. Real messages go out when the impulse score
+crosses the threshold and all gates pass.
+
+**What was built:**
+- `_check_wind_impulse()` in scheduler — generates message, sends to mesh, stores `[JOI-WIND]` in memory
+- `_generate_proactive_message()` — LLM call with facts + topic, separate from the main response path
+- `_compact_before_wind()` — full context compaction before each send so the user starts fresh
+- Topic lifecycle: `mark_mentioned()` after send
+- Allowlist enforcement: only configured conversation IDs receive Wind
+
+---
+
+### Phase 2: WindMood ✅
+*Commit: `bd57136`*
+
+The impulse threshold is no longer a fixed number. It drifts via a random walk with mean
+reversion, making Wind's behaviour feel less mechanical and harder to game.
+
+**What was built:**
+- `threshold_offset` per conversation — stored in `wind_state`
+- Random walk: small step each tick (±`threshold_drift_step`), pulled back toward 0 by `threshold_mean_reversion`
+- Soft sigmoid trigger: score near threshold triggers probabilistically, not as a hard cutoff
+- `accumulated_impulse`: charge builds across ticks, releases when threshold is crossed
+- Net effect: Wind fires in bursts and quiet spells rather than like a metronome
+
+---
+
+### Phase 3: Hot Conversation Suppression ✅
+*Commit: `0792f24`*
+
+When the user is actively messaging — short gaps between messages — Wind stays quiet
+longer than the standard `min_silence_minutes` would require.
+
+**What was built:**
+- EMA of inter-message gap per conversation (`convo_gap_ema_seconds`)
+- If EMA ≤ `active_convo_gap_minutes` (2 min): conversation is "hot"
+- Hot conversations require `active_convo_silence_minutes` (60 min) of silence before Wind fires
+- Standard conversations use `min_silence_minutes` (30 min) as before
+- Prevents Wind interrupting active back-and-forth
+
+---
+
+### Phase 4a: Engagement Tracking ✅
+*Commit: `20c10d1`*
+
+Wind learns whether the user engaged with each message. Sends are no longer fire-and-forget.
+
+**What was built:**
+- `sent_message_id` stored on topic — links Wind message to Signal message ID
+- Direct reply detection: if user quotes the Wind message, outcome = `engaged` (confidence 1.0)
+- LLM engagement classifier: for non-direct responses, classify as `engaged` / `ignored` / `deflected`
+- Timeout classification: no response in `ignore_timeout_hours` (12h) = `ignored`
+- Outcome stored on topic (`outcome`, `outcome_at`)
+- Per-conversation engagement score (EMA) — boosts or dampens future impulse via `engagement_weight`
+- Lifecycle rules per topic type: engaged → complete/resolve; ignored → retry with backoff; deflected → cooldown or dismiss
+
+---
+
+### Phase 4b: Learning & Pursuit ✅
+*Commit: `a461353`*
+
+Wind builds a per-user model of topic family preferences and adjusts accordingly.
+Topics the user engages with get more airtime; topics they reject get cooled down or blocked.
+
+**What was built:**
+- `topic_feedback` table: per-conversation, per-family weights (`rejection_weight`, `interest_weight`)
+- `TopicFeedbackManager`: record engagement / ignore / deflect → update weights
+- `interest_decay_rate`: interest fades slowly over time (2%/day) so stale affinities don't persist forever
+- Cooldown with jitter: deflected families get a 7–11 day quiet period (anti-periodicity via random jitter)
+- **Undertaker**: families above `undertaker_threshold` rejection are permanently blocked
+- **Novelty bonus**: small impulse boost when the best pending topic is from a family Wind hasn't tried yet
+- **Affinity bonus**: impulse boost proportional to `interest_weight` for high-engagement families
+- **Pursuit back-off**: ignored topics retry at [4h, 12h, 24h] intervals before expiring
+- **Cooldown break**: if user spontaneously mentions a cooled-down topic, exit cooldown early
+- **Ghost probes**: after 60 days of silence, generate a low-priority re-check for deeply rejected families
+  that haven't hit undertaker yet — one probe per family per month, deduplicated via `novelty_key`
+
+---
+
+### Reminders (Standalone) ✅
+*Commit: `0987f10`*
+
+User-requested time-triggered messages. Deliberately separate from Wind — no engagement
+tracking, no lifecycle rules, no impulse gating, works in all modes.
+
+**What was built:**
+- `reminders` table + `ReminderManager`
+- Parser in `_handle_reminder_command()`: `remind me in Xm/h/d / tonight to [title]`
+- Injection-safe LLM prompt: title wrapped in triple-quotes as user-supplied data
+- Recurring reminders: `due_at += interval` after each fire
+- Post-fire snooze infrastructure: `get_last_fired()` + `snooze()` (not yet wired to inbound)
+- Fires via scheduler `_check_reminders()`, independent of Wind state
+
+---
+
+### What Wind Does Not Have Yet
+
+- **User-side topic submission**: user can't say "remind me to check on X in a few days" and have it become a Wind topic (as opposed to a timed reminder)
+- **Group Wind**: all proactive sends are DM only
+- **Companion vs Business mode split**: Wind is currently available in both modes but the split is not formally enforced
+- **Value anchor integration**: Wind topics should eventually be seeded by / filtered against value anchors
+- **Reminder post-fire snooze**: infrastructure exists, not wired to inbound message handler yet
+
+---
+
 ## Value Anchors (Future Consideration)
 
 An LLM has no genuine values — it simulates them from training. Without deliberate scaffolding,
