@@ -1658,7 +1658,11 @@ def receive_message(msg: InboundMessage):
         })
 
         queue_msg.heartbeat()  # Signal still working before LLM call
-        llm_response = llm.chat(messages=chat_messages, system=enriched_prompt, model=custom_model)
+        _stop_typing = _start_typing_refresh(msg)
+        try:
+            llm_response = llm.chat(messages=chat_messages, system=enriched_prompt, model=custom_model)
+        finally:
+            _stop_typing()
         queue_msg.heartbeat()  # Signal still working after LLM call
 
         if llm_response.error:
@@ -2012,6 +2016,26 @@ def _maybe_run_consolidation() -> None:
             )
     except Exception as e:
         logger.error("Consolidation error", extra={"error": str(e)})
+
+
+def _start_typing_refresh(msg: InboundMessage, interval: float = 10.0):
+    """
+    Start a background thread that re-sends the typing indicator every interval seconds.
+
+    Signal typing indicators expire after ~15s. Call the returned stop function
+    when the response is ready to cancel the refresh loop.
+
+    Returns a stop callable.
+    """
+    stop_event = threading.Event()
+
+    def _loop():
+        while not stop_event.wait(interval):
+            _send_typing_indicator(msg)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
+    return stop_event.set
 
 
 def _send_typing_indicator(msg: InboundMessage) -> None:
