@@ -49,6 +49,8 @@ USAGE:
 
 COMMANDS:
     purge       Purge memory data and/or regenerate keys
+    facts       Inspect and delete stored user facts
+    reminders   Inspect and clear reminders
     rag         Inspect and manage RAG knowledge sources/scopes
     summaries   Read-only context summary inspection
     fts         Check and rebuild FTS (full-text search) indexes
@@ -142,6 +144,36 @@ FTS EXAMPLES:
     joi-admin fts status                        # Check all FTS indexes
     joi-admin fts rebuild                       # Rebuild all FTS indexes
     joi-admin fts rebuild --index knowledge_fts # Rebuild specific index
+
+FACTS USAGE:
+    joi-admin facts <SUBCOMMAND> [OPTIONS]
+
+FACTS SUBCOMMANDS:
+    list [--conversation ID] [--category CAT]   List stored facts
+    delete <id>                                 Delete a single fact by ID
+    delete-all [--conversation ID]              Delete all facts (with confirmation)
+
+FACTS EXAMPLES:
+    joi-admin facts list                        # All facts
+    joi-admin facts list --conversation +123    # Facts for one conversation
+    joi-admin facts list --category personal    # Facts in a category
+    joi-admin facts delete 42                   # Delete fact #42
+    joi-admin facts delete-all                  # Wipe all facts
+    joi-admin facts delete-all --conversation +123  # Wipe facts for one conversation
+
+REMINDERS USAGE:
+    joi-admin reminders <SUBCOMMAND> [OPTIONS]
+
+REMINDERS SUBCOMMANDS:
+    list [--conversation ID] [--status STATUS]  List reminders (default: all statuses)
+    clear [--conversation ID]                   Delete all reminders (with confirmation)
+
+REMINDERS EXAMPLES:
+    joi-admin reminders list                    # All reminders
+    joi-admin reminders list --conversation +123         # Reminders for one conversation
+    joi-admin reminders list --status pending   # Only pending
+    joi-admin reminders clear                   # Delete all reminders
+    joi-admin reminders clear --conversation +123        # Delete for one conversation
 
 WIND USAGE:
     joi-admin wind <SUBCOMMAND> [OPTIONS]
@@ -1946,6 +1978,338 @@ cmd_purge() {
     fi
 }
 
+cmd_facts() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    local subcommand="${1:-}"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin facts <list|delete|delete-all> [OPTIONS]"
+    shift || true
+
+    case "$subcommand" in
+        list)
+            local conversation=""
+            local category=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation)
+                        [[ -z "${2:-}" ]] && error "--conversation requires a value"
+                        conversation="$2"
+                        shift 2
+                        ;;
+                    --category)
+                        [[ -z "${2:-}" ]] && error "--category requires a value"
+                        category="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin facts list [--conversation ID] [--category CAT]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'facts list': $1"
+                        ;;
+                esac
+            done
+
+            local where_parts=()
+            if [[ -n "$conversation" ]]; then
+                local conv_esc
+                conv_esc=$(sql_escape_literal "$conversation")
+                where_parts+=("conversation_id = '$conv_esc'")
+            fi
+            if [[ -n "$category" ]]; then
+                local cat_esc
+                cat_esc=$(sql_escape_literal "$category")
+                where_parts+=("category = '$cat_esc'")
+            fi
+
+            local where_clause=""
+            if [[ ${#where_parts[@]} -gt 0 ]]; then
+                where_clause="WHERE $(IFS=' AND '; echo "${where_parts[*]}")"
+            fi
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT
+    id,
+    conversation_id,
+    category,
+    key,
+    value,
+    COALESCE(source, ''),
+    active,
+    important
+FROM user_facts
+$where_clause
+ORDER BY conversation_id, category, key;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No facts found."
+                exit 0
+            fi
+
+            printf "%-4s  %-20s  %-12s  %-20s  %-30s  %-8s  %s  %s\n" \
+                "ID" "conversation_id" "category" "key" "value" "source" "act" "imp"
+            printf "%-4s  %-20s  %-12s  %-20s  %-30s  %-8s  %s  %s\n" \
+                "----" "--------------------" "------------" "--------------------" \
+                "------------------------------" "--------" "---" "---"
+            while IFS='|' read -r id conv cat key val src act imp; do
+                [[ -z "$id" ]] && continue
+                printf "%-4s  %-20s  %-12s  %-20s  %-30s  %-8s  %s  %s\n" \
+                    "$id" "${conv:0:20}" "${cat:0:12}" "${key:0:20}" "${val:0:30}" \
+                    "${src:0:8}" "$act" "$imp"
+            done <<< "$rows"
+            ;;
+
+        delete)
+            local fact_id="${1:-}"
+            [[ -z "$fact_id" ]] && error "delete requires a fact ID"
+            [[ ! "$fact_id" =~ ^[0-9]+$ ]] && error "Fact ID must be a number"
+
+            local count
+            count=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE id = $fact_id;")
+            if [[ "${count:-0}" == "0" ]]; then
+                echo "Fact #$fact_id not found."
+                exit 1
+            fi
+
+            local row
+            row=$(db_exec "SELECT category, key, value FROM user_facts WHERE id = $fact_id;" \
+                | awk 'NF && $0 != "ok"' | head -1)
+            echo "Deleting fact #$fact_id: $row"
+
+            db_exec "DELETE FROM user_facts WHERE id = $fact_id;"
+            info "Deleted fact #$fact_id"
+            ;;
+
+        delete-all)
+            local conversation=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation)
+                        [[ -z "${2:-}" ]] && error "--conversation requires a value"
+                        conversation="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin facts delete-all [--conversation ID]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'facts delete-all': $1"
+                        ;;
+                esac
+            done
+
+            local count
+            if [[ -n "$conversation" ]]; then
+                local conv_esc
+                conv_esc=$(sql_escape_literal "$conversation")
+                count=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE conversation_id = '$conv_esc';")
+            else
+                count=$(db_scalar "SELECT COUNT(*) FROM user_facts;")
+            fi
+
+            if [[ "${count:-0}" == "0" ]]; then
+                echo "No facts found${conversation:+ for conversation '$conversation'}."
+                exit 0
+            fi
+
+            echo ""
+            echo "=== FACTS DELETE SUMMARY ==="
+            [[ -n "$conversation" ]] && echo "  Conversation: $conversation" || echo "  Scope: ALL conversations"
+            echo "  Facts to delete: $count"
+            echo ""
+
+            read -p "Delete $count fact(s)? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            if [[ -n "$conversation" ]]; then
+                local conv_esc
+                conv_esc=$(sql_escape_literal "$conversation")
+                db_exec "DELETE FROM user_facts WHERE conversation_id = '$conv_esc';"
+            else
+                db_exec "DELETE FROM user_facts;"
+            fi
+
+            info "Deleted $count fact(s)"
+            ;;
+
+        --help|-h)
+            echo "Usage: joi-admin facts <list|delete|delete-all> [OPTIONS]"
+            exit 0
+            ;;
+        *)
+            error "Unknown facts subcommand: $subcommand"
+            ;;
+    esac
+}
+
+cmd_reminders() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    local subcommand="${1:-}"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin reminders <list|clear> [OPTIONS]"
+    shift || true
+
+    case "$subcommand" in
+        list)
+            local conversation=""
+            local status_filter=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation)
+                        [[ -z "${2:-}" ]] && error "--conversation requires a value"
+                        conversation="$2"
+                        shift 2
+                        ;;
+                    --status)
+                        [[ -z "${2:-}" ]] && error "--status requires a value"
+                        status_filter="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin reminders list [--conversation ID] [--status STATUS]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'reminders list': $1"
+                        ;;
+                esac
+            done
+
+            local where_parts=()
+            if [[ -n "$conversation" ]]; then
+                local conv_esc
+                conv_esc=$(sql_escape_literal "$conversation")
+                where_parts+=("conversation_id = '$conv_esc'")
+            fi
+            if [[ -n "$status_filter" ]]; then
+                local stat_esc
+                stat_esc=$(sql_escape_literal "$status_filter")
+                where_parts+=("status = '$stat_esc'")
+            fi
+
+            local where_clause=""
+            if [[ ${#where_parts[@]} -gt 0 ]]; then
+                where_clause="WHERE $(IFS=' AND '; echo "${where_parts[*]}")"
+            fi
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT
+    id,
+    conversation_id,
+    title,
+    due_at,
+    status,
+    COALESCE(recurrence, '-'),
+    snooze_count
+FROM reminders
+$where_clause
+ORDER BY due_at ASC;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No reminders found."
+                exit 0
+            fi
+
+            printf "%-4s  %-20s  %-30s  %-20s  %-10s  %-10s  %s\n" \
+                "ID" "conversation_id" "title" "due_at" "status" "recurrence" "snoozes"
+            printf "%-4s  %-20s  %-30s  %-20s  %-10s  %-10s  %s\n" \
+                "----" "--------------------" "------------------------------" \
+                "--------------------" "----------" "----------" "-------"
+            while IFS='|' read -r id conv title due stat recur snoozes; do
+                [[ -z "$id" ]] && continue
+                printf "%-4s  %-20s  %-30s  %-20s  %-10s  %-10s  %s\n" \
+                    "$id" "${conv:0:20}" "${title:0:30}" "${due:0:20}" \
+                    "${stat:0:10}" "${recur:0:10}" "$snoozes"
+            done <<< "$rows"
+            ;;
+
+        clear)
+            local conversation=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation)
+                        [[ -z "${2:-}" ]] && error "--conversation requires a value"
+                        conversation="$2"
+                        shift 2
+                        ;;
+                    --help|-h)
+                        echo "Usage: joi-admin reminders clear [--conversation ID]"
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'reminders clear': $1"
+                        ;;
+                esac
+            done
+
+            local count
+            if [[ -n "$conversation" ]]; then
+                local conv_esc
+                conv_esc=$(sql_escape_literal "$conversation")
+                count=$(db_scalar "SELECT COUNT(*) FROM reminders WHERE conversation_id = '$conv_esc';")
+            else
+                count=$(db_scalar "SELECT COUNT(*) FROM reminders;")
+            fi
+
+            if [[ "${count:-0}" == "0" ]]; then
+                echo "No reminders found${conversation:+ for conversation '$conversation'}."
+                exit 0
+            fi
+
+            echo ""
+            echo "=== REMINDERS CLEAR SUMMARY ==="
+            [[ -n "$conversation" ]] && echo "  Conversation: $conversation" || echo "  Scope: ALL conversations"
+            echo "  Reminders to delete: $count"
+            echo ""
+
+            read -p "Delete $count reminder(s)? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            if [[ -n "$conversation" ]]; then
+                local conv_esc
+                conv_esc=$(sql_escape_literal "$conversation")
+                db_exec "DELETE FROM reminders WHERE conversation_id = '$conv_esc';"
+            else
+                db_exec "DELETE FROM reminders;"
+            fi
+
+            info "Deleted $count reminder(s)"
+            ;;
+
+        --help|-h)
+            echo "Usage: joi-admin reminders <list|clear> [OPTIONS]"
+            exit 0
+            ;;
+        *)
+            error "Unknown reminders subcommand: $subcommand"
+            ;;
+    esac
+}
+
 # Main entry point
 main() {
     if [[ $# -lt 1 ]]; then
@@ -1959,6 +2323,14 @@ main() {
         purge)
             check_root
             cmd_purge "$@"
+            ;;
+        facts)
+            check_root
+            cmd_facts "$@"
+            ;;
+        reminders)
+            check_root
+            cmd_reminders "$@"
             ;;
         rag)
             check_root
