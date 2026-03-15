@@ -217,7 +217,7 @@ class ImpulseEngine:
             return True
 
         elapsed = (now - state.last_proactive_sent_at).total_seconds()
-        return elapsed >= self.config.min_cooldown_seconds
+        return elapsed >= self.config.min_cooldown_minutes * 60
 
     def _check_daily_cap(self, state: Optional[WindState], now: datetime) -> bool:
         """Check if daily cap is not exceeded."""
@@ -244,11 +244,11 @@ class ImpulseEngine:
 
         if (
             state.convo_gap_ema_seconds is not None
-            and state.convo_gap_ema_seconds <= self.config.active_convo_gap_seconds
+            and state.convo_gap_ema_seconds <= self.config.active_convo_gap_minutes * 60
         ):
-            required = self.config.active_convo_silence_seconds
+            required = self.config.active_convo_silence_minutes * 60
         else:
-            required = self.config.min_silence_seconds
+            required = self.config.min_silence_minutes * 60
 
         return elapsed >= required
 
@@ -396,7 +396,7 @@ class ImpulseEngine:
             # Cap at configured max
             capped_hours = min(elapsed_hours, self.config.silence_cap_hours)
             # Linear scale: 0 at min_silence, 1.0 at silence_cap_hours
-            min_hours = self.config.min_silence_seconds / 3600
+            min_hours = self.config.min_silence_minutes / 60
             if capped_hours > min_hours:
                 silence_contribution = (
                     (capped_hours - min_hours) / (self.config.silence_cap_hours - min_hours)

@@ -17,14 +17,14 @@ class WindConfig:
     # Hard gates
     quiet_hours_start: int = 23  # 23:00 local time
     quiet_hours_end: int = 7  # 07:00 local time
-    min_cooldown_seconds: int = 3600  # 1 hour between proactives
+    min_cooldown_minutes: int = 60   # 1 hour between proactives
     daily_cap: int = 3  # Max proactive messages per day
     max_unanswered_streak: int = 2  # Stop after N unanswered proactives
-    min_silence_seconds: int = 1800  # 30 min since last user msg
+    min_silence_minutes: int = 30   # 30 min since last user msg
 
     # Hot conversation suppression (Phase 5)
-    active_convo_gap_seconds: int = 120    # EMA <= this → hot conversation (2 min)
-    active_convo_silence_seconds: int = 3600  # required silence when hot (1 hour)
+    active_convo_gap_minutes: int = 2    # EMA <= this → hot conversation (2 min)
+    active_convo_silence_minutes: int = 60  # required silence when hot (1 hour)
     active_convo_ema_alpha: float = 0.3    # EMA smoothing factor
 
     # Impulse thresholds
@@ -64,12 +64,12 @@ class WindConfig:
             shadow_mode=data.get("shadow_mode", True),
             quiet_hours_start=data.get("quiet_hours_start", 23),
             quiet_hours_end=data.get("quiet_hours_end", 7),
-            min_cooldown_seconds=data.get("min_cooldown_seconds", 3600),
+            min_cooldown_minutes=data.get("min_cooldown_minutes", 60),
             daily_cap=data.get("daily_cap", 3),
             max_unanswered_streak=data.get("max_unanswered_streak", 2),
-            min_silence_seconds=data.get("min_silence_seconds", 1800),
-            active_convo_gap_seconds=data.get("active_convo_gap_seconds", 120),
-            active_convo_silence_seconds=data.get("active_convo_silence_seconds", 3600),
+            min_silence_minutes=data.get("min_silence_minutes", 30),
+            active_convo_gap_minutes=data.get("active_convo_gap_minutes", 2),
+            active_convo_silence_minutes=data.get("active_convo_silence_minutes", 60),
             active_convo_ema_alpha=data.get("active_convo_ema_alpha", 0.3),
             impulse_threshold=data.get("impulse_threshold", 0.6),
             base_impulse=data.get("base_impulse", 0.1),
@@ -95,12 +95,12 @@ class WindConfig:
             "shadow_mode": self.shadow_mode,
             "quiet_hours_start": self.quiet_hours_start,
             "quiet_hours_end": self.quiet_hours_end,
-            "min_cooldown_seconds": self.min_cooldown_seconds,
+            "min_cooldown_minutes": self.min_cooldown_minutes,
             "daily_cap": self.daily_cap,
             "max_unanswered_streak": self.max_unanswered_streak,
-            "min_silence_seconds": self.min_silence_seconds,
-            "active_convo_gap_seconds": self.active_convo_gap_seconds,
-            "active_convo_silence_seconds": self.active_convo_silence_seconds,
+            "min_silence_minutes": self.min_silence_minutes,
+            "active_convo_gap_minutes": self.active_convo_gap_minutes,
+            "active_convo_silence_minutes": self.active_convo_silence_minutes,
             "active_convo_ema_alpha": self.active_convo_ema_alpha,
             "impulse_threshold": self.impulse_threshold,
             "base_impulse": self.base_impulse,
