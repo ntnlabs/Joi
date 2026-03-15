@@ -77,7 +77,7 @@ JOI_RAG_ENABLED=1
 # --- Facts & Summaries FTS ---
 # Full-text search context injection (facts and conversation summaries)
 #JOI_FACTS_FTS_ENABLED=1
-#JOI_FACTS_FTS_MAX_TOKENS=300
+#JOI_FACTS_FTS_MAX_TOKENS=400
 #JOI_SUMMARIES_FTS_ENABLED=1
 #JOI_SUMMARIES_FTS_MAX_TOKENS=1500
 
