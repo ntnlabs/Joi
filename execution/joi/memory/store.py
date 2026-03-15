@@ -220,6 +220,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
     content TEXT NOT NULL,
     chunk_index INTEGER NOT NULL DEFAULT 0,
     metadata_json TEXT,
+    embedding BLOB,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     UNIQUE(scope, source, chunk_index)
 );
@@ -652,6 +653,10 @@ class MemoryStore:
                 logger.info("Migration: Adding 'scope' column to knowledge_chunks table")
                 conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN scope TEXT NOT NULL DEFAULT ''")
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_scope ON knowledge_chunks(scope)")
+                conn.commit()
+            if "embedding" not in knowledge_columns:
+                logger.info("Migration: Adding 'embedding' column to knowledge_chunks table")
+                conn.execute("ALTER TABLE knowledge_chunks ADD COLUMN embedding BLOB")
                 conn.commit()
 
         # Check pending_topics table for due_at column (v6)
@@ -1976,6 +1981,32 @@ class MemoryStore:
 
     # --- Knowledge Operations (RAG) ---
 
+    def _get_embedding(self, text: str) -> Optional[bytes]:
+        """Get embedding vector for text via Ollama. Returns packed float32 bytes or None."""
+        import struct
+        import math
+        model = os.getenv("JOI_EMBEDDING_MODEL", "").strip()
+        if not model:
+            return None
+        ollama_url = os.getenv("JOI_OLLAMA_URL", "http://localhost:11434").rstrip("/")
+        try:
+            import httpx
+            resp = httpx.post(
+                f"{ollama_url}/api/embed",
+                json={"model": model, "input": text},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            # Ollama returns {"embeddings": [[float, ...]]}
+            vec = data.get("embeddings", [[]])[0]
+            if not vec:
+                return None
+            return struct.pack(f"{len(vec)}f", *vec)
+        except Exception as e:
+            logger.warning("Embedding request failed", extra={"error": str(e), "model": model})
+            return None
+
     def store_knowledge_chunk(
         self,
         source: str,
@@ -1998,20 +2029,23 @@ class MemoryStore:
         conn = self._connect()
         now_ms = int(time.time() * 1000)
 
+        embedding = self._get_embedding(content)
+
         cursor = conn.execute(
             """
             INSERT OR REPLACE INTO knowledge_chunks (
-                scope, source, title, content, chunk_index, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                scope, source, title, content, chunk_index, metadata_json, embedding, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (scope, source, title, content, chunk_index, metadata_json, now_ms)
+            (scope, source, title, content, chunk_index, metadata_json, embedding, now_ms)
         )
         conn.commit()
 
         logger.debug("Stored knowledge chunk", extra={
             "source": source,
             "chunk_index": chunk_index,
-            "scope": scope or None
+            "scope": scope or None,
+            "embedded": embedding is not None,
         })
         return cursor.lastrowid or 0
 
@@ -2038,7 +2072,18 @@ class MemoryStore:
         # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
         # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
         import re
-        words = re.findall(r'\w+', query)
+        _STOPWORDS = {
+            "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "it",
+            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+            "have", "has", "had", "do", "does", "did", "will", "would", "could",
+            "should", "may", "might", "this", "that", "what", "how", "about",
+            "not", "no", "so", "if", "as", "up", "out", "can", "just", "than",
+        }
+        all_words = re.findall(r'\w+', query)
+        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 2]
+        if not words:
+            words = all_words  # Fall back to full list so FTS still runs
         if not words:
             return []
 
@@ -2096,6 +2141,85 @@ class MemoryStore:
                 scope=row["scope"],
             )
             for row in rows
+        ]
+
+    def search_knowledge_semantic(
+        self,
+        query: str,
+        limit: int = 10,
+        scopes: Optional[List[str]] = None,
+    ) -> List[KnowledgeChunk]:
+        """
+        Search knowledge base using semantic (embedding) similarity.
+
+        Returns empty list if embedding model is not configured or Ollama fails.
+        Falls back gracefully — caller should then try search_knowledge() (FTS).
+        """
+        import struct
+        import math
+
+        query_embedding = self._get_embedding(query)
+        if query_embedding is None:
+            return []
+
+        n_dims = len(query_embedding) // 4
+        query_vec = struct.unpack(f"{n_dims}f", query_embedding)
+
+        conn = self._connect()
+
+        # If scopes is empty list, no access to anything
+        if scopes is not None and len(scopes) == 0:
+            return []
+
+        if scopes is None:
+            cursor = conn.execute(
+                """
+                SELECT id, scope, source, title, content, chunk_index, created_at, embedding
+                FROM knowledge_chunks
+                WHERE embedding IS NOT NULL
+                """
+            )
+        else:
+            placeholders = ",".join("?" * len(scopes))
+            cursor = conn.execute(
+                f"""
+                SELECT id, scope, source, title, content, chunk_index, created_at, embedding
+                FROM knowledge_chunks
+                WHERE embedding IS NOT NULL
+                  AND scope IN ({placeholders})
+                """,
+                list(scopes),
+            )
+
+        rows = cursor.fetchall()
+        if not rows:
+            return []
+
+        # Compute cosine similarity for each chunk
+        scored = []
+        for row in rows:
+            chunk_bytes = row["embedding"]
+            chunk_vec = struct.unpack(f"{len(chunk_bytes) // 4}f", chunk_bytes)
+            dot = sum(a * b for a, b in zip(query_vec, chunk_vec))
+            mag_q = math.sqrt(sum(x * x for x in query_vec))
+            mag_c = math.sqrt(sum(x * x for x in chunk_vec))
+            score = dot / (mag_q * mag_c) if mag_q and mag_c else 0.0
+            scored.append((score, row))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        logger.debug("Knowledge semantic search", extra={"candidates": len(rows), "limit": limit})
+
+        return [
+            KnowledgeChunk(
+                id=row["id"],
+                source=row["source"],
+                title=row["title"],
+                content=row["content"],
+                chunk_index=row["chunk_index"],
+                created_at=row["created_at"],
+                scope=row["scope"],
+            )
+            for _, row in scored[:limit]
         ]
 
     def get_knowledge_by_source(self, source: str, scope: Optional[str] = None) -> List[KnowledgeChunk]:
@@ -2220,7 +2344,13 @@ class MemoryStore:
         Returns:
             Formatted context string
         """
-        chunks = self.search_knowledge(query, limit=10, scopes=scopes)
+        chunks = self.search_knowledge_semantic(query, limit=10, scopes=scopes)
+        if chunks:
+            logger.debug("Knowledge: semantic search returned results", extra={"count": len(chunks)})
+        else:
+            chunks = self.search_knowledge(query, limit=10, scopes=scopes)
+            if chunks:
+                logger.debug("Knowledge: FTS fallback returned results", extra={"count": len(chunks)})
         if not chunks:
             return ""
 
