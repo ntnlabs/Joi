@@ -294,6 +294,7 @@ CREATE TABLE IF NOT EXISTS topic_feedback (
     last_positive_at TEXT,
     last_negative_at TEXT,
     cooldown_until TEXT,
+    undertaker INTEGER DEFAULT 0,
     updated_at TEXT NOT NULL,
     UNIQUE(conversation_id, topic_family)
 );
@@ -688,6 +689,16 @@ class MemoryStore:
                 conn.execute("ALTER TABLE pending_topics ADD COLUMN retry_count INTEGER DEFAULT 0")
                 conn.execute("ALTER TABLE pending_topics ADD COLUMN last_retry_at TEXT DEFAULT NULL")
                 conn.execute("ALTER TABLE pending_topics ADD COLUMN sent_message_id TEXT DEFAULT NULL")
+                conn.commit()
+
+        # Phase 4b: Check topic_feedback for undertaker column
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='topic_feedback'")
+        if cursor.fetchone():
+            cursor = conn.execute("PRAGMA table_info(topic_feedback)")
+            feedback_columns = {row[1] for row in cursor.fetchall()}
+            if "undertaker" not in feedback_columns:
+                logger.info("Migration: Adding 'undertaker' column to topic_feedback table")
+                conn.execute("ALTER TABLE topic_feedback ADD COLUMN undertaker INTEGER DEFAULT 0")
                 conn.commit()
 
         # Migration v9: Remove FK constraint on messages.reply_to_id

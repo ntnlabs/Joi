@@ -13,6 +13,7 @@ from typing import Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from .config import WindConfig
+from .feedback import TopicFeedbackManager
 from .state import WindStateManager, WindState
 from .topics import TopicManager
 
@@ -76,6 +77,7 @@ class ImpulseEngine:
         config: WindConfig,
         state_manager: WindStateManager,
         topic_manager: TopicManager,
+        feedback_manager: Optional[TopicFeedbackManager] = None,
     ):
         """
         Initialize ImpulseEngine.
@@ -84,10 +86,12 @@ class ImpulseEngine:
             config: Wind configuration
             state_manager: Wind state manager
             topic_manager: Topic manager
+            feedback_manager: Optional feedback manager for affinity/novelty factors (Phase 4b)
         """
         self.config = config
         self.state_manager = state_manager
         self.topic_manager = topic_manager
+        self.feedback_manager = feedback_manager
 
     def check_gates(
         self,
@@ -424,14 +428,38 @@ class ImpulseEngine:
             engagement_contribution = engagement_deviation * self.config.engagement_weight * 2
         factors["engagement"] = engagement_contribution
 
+        # Phase 4b: Affinity + novelty factors (require feedback_manager)
+        affinity_contribution = 0.0
+        novelty_contribution = 0.0
+        if self.feedback_manager:
+            best = self.topic_manager.get_best_topic(conversation_id)
+            if best:
+                from .feedback import normalize_topic_family
+                family = normalize_topic_family(best.topic_type, best.title)
+                fb = self.feedback_manager.get_feedback(conversation_id, family)
+
+                # Affinity: high interest_weight boosts impulse for this topic
+                if fb and fb.interest_weight > 0:
+                    affinity_contribution = fb.interest_weight * self.config.affinity_weight
+
+                # Novelty: unexplored families (never engaged) get a small bonus
+                if not fb or fb.engagement_count == 0:
+                    novelty_contribution = self.config.novelty_weight
+
+        factors["affinity"] = affinity_contribution
+        factors["novelty"] = novelty_contribution
+
         logger.debug(
-            "Impulse factors for %s: base=%.2f silence=%.2f pressure=%.2f fatigue=%.2f engagement=%.2f",
+            "Impulse factors for %s: base=%.2f silence=%.2f pressure=%.2f "
+            "fatigue=%.2f engagement=%.2f affinity=%.2f novelty=%.2f",
             conversation_id,
             factors["base"],
             factors["silence"],
             factors["topic_pressure"],
             factors["fatigue"],
             factors["engagement"],
+            factors["affinity"],
+            factors["novelty"],
         )
 
         return factors

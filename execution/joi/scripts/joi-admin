@@ -152,9 +152,10 @@ WIND SUBCOMMANDS:
     set-windmood <conversation_id>    Fine-tune WindMood values
     show-engagement [conversation_id] Show engagement stats (score, sent/engaged/ignored/deflected)
     reset-engagement [conversation_id] Reset engagement score to 0.5 and clear counters
-    show-feedback [conversation_id]   Show per-topic-family feedback (interest/rejection weights)
+    show-feedback [conversation_id]   Show per-topic-family feedback (interest/rejection weights, undertaker status)
     topic-history [conversation_id]   Show recent topics with outcomes
     clear-cooldowns <conversation_id> Clear all topic family cooldowns
+    undertaker-clear <conv_id> <fam>  Remove undertaker flag from a topic family
     revive-topic <id>                 Revive an expired/ignored topic back to pending
 
 WIND OPTIONS:
@@ -173,10 +174,11 @@ WIND EXAMPLES:
     joi-admin wind show-engagement +123456789           # Show specific conversation
     joi-admin wind reset-engagement                     # Reset all engagement to neutral
     joi-admin wind reset-engagement +123456789          # Reset specific conversation
-    joi-admin wind show-feedback +123456789             # Show topic family feedback
+    joi-admin wind show-feedback +123456789             # Show topic family feedback (incl. undertaker)
     joi-admin wind topic-history +123456789             # Show recent topics
     joi-admin wind topic-history +123456789 --limit 50  # Show more topics
     joi-admin wind clear-cooldowns +123456789           # Clear all cooldowns
+    joi-admin wind undertaker-clear +123456789 health   # Remove undertaker block from 'health' family
     joi-admin wind revive-topic 7                       # Revive topic #7 back to pending
 
 EOF
@@ -1500,6 +1502,7 @@ SELECT
     COALESCE(ignore_count, 0),
     COALESCE(deflection_count, 0),
     COALESCE(cooldown_until, ''),
+    COALESCE(undertaker, 0),
     COALESCE(updated_at, '')
 FROM topic_feedback
 WHERE conversation_id = '$conversation_escaped'
@@ -1514,15 +1517,37 @@ SQL
 
             echo "Topic feedback for: $conversation"
             echo ""
-            printf "%-20s  %8s  %8s  %6s  %6s  %6s  %s\n" \
-                "topic_family" "reject" "interest" "engd" "ignrd" "deflc" "cooldown_until"
-            printf "%-20s  %8s  %8s  %6s  %6s  %6s  %s\n" \
-                "------------" "------" "--------" "----" "-----" "-----" "--------------"
-            while IFS='|' read -r family reject interest engaged ignored deflected cooldown updated; do
+            printf "%-20s  %8s  %8s  %6s  %6s  %6s  %-10s  %s\n" \
+                "topic_family" "reject" "interest" "engd" "ignrd" "deflc" "status" "cooldown_until"
+            printf "%-20s  %8s  %8s  %6s  %6s  %6s  %-10s  %s\n" \
+                "------------" "------" "--------" "----" "-----" "-----" "------" "--------------"
+            while IFS='|' read -r family reject interest engaged ignored deflected cooldown undertaker updated; do
                 [[ -z "${family}" ]] && continue
-                printf "%-20s  %8.2f  %8.2f  %6d  %6d  %6d  %s\n" \
-                    "$family" "$reject" "$interest" "$engaged" "$ignored" "$deflected" "$cooldown"
+                local status_label=""
+                if [[ "$undertaker" == "1" ]]; then
+                    status_label="UNDERTAKER"
+                elif [[ -n "$cooldown" ]]; then
+                    status_label="cooldown"
+                else
+                    status_label="-"
+                fi
+                printf "%-20s  %8.2f  %8.2f  %6d  %6d  %6d  %-10s  %s\n" \
+                    "$family" "$reject" "$interest" "$engaged" "$ignored" "$deflected" "$status_label" "$cooldown"
             done <<< "$rows"
+            ;;
+
+        undertaker-clear)
+            local conversation="${1:-}"
+            local family="${2:-}"
+            [[ -z "$conversation" ]] && error "undertaker-clear requires a conversation_id"
+            [[ -z "$family" ]] && error "undertaker-clear requires a topic_family"
+
+            local conversation_escaped family_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+            family_escaped=$(sql_escape_literal "$family")
+
+            db_exec "UPDATE topic_feedback SET undertaker = 0, cooldown_until = NULL, updated_at = datetime('now') WHERE conversation_id = '$conversation_escaped' AND topic_family = '$family_escaped';"
+            echo "Cleared undertaker flag for family '$family' in conversation '$conversation'."
             ;;
 
         topic-history)
@@ -1678,7 +1703,7 @@ SQL
             ;;
 
         --help|-h)
-            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood|show-engagement|reset-engagement|show-feedback|topic-history|clear-cooldowns|revive-topic> [OPTIONS]"
+            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood|show-engagement|reset-engagement|show-feedback|topic-history|clear-cooldowns|undertaker-clear|revive-topic> [OPTIONS]"
             exit 0
             ;;
 

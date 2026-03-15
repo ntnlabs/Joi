@@ -24,6 +24,8 @@ LIFECYCLE_RULES = {
     "discovery": {"engaged": "convert_affinity", "ignored": "expire", "deflected": "cooldown_7"},
     "reminder": {"engaged": "complete", "ignored": "retry_ttl", "deflected": "defer_1"},
     "followup": {"engaged": "complete", "ignored": "retry_1", "deflected": "dismiss"},
+    # Phase 4b: Ghost probe — rare re-check for deeply-rejected families
+    "ghost": {"engaged": "mark_engaged", "ignored": "cooldown_90", "deflected": "undertaker_promote"},
 }
 
 # Default lifecycle for unknown types
@@ -62,17 +64,25 @@ class WindOrchestrator:
         self.state_manager = WindStateManager(db_connection_factory)
         self.topic_manager = TopicManager(db_connection_factory)
         self.decision_logger = WindDecisionLogger(db_connection_factory)
+        # Phase 4a+4b: Feedback manager (constructed before ImpulseEngine to wire in)
+        self.feedback_manager = TopicFeedbackManager(
+            db_connection_factory,
+            cooldown_days=self.config.cooldown_days if hasattr(self.config, 'cooldown_days') else 9,
+            cooldown_jitter_days=self.config.cooldown_jitter_days if hasattr(self.config, 'cooldown_jitter_days') else 2,
+            interest_decay_rate=self.config.interest_decay_rate if hasattr(self.config, 'interest_decay_rate') else 0.02,
+            undertaker_threshold=self.config.undertaker_threshold if hasattr(self.config, 'undertaker_threshold') else 2.0,
+        )
         self.impulse_engine = ImpulseEngine(
             config=self.config,
             state_manager=self.state_manager,
             topic_manager=self.topic_manager,
+            feedback_manager=self.feedback_manager,
         )
         # Phase 4a: Engagement tracking
         self.engagement_classifier = EngagementClassifier(
             llm_client=llm_client,
             timeout_hours=self.config.ignore_timeout_hours if hasattr(self.config, 'ignore_timeout_hours') else 12.0,
         )
-        self.feedback_manager = TopicFeedbackManager(db_connection_factory)
 
     def update_config(self, config: WindConfig) -> None:
         """Update Wind configuration."""
@@ -245,6 +255,10 @@ class WindOrchestrator:
 
         logger.debug("Wind tick", extra={"timestamp": now.isoformat()})
 
+        # Phase 4b: Generate ghost probes for deeply rejected families
+        for conversation_id in self.config.allowlist:
+            self._generate_ghost_probes(conversation_id, now)
+
         results = self.check_impulse_all(now)
 
         # Log summary
@@ -289,6 +303,8 @@ class WindOrchestrator:
                 user_message=message_text,
                 reply_to_id=reply_to_id,
             )
+            # Phase 4b: Check if user mentioned a cooled-down topic (cooldown break)
+            self._scan_for_cooldown_breaks(conversation_id, message_text)
 
     def record_outbound(self, conversation_id: str) -> None:
         """Record that any outbound message was sent."""
@@ -526,12 +542,25 @@ class WindOrchestrator:
             pass
 
         elif action.startswith("retry_"):
-            # Retry logic
+            # Retry logic with pursuit back-off
             max_retries = self._parse_retry_count(action, topic)
             if topic.retry_count < max_retries:
-                self.topic_manager.requeue_for_retry(topic.id)
+                backoff_list = self.config.pursuit_backoff_hours if hasattr(self.config, 'pursuit_backoff_hours') else [4, 12, 24]
+                backoff_h = backoff_list[min(topic.retry_count, len(backoff_list) - 1)]
+                due_after = datetime.now() + timedelta(hours=backoff_h)
+                self.topic_manager.requeue_for_retry(topic.id, due_after=due_after)
             else:
                 self.topic_manager.mark_expired(topic.id)
+
+        elif action == "undertaker_promote":
+            # Permanently block this topic family (ghost probe was deflected)
+            topic_family = normalize_topic_family(topic.topic_type, topic.title)
+            self.feedback_manager.mark_undertaker(topic.conversation_id, topic_family)
+            self.topic_manager.mark_dismissed(topic.id)
+            logger.info("Undertaker promotion: family blocked permanently", extra={
+                "conversation_id": topic.conversation_id,
+                "topic_family": topic_family,
+            })
 
         elif action == "expire":
             self.topic_manager.mark_expired(topic.id)
@@ -575,9 +604,12 @@ class WindOrchestrator:
         topic_family: str,
         days: int,
     ) -> None:
-        """Apply cooldown to a topic family."""
+        """Apply cooldown to a topic family with jitter."""
+        import random
         now = datetime.now()
-        cooldown_until = now + timedelta(days=days)
+        jitter = getattr(self.config, 'cooldown_jitter_days', 2)
+        actual_days = max(1, days + random.randint(-jitter, jitter))
+        cooldown_until = now + timedelta(days=actual_days)
 
         conn = self._db_connect()
         # Ensure feedback entry exists
@@ -596,7 +628,7 @@ class WindOrchestrator:
         logger.info("Applied topic family cooldown", extra={
             "conversation_id": conversation_id,
             "topic_family": topic_family,
-            "cooldown_days": days,
+            "cooldown_days": actual_days,
             "cooldown_until": cooldown_until.isoformat(),
         })
 
@@ -622,6 +654,69 @@ class WindOrchestrator:
             "defer_days": days,
             "new_due": new_due.isoformat(),
         })
+
+    def _scan_for_cooldown_breaks(self, conversation_id: str, message_text: str) -> None:
+        """
+        Check if user message mentions any cooled-down topic family.
+
+        If a user spontaneously brings up a topic that Wind has cooled down,
+        treat it as a weak positive signal: exit cooldown early.
+        """
+        active_cooldowns = self.feedback_manager.get_active_cooldowns(conversation_id)
+        if not active_cooldowns:
+            return
+
+        msg_lower = message_text.lower()
+        for feedback in active_cooldowns:
+            if feedback.undertaker:
+                continue  # Never break undertaker via keyword match
+            # Simple keyword match: family name words vs message text
+            family_keywords = feedback.topic_family.replace("_", " ").lower().split()
+            if any(kw in msg_lower for kw in family_keywords if len(kw) > 3):
+                logger.info("Cooldown break: user mentioned cooled-down family", extra={
+                    "conversation_id": conversation_id,
+                    "topic_family": feedback.topic_family,
+                    "action": "cooldown_break",
+                })
+                self.feedback_manager.record_user_initiated_mention(conversation_id, feedback.topic_family)
+
+    def _generate_ghost_probes(self, conversation_id: str, now: Optional[datetime] = None) -> None:
+        """
+        Generate gentle re-probe topics for deeply rejected families after long silence.
+
+        Called each tick. Topics are deduplicated via novelty_key so only one ghost
+        probe per family per month is ever queued.
+        """
+        if now is None:
+            now = datetime.now()
+
+        ghost_probe_days = getattr(self.config, 'ghost_probe_days', 60)
+        ghost_probe_priority = getattr(self.config, 'ghost_probe_priority', 20)
+        undertaker_threshold = getattr(self.config, 'undertaker_threshold', 2.0)
+
+        inactive_since = now - timedelta(days=ghost_probe_days)
+        # Look for families above normal cooldown threshold but below undertaker
+        deeply_rejected = self.feedback_manager.get_deeply_rejected_families(
+            conversation_id,
+            min_rejection=self.feedback_manager._cooldown_threshold,
+            max_rejection=undertaker_threshold,
+            inactive_since=inactive_since,
+        )
+
+        for family in deeply_rejected:
+            novelty_key = f"ghost_{family}_{now.strftime('%Y-%m')}"
+            self.topic_manager.add_topic(
+                conversation_id=conversation_id,
+                topic_type="ghost",
+                title=f"Re-check: {family}",
+                priority=ghost_probe_priority,
+                novelty_key=novelty_key,
+            )
+            logger.debug("Generated ghost probe", extra={
+                "conversation_id": conversation_id,
+                "topic_family": family,
+                "novelty_key": novelty_key,
+            })
 
     def check_timeout_topics(self, now: Optional[datetime] = None) -> int:
         """

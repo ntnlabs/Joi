@@ -126,10 +126,11 @@ class TopicManager:
             WHERE conversation_id = ?
               AND status = ?
               AND (expires_at IS NULL OR expires_at > ?)
+              AND (due_at IS NULL OR due_at <= ?)
             ORDER BY priority DESC, created_at ASC
             LIMIT ?
             """,
-            (conversation_id, self.STATUS_PENDING, now, limit)
+            (conversation_id, self.STATUS_PENDING, now, now, limit)
         )
 
         return [self._row_to_topic(row) for row in cursor.fetchall()]
@@ -471,12 +472,16 @@ class TopicManager:
             "status": final_status
         })
 
-    def requeue_for_retry(self, topic_id: int) -> bool:
+    def requeue_for_retry(self, topic_id: int, due_after: Optional[datetime] = None) -> bool:
         """
         Requeue a topic for retry after ignored/deflected outcome.
 
         Increments retry_count and resets status to 'pending'.
         Returns False if max retries exceeded (caller should expire).
+
+        Args:
+            topic_id: Topic to requeue
+            due_after: If set, topic won't surface until this time (pursuit back-off)
         """
         now = datetime.now()
         conn = self._connect()
@@ -490,15 +495,17 @@ class TopicManager:
             """
             UPDATE pending_topics
             SET status = ?, retry_count = retry_count + 1, last_retry_at = ?,
+                due_at = ?,
                 outcome = NULL, outcome_at = NULL, sent_message_id = NULL
             WHERE id = ?
             """,
-            (self.STATUS_PENDING, _format_datetime(now), topic_id)
+            (self.STATUS_PENDING, _format_datetime(now), _format_datetime(due_after), topic_id)
         )
         conn.commit()
         logger.info("Requeued topic for retry", extra={
             "topic_id": topic_id,
-            "retry_count": topic.retry_count + 1
+            "retry_count": topic.retry_count + 1,
+            "due_after": due_after.isoformat() if due_after else None,
         })
         return True
 
