@@ -155,6 +155,7 @@ WIND SUBCOMMANDS:
     show-feedback [conversation_id]   Show per-topic-family feedback (interest/rejection weights)
     topic-history [conversation_id]   Show recent topics with outcomes
     clear-cooldowns <conversation_id> Clear all topic family cooldowns
+    revive-topic <id>                 Revive an expired/ignored topic back to pending
 
 WIND OPTIONS:
     --offset VALUE        Set threshold_offset (-0.1 to 0.1)
@@ -176,6 +177,7 @@ WIND EXAMPLES:
     joi-admin wind topic-history +123456789             # Show recent topics
     joi-admin wind topic-history +123456789 --limit 50  # Show more topics
     joi-admin wind clear-cooldowns +123456789           # Clear all cooldowns
+    joi-admin wind revive-topic 7                       # Revive topic #7 back to pending
 
 EOF
     exit 0
@@ -1644,8 +1646,39 @@ SQL
             fi
             ;;
 
+        revive-topic)
+            local topic_id="${1:-}"
+            [[ -z "$topic_id" ]] && error "revive-topic requires a topic id (e.g. joi-admin wind revive-topic 7)"
+            [[ ! "$topic_id" =~ ^[0-9]+$ ]] && error "Topic id must be a number"
+
+            local row
+            row=$(db_scalar "SELECT id || '|' || status || '|' || COALESCE(title,'') FROM pending_topics WHERE id = $topic_id;")
+            [[ -z "$row" ]] && error "No topic found with id $topic_id"
+
+            local cur_status title
+            cur_status=$(echo "$row" | cut -d'|' -f2)
+            title=$(echo "$row" | cut -d'|' -f3)
+
+            echo ""
+            echo "=== REVIVE TOPIC ==="
+            printf "  ID:     %s\n" "$topic_id"
+            printf "  Title:  %s\n" "$title"
+            printf "  Status: %s → pending\n" "$cur_status"
+            echo ""
+
+            read -p "Revive this topic? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            db_exec "UPDATE pending_topics SET status = 'pending', outcome = NULL, outcome_at = NULL, mentioned_at = NULL, retry_count = 0, expires_at = NULL WHERE id = $topic_id;"
+            info "Topic #$topic_id revived to pending"
+            ;;
+
         --help|-h)
-            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood|show-engagement|reset-engagement|show-feedback|topic-history|clear-cooldowns> [OPTIONS]"
+            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood|show-engagement|reset-engagement|show-feedback|topic-history|clear-cooldowns|revive-topic> [OPTIONS]"
             exit 0
             ;;
 
