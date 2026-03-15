@@ -41,6 +41,27 @@ class WindConfig:
     # Phase 4a: Engagement tracking
     ignore_timeout_hours: float = 12.0  # Hours before topic is considered ignored
 
+    # Phase 4b: Symmetric decay + novelty bonus
+    interest_decay_rate: float = 0.02   # 2%/day decay for interest_weight (slower than rejection's 5%)
+    novelty_weight: float = 0.1         # Impulse bonus when best pending topic is from unexplored family
+
+    # Phase 4b: Affinity bonus
+    affinity_weight: float = 0.15       # Max impulse boost from high-interest topic families
+
+    # Phase 4b: Pursuit back-off (retry delays per attempt)
+    pursuit_backoff_hours: List[int] = field(default_factory=lambda: [4, 12, 24])
+
+    # Phase 4b: Cooldown anti-periodicity
+    cooldown_days: int = 9              # Center of cooldown window (±jitter)
+    cooldown_jitter_days: int = 2       # ±N random days → actual cooldown is 7–11 days
+
+    # Phase 4b: Undertaker (permanent block for deeply rejected families)
+    undertaker_threshold: float = 2.0   # rejection_weight required to auto-promote (via lifecycle action)
+
+    # Phase 4b: Ghost probe (rare re-check after deep rejection + long silence)
+    ghost_probe_days: int = 60          # Days of silence before ghost probe fires
+    ghost_probe_priority: int = 20      # Very low priority — surfaces only when nothing else pending
+
     # WindMood: threshold drift bounds (random walk)
     threshold_drift_min: float = -0.1  # Can drift 0.1 below baseline
     threshold_drift_max: float = 0.1   # Can drift 0.1 above baseline
@@ -79,6 +100,15 @@ class WindConfig:
             fatigue_weight=data.get("fatigue_weight", 0.3),
             engagement_weight=data.get("engagement_weight", 0.2),
             ignore_timeout_hours=data.get("ignore_timeout_hours", 12.0),
+            interest_decay_rate=data.get("interest_decay_rate", 0.02),
+            novelty_weight=data.get("novelty_weight", 0.1),
+            affinity_weight=data.get("affinity_weight", 0.15),
+            pursuit_backoff_hours=list(data.get("pursuit_backoff_hours", [4, 12, 24])),
+            cooldown_days=data.get("cooldown_days", 9),
+            cooldown_jitter_days=data.get("cooldown_jitter_days", 2),
+            undertaker_threshold=data.get("undertaker_threshold", 2.0),
+            ghost_probe_days=data.get("ghost_probe_days", 60),
+            ghost_probe_priority=data.get("ghost_probe_priority", 20),
             threshold_drift_min=data.get("threshold_drift_min", -0.1),
             threshold_drift_max=data.get("threshold_drift_max", 0.1),
             threshold_drift_step=data.get("threshold_drift_step", 0.01),
@@ -110,6 +140,15 @@ class WindConfig:
             "fatigue_weight": self.fatigue_weight,
             "engagement_weight": self.engagement_weight,
             "ignore_timeout_hours": self.ignore_timeout_hours,
+            "interest_decay_rate": self.interest_decay_rate,
+            "novelty_weight": self.novelty_weight,
+            "affinity_weight": self.affinity_weight,
+            "pursuit_backoff_hours": list(self.pursuit_backoff_hours),
+            "cooldown_days": self.cooldown_days,
+            "cooldown_jitter_days": self.cooldown_jitter_days,
+            "undertaker_threshold": self.undertaker_threshold,
+            "ghost_probe_days": self.ghost_probe_days,
+            "ghost_probe_priority": self.ghost_probe_priority,
             "threshold_drift_min": self.threshold_drift_min,
             "threshold_drift_max": self.threshold_drift_max,
             "threshold_drift_step": self.threshold_drift_step,

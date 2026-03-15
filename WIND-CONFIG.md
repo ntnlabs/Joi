@@ -142,6 +142,64 @@ The engagement score per conversation starts at 0.5 (neutral) and shifts based o
 
 ---
 
+## Learning & Pursuit (Phase 4b)
+
+### Symmetric Decay + Novelty
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `interest_decay_rate` | `0.02` | Daily decay for `interest_weight` (2%/day). Slower than rejection decay to allow interest to persist longer. |
+| `novelty_weight` | `0.1` | Impulse bonus when the best pending topic is from an unexplored family (never engaged before). Prevents high-interest families from permanently crowding out new topics. |
+
+### Affinity Bonus
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `affinity_weight` | `0.15` | Max impulse contribution from topic affinity. High `interest_weight` families surface more readily. |
+
+### Pursuit Back-off
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `pursuit_backoff_hours` | `[4, 12, 24]` | Retry delay schedule (hours). retry 1 → 4h, retry 2 → 12h, retry 3+ → 24h. Prevents the same topic from immediately re-surfacing after being ignored. |
+
+### Cooldown Anti-periodicity
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `cooldown_days` | `9` | Center of cooldown window (days). Replaces the old fixed 7-day value. |
+| `cooldown_jitter_days` | `2` | Random ±N days applied to cooldown duration. Actual cooldown is `[7, 11]` days with defaults. Prevents predictable weekly pattern. |
+
+### Undertaker
+
+Topics that accumulate enough rejection or that are explicitly deflected on a ghost probe reach the **undertaker** state — permanently blocked. Undertaker families never surface again unless manually cleared by an admin.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `undertaker_threshold` | `2.0` | `rejection_weight` at which auto-promotion occurs. Not reachable via normal deflections (cap is 1.0); exists as a safety valve. The primary path to undertaker is via ghost probe deflection. |
+
+Admin management:
+```bash
+joi-admin wind show-feedback +1234567890        # UNDERTAKER shown in status column
+joi-admin wind undertaker-clear +1234567890 health  # Remove permanent block
+```
+
+### Ghost Probe
+
+After a topic family has been deeply rejected and silent for `ghost_probe_days`, Wind queues a low-priority ghost probe — a gentle re-check. If the user engages, the family is restored. If deflected again, it escalates to undertaker.
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `ghost_probe_days` | `60` | Days of inactivity before a ghost probe is generated. |
+| `ghost_probe_priority` | `20` | Priority of ghost probe topics (very low — surfaces only when nothing else is pending). |
+
+Ghost probe lifecycle:
+- **engaged** → family restored, topic marked as engaged
+- **ignored** → 90-day cooldown applied
+- **deflected** → undertaker promotion (family permanently blocked)
+
+---
+
 ## Example Configs
 
 ### Active companion (evening/night, responsive)
