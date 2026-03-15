@@ -393,6 +393,19 @@ Corrected JSON:"""
         if not messages:
             return None
 
+        # Strip proactive outbound messages ([REMINDER], [WIND]) — they are not
+        # conversation and cause the LLM to confabulate dialogue around them.
+        # Normal Joi replies are kept.
+        _PROACTIVE = ("[REMINDER]", "[WIND]")
+        messages = [
+            m for m in messages
+            if not (m.direction == "outbound"
+                    and m.content_text
+                    and m.content_text.startswith(_PROACTIVE))
+        ]
+        if not messages:
+            return None
+
         # Get conversation ID, model and prompt for this conversation
         convo_id = messages[0].conversation_id if messages else ""
         model = self._get_model_for_conversation(convo_id)
