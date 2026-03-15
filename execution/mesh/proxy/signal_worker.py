@@ -913,6 +913,42 @@ def send_outbound():
     })
 
 
+@flask_app.route("/api/v1/typing", methods=["POST"])
+def send_typing_indicator():
+    """Send a typing indicator to Signal. Best-effort, always returns 200."""
+    global _rpc, _account
+
+    data = request.get_json()
+    if not data:
+        return jsonify({"status": "ok"}), 200
+
+    delivery = data.get("delivery", {})
+    target = delivery.get("target", "direct")
+    group_id = delivery.get("group_id")
+    recipient = data.get("recipient", {})
+    transport_id = recipient.get("transport_id")
+
+    payload: Dict[str, Any] = {"account": _account}
+    if target == "group":
+        if not group_id:
+            return jsonify({"status": "ok"}), 200
+        payload["groupId"] = group_id
+    else:
+        if not transport_id:
+            return jsonify({"status": "ok"}), 200
+        payload["recipients"] = [transport_id]
+
+    with _rpc_lock:
+        if _rpc is None:
+            return jsonify({"status": "ok"}), 200
+        try:
+            _rpc.call("sendTyping", payload, timeout=5.0)
+        except Exception as exc:
+            logger.debug("Typing indicator failed", extra={"error": str(exc)})
+
+    return jsonify({"status": "ok"}), 200
+
+
 # --- Helper functions ---
 
 def _handle_receipt_message(raw: Dict[str, Any]) -> bool:
