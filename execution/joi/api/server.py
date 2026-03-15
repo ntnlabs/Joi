@@ -1965,7 +1965,7 @@ def _build_enriched_prompt(
         summaries_text = memory.get_summaries_as_context(
             user_message,
             max_tokens=SUMMARIES_FTS_MAX_TOKENS,
-            days=30,
+            days=100,
             conversation_id=conversation_id,
         )
         if summaries_text:
@@ -1973,13 +1973,13 @@ def _build_enriched_prompt(
             logger.info("Summaries FTS: added context", extra={"chars": len(summaries_text)})
         else:
             # Fallback: load recent summaries if FTS returns nothing
-            summaries_text = memory.get_summaries_as_text(days=7, conversation_id=conversation_id)
+            summaries_text = memory.get_summaries_as_text(days=10, conversation_id=conversation_id)
             if summaries_text:
                 parts.append("\n\n" + summaries_text)
                 logger.debug("Summaries FTS: fallback to recent", extra={"chars": len(summaries_text)})
     else:
         # FTS disabled: original behavior
-        summaries_text = memory.get_summaries_as_text(days=7, conversation_id=conversation_id)
+        summaries_text = memory.get_summaries_as_text(days=10, conversation_id=conversation_id)
         if summaries_text:
             parts.append("\n\n" + summaries_text)
 
