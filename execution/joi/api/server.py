@@ -376,6 +376,15 @@ consolidator = MemoryConsolidator(
 )
 
 
+# --- Wind Snooze Command Patterns ---
+_SNOOZE_TRIGGER   = re.compile(r"\b(quiet|shh+|hush|snooze|mute|pause)\b", re.I)
+_SNOOZE_CLEAR     = re.compile(r"\b(wake|unsnooze|unmute|resume)\b", re.I)
+_DURATION_HOURS   = re.compile(r"(\d+)\s*h(?:ours?)?", re.I)
+_DURATION_MINS    = re.compile(r"(\d+)\s*m(?:in(?:utes?)?)?", re.I)
+_DURATION_DAYS    = re.compile(r"(\d+)\s*d(?:ays?)?", re.I)
+_DURATION_TONIGHT = re.compile(r"\btonight\b", re.I)
+
+
 # --- Group Membership Cache ---
 # (class extracted to group_cache.py)
 membership_cache = GroupMembershipCache()
@@ -1461,6 +1470,19 @@ def receive_message(msg: InboundMessage):
         reply_to_id=quote_reply_to_id,
     )
 
+    # Wind snooze command: owner can silence proactive messages for a period
+    if msg.is_owner and msg.conversation.type == "direct" and user_text:
+        snooze_reply = _handle_wind_snooze_command(user_text, msg.conversation.id)
+        if snooze_reply:
+            _send_to_mesh(
+                recipient_id="owner",
+                recipient_transport_id=msg.conversation.id,
+                conversation=msg.conversation,
+                text=snooze_reply,
+                reply_to=msg.message_id,
+            )
+            return InboundResponse(status="ok", message_id=msg.message_id)
+
     # All facts (explicit and inferred) use conversation_id as key
     # - DMs: phone number (per-user scope)
     # - Groups: group_id (group scope, facts include person names in key)
@@ -1999,6 +2021,52 @@ def _send_typing_indicator(msg: InboundMessage) -> None:
             logger.debug("Typing indicator sent", extra={"action": "typing_indicator"})
     except Exception as exc:
         logger.warning("Typing indicator failed", extra={"error": str(exc), "action": "typing_indicator"})
+
+
+def _handle_wind_snooze_command(text: str, conversation_id: str) -> Optional[str]:
+    """Return a confirmation string if text is a Wind snooze/clear command, else None."""
+    if len(text.split()) > 8:
+        return None
+
+    if _SNOOZE_CLEAR.search(text):
+        wind_orchestrator.clear_snooze(conversation_id)
+        return "Wind resumed."
+
+    if not _SNOOZE_TRIGGER.search(text):
+        return None
+
+    now = datetime.now(timezone.utc)
+
+    if _DURATION_TONIGHT.search(text):
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo(wind_orchestrator.config.timezone)
+        end_hour = wind_orchestrator.config.quiet_hours_end
+        now_local = now.astimezone(tz)
+        candidate = now_local.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+        if candidate <= now_local:
+            candidate += timedelta(days=1)
+        until = candidate.astimezone(timezone.utc)
+    elif m := _DURATION_HOURS.search(text):
+        until = now + timedelta(hours=min(int(m.group(1)), 168))
+    elif m := _DURATION_MINS.search(text):
+        until = now + timedelta(minutes=max(5, min(int(m.group(1)), 10080)))
+    elif m := _DURATION_DAYS.search(text):
+        until = now + timedelta(days=min(int(m.group(1)), 7))
+    else:
+        until = now + timedelta(hours=4)
+
+    wind_orchestrator.snooze(conversation_id, until=until)
+
+    delta = until - now
+    total_minutes = int(delta.total_seconds() / 60)
+    if total_minutes >= 1440:
+        label = f"{total_minutes // 1440}d"
+    elif total_minutes >= 60:
+        label = f"{total_minutes // 60}h"
+    else:
+        label = f"{total_minutes}m"
+
+    return f"Wind snoozed for {label}."
 
 
 def _send_to_mesh(

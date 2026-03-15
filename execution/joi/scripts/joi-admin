@@ -1671,6 +1671,49 @@ SQL
             fi
             ;;
 
+        snooze)
+            local conversation="${1:-}"
+            local duration="${2:-}"
+            [[ -z "$conversation" ]] && error "snooze requires a conversation_id and duration (e.g. joi-admin wind snooze +123456789 2h)"
+            [[ -z "$duration" ]] && error "snooze requires a duration (e.g. 2h, 30m, 1d)"
+
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+
+            # Parse duration: accept Nh (hours), Nm (minutes), Nd (days)
+            local seconds=0
+            if [[ "$duration" =~ ^([0-9]+)h$ ]]; then
+                seconds=$(( ${BASH_REMATCH[1]} * 3600 ))
+            elif [[ "$duration" =~ ^([0-9]+)m$ ]]; then
+                seconds=$(( ${BASH_REMATCH[1]} * 60 ))
+            elif [[ "$duration" =~ ^([0-9]+)d$ ]]; then
+                seconds=$(( ${BASH_REMATCH[1]} * 86400 ))
+            else
+                error "Invalid duration '$duration'. Use format: 2h, 30m, 1d"
+            fi
+
+            db_exec "INSERT INTO wind_state (conversation_id, wind_snooze_until, updated_at)
+                     VALUES ('$conversation_escaped', datetime('now', '+${seconds} seconds'), datetime('now'))
+                     ON CONFLICT(conversation_id) DO UPDATE SET
+                         wind_snooze_until = datetime('now', '+${seconds} seconds'),
+                         updated_at = datetime('now');"
+
+            local until_time
+            until_time=$(db_scalar "SELECT wind_snooze_until FROM wind_state WHERE conversation_id = '$conversation_escaped';")
+            info "Wind snoozed for '$conversation' until $until_time (${duration})"
+            ;;
+
+        snooze-clear)
+            local conversation="${1:-}"
+            [[ -z "$conversation" ]] && error "snooze-clear requires a conversation_id"
+
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+
+            db_exec "UPDATE wind_state SET wind_snooze_until = NULL, updated_at = datetime('now') WHERE conversation_id = '$conversation_escaped';"
+            info "Wind snooze cleared for '$conversation'"
+            ;;
+
         revive-topic)
             local topic_id="${1:-}"
             [[ -z "$topic_id" ]] && error "revive-topic requires a topic id (e.g. joi-admin wind revive-topic 7)"
