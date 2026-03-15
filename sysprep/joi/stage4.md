@@ -262,7 +262,39 @@ For consistency, using the same model for everything is recommended.
 
 ---
 
-## 10. Post-Checks
+## 10. Embedding Model for Semantic RAG Search (Optional)
+
+By default, knowledge retrieval uses BM25 full-text search. For semantic (meaning-based)
+search, pull an embedding model and configure it:
+
+```bash
+# Pull the embedding model (CPU-only, ~274MB)
+docker exec ollama ollama pull nomic-embed-text
+
+# Enable in /etc/default/joi-api
+echo 'JOI_EMBEDDING_MODEL=nomic-embed-text' >> /etc/default/joi-api
+
+# Restart
+systemctl restart joi-api
+```
+
+Then re-ingest any existing knowledge documents so they get embedded:
+
+```bash
+# Drop files into the watch directory, or run manually:
+/opt/Joi/execution/joi/scripts/ingest-knowledge.py yourfile.txt --scope +1234567890
+```
+
+Verify via logs after sending a message that references a knowledge doc:
+
+```bash
+journalctl -u joi-api | grep -i "knowledge"
+# Should show: "Knowledge: semantic search returned results"
+```
+
+---
+
+## 11. Post-Checks
 
 - [ ] DM from allowed sender gets response
 - [ ] DM from non-allowed sender is ignored (or store_only)
