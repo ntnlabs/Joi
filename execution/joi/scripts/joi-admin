@@ -149,7 +149,7 @@ FACTS USAGE:
     joi-admin facts <SUBCOMMAND> [OPTIONS]
 
 FACTS SUBCOMMANDS:
-    list [--conversation ID] [--category CAT]   List stored facts
+    list [--conversation ID] [--category CAT] [--order-by id|date|category|key]   List stored facts
     show <id>                                   Show full detail for one fact
     delete <id>                                 Delete a single fact by ID
     delete-all [--conversation ID]              Delete all facts (with confirmation)
@@ -167,7 +167,7 @@ REMINDERS USAGE:
     joi-admin reminders <SUBCOMMAND> [OPTIONS]
 
 REMINDERS SUBCOMMANDS:
-    list [--conversation ID] [--status STATUS]  List reminders (default: all statuses)
+    list [--conversation ID] [--status STATUS] [--order-by id|date]  List reminders (default: all statuses)
     clear [--conversation ID]                   Delete all reminders (with confirmation)
 
 REMINDERS EXAMPLES:
@@ -2031,6 +2031,7 @@ cmd_facts() {
         list)
             local conversation=""
             local category=""
+            local order_by="id"
 
             while [[ $# -gt 0 ]]; do
                 case "$1" in
@@ -2044,8 +2045,19 @@ cmd_facts() {
                         category="$2"
                         shift 2
                         ;;
+                    --order-by)
+                        [[ -z "${2:-}" ]] && error "--order-by requires a value (id|date|category|key)"
+                        case "$2" in
+                            id)       order_by="id" ;;
+                            date)     order_by="updated_at DESC" ;;
+                            category) order_by="category, key" ;;
+                            key)      order_by="key" ;;
+                            *)        error "--order-by must be one of: id, date, category, key" ;;
+                        esac
+                        shift 2
+                        ;;
                     --help|-h)
-                        echo "Usage: joi-admin facts list [--conversation ID] [--category CAT]"
+                        echo "Usage: joi-admin facts list [--conversation ID] [--category CAT] [--order-by id|date|category|key]"
                         exit 0
                         ;;
                     *)
@@ -2084,7 +2096,7 @@ SELECT
     important
 FROM user_facts
 $where_clause
-ORDER BY conversation_id, category, key;
+ORDER BY $order_by;
 SQL
 )" | awk 'NF && $0 != "ok"')
 
@@ -2208,6 +2220,7 @@ cmd_reminders() {
         list)
             local conversation=""
             local status_filter=""
+            local order_by="id"
 
             while [[ $# -gt 0 ]]; do
                 case "$1" in
@@ -2221,8 +2234,17 @@ cmd_reminders() {
                         status_filter="$2"
                         shift 2
                         ;;
+                    --order-by)
+                        [[ -z "${2:-}" ]] && error "--order-by requires a value (id|date)"
+                        case "$2" in
+                            id)   order_by="id" ;;
+                            date) order_by="due_at ASC" ;;
+                            *)    error "--order-by must be one of: id, date" ;;
+                        esac
+                        shift 2
+                        ;;
                     --help|-h)
-                        echo "Usage: joi-admin reminders list [--conversation ID] [--status STATUS]"
+                        echo "Usage: joi-admin reminders list [--conversation ID] [--status STATUS] [--order-by id|date]"
                         exit 0
                         ;;
                     *)
@@ -2260,7 +2282,7 @@ SELECT
     snooze_count
 FROM reminders
 $where_clause
-ORDER BY due_at ASC;
+ORDER BY $order_by;
 SQL
 )" | awk 'NF && $0 != "ok"')
 
