@@ -150,6 +150,7 @@ FACTS USAGE:
 
 FACTS SUBCOMMANDS:
     list [--conversation ID] [--category CAT]   List stored facts
+    show <id>                                   Show full detail for one fact
     delete <id>                                 Delete a single fact by ID
     delete-all [--conversation ID]              Delete all facts (with confirmation)
 
@@ -157,6 +158,7 @@ FACTS EXAMPLES:
     joi-admin facts list                        # All facts
     joi-admin facts list --conversation +123    # Facts for one conversation
     joi-admin facts list --category personal    # Facts in a category
+    joi-admin facts show 42                     # Show full detail for fact #42
     joi-admin facts delete 42                   # Delete fact #42
     joi-admin facts delete-all                  # Wipe all facts
     joi-admin facts delete-all --conversation +123  # Wipe facts for one conversation
@@ -1984,10 +1986,45 @@ cmd_facts() {
     fi
 
     local subcommand="${1:-}"
-    [[ -z "$subcommand" ]] && error "Usage: joi-admin facts <list|delete|delete-all> [OPTIONS]"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin facts <list|show|delete|delete-all> [OPTIONS]"
     shift || true
 
     case "$subcommand" in
+        show)
+            local fact_id="${1:-}"
+            [[ -z "$fact_id" ]] && error "show requires a fact ID"
+            [[ ! "$fact_id" =~ ^[0-9]+$ ]] && error "Fact ID must be a number"
+
+            local row
+            row=$(db_exec "$(cat <<SQL
+SELECT
+    id, conversation_id, category, key, value,
+    confidence, source, active, important,
+    datetime(learned_at/1000, 'unixepoch') AS learned_at,
+    datetime(updated_at/1000, 'unixepoch') AS updated_at
+FROM user_facts WHERE id = $fact_id;
+SQL
+)" | awk 'NF && $0 != "ok"' | head -1)
+
+            if [[ -z "$row" ]]; then
+                echo "Fact #$fact_id not found."
+                exit 1
+            fi
+
+            IFS='|' read -r id conv cat key val conf src act imp learned updated <<< "$row"
+            echo "ID:              $id"
+            echo "conversation_id: $conv"
+            echo "category:        $cat"
+            echo "key:             $key"
+            echo "value:           $val"
+            echo "confidence:      $conf"
+            echo "source:          $src"
+            echo "active:          $act"
+            echo "important:       $imp"
+            echo "learned_at:      $learned"
+            echo "updated_at:      $updated"
+            ;;
+
         list)
             local conversation=""
             local category=""
@@ -2146,7 +2183,7 @@ SQL
             ;;
 
         --help|-h)
-            echo "Usage: joi-admin facts <list|delete|delete-all> [OPTIONS]"
+            echo "Usage: joi-admin facts <list|show|delete|delete-all> [OPTIONS]"
             exit 0
             ;;
         *)
