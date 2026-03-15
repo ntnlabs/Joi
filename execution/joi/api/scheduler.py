@@ -437,9 +437,6 @@ class Scheduler:
             due_reminders = self._reminder_manager.get_due()
 
             for reminder in due_reminders:
-                # Compact context before sending
-                self._compact_before_wind(reminder.conversation_id)
-
                 # Determine recurrence context for prompt
                 is_recurring = bool(reminder.recurrence)
 
