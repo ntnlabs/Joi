@@ -1613,19 +1613,24 @@ class MemoryStore:
             for row in cursor.fetchall()
         ]
 
-    def get_summaries_as_text(self, days: int = 7, conversation_id: Optional[str] = None) -> str:
+    def get_summaries_as_text(self, days: int = 7, conversation_id: Optional[str] = None,
+                              max_chars: int = 6000) -> str:
         """Get summaries formatted as text for LLM context."""
         summaries = self.get_recent_summaries(days=days, conversation_id=conversation_id)
         if not summaries:
             return ""
 
         lines = ["Earlier in this conversation (already discussed):"]
+        total_chars = 0
         for summary in reversed(summaries):  # Oldest first
             # Format timestamp as date
             from datetime import datetime
             date_str = datetime.fromtimestamp(summary.period_end / 1000).strftime("%Y-%m-%d")
-            lines.append(f"\n[{date_str}]")
-            lines.append(summary.summary_text)
+            block = f"\n[{date_str}]\n{summary.summary_text}"
+            if total_chars + len(block) > max_chars:
+                break
+            lines.append(block)
+            total_chars += len(block)
 
         return "\n".join(lines)
 
@@ -1653,7 +1658,18 @@ class MemoryStore:
         # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
         # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
         import re
-        words = re.findall(r'\w+', query)
+        _STOPWORDS = {
+            "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "it",
+            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+            "have", "has", "had", "do", "does", "did", "will", "would", "could",
+            "should", "may", "might", "this", "that", "what", "how", "about",
+            "not", "no", "so", "if", "as", "up", "out", "can", "just", "than",
+        }
+        all_words = re.findall(r'\w+', query)
+        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 2]
+        if not words:
+            words = all_words  # Fall back to full list so FTS still runs
         if not words:
             return []
 
