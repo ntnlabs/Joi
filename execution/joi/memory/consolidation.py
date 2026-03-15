@@ -247,12 +247,18 @@ class MemoryConsolidator:
         if not messages:
             return []
 
+        # Only extract facts from what the user said — Joi's outbound messages
+        # (including [REMINDER] and [WIND] proactives) contain no user facts.
+        inbound_messages = [m for m in messages if m.direction == "inbound"]
+        if not inbound_messages:
+            return []
+
         # Get conversation ID, model and prompt for this conversation
         convo_id = messages[0].conversation_id if messages else ""
         model = self._get_model_for_conversation(convo_id)
         prompt_template = get_fact_extraction_prompt_for_conversation(convo_id)
 
-        conversation_text = format_messages_for_llm(messages)
+        conversation_text = format_messages_for_llm(inbound_messages)
         prompt = prompt_template.format(conversation=conversation_text)
 
         try:
