@@ -252,6 +252,7 @@ class TopicManager:
                    sent_message_id
             FROM pending_topics
             WHERE status = ?
+              AND topic_type = 'reminder'
               AND due_at IS NOT NULL
               AND due_at <= ?
               AND (expires_at IS NULL OR expires_at > ?)

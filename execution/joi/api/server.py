@@ -1839,17 +1839,26 @@ def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[st
 
     For group conversations, includes sender name prefix so Joi knows who said what.
     """
+    # Storage prefixes used by Wind/reminder scheduler — strip before sending to LLM
+    _STORAGE_PREFIXES = ("[JOI-WIND] ", "[REMINDER] ")
+
     chat_messages = []
     for msg in messages:
         if msg.content_text:
             role = "user" if msg.direction == "inbound" else "assistant"
 
+            content = msg.content_text
+            # Strip internal storage prefixes from outbound messages
+            if role == "assistant":
+                for prefix in _STORAGE_PREFIXES:
+                    if content.startswith(prefix):
+                        content = content[len(prefix):]
+                        break
+
             if role == "user" and is_group:
                 # For group messages, prefix with sender name/id
                 sender = msg.sender_name or msg.sender_id or "Unknown"
-                content = f"[{sender}]: {msg.content_text}"
-            else:
-                content = msg.content_text
+                content = f"[{sender}]: {content}"
 
             chat_messages.append({"role": role, "content": content})
     return chat_messages
