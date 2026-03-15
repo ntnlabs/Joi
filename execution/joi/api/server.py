@@ -367,6 +367,7 @@ wind_orchestrator = WindOrchestrator(
     db_connection_factory=memory._connect,
     config=_get_wind_config(),
     llm_client=llm,
+    memory=memory,
 )
 
 reminder_manager = ReminderManager(db_connection_factory=memory._connect)

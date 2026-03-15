@@ -2315,6 +2315,32 @@ class MemoryStore:
             })
         return updated
 
+    def get_knowledge_chunks_for_scope(self, scope: str, limit: int = 20) -> List[KnowledgeChunk]:
+        """Get knowledge chunks for a scope (for spontaneous sharing selection)."""
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT id, scope, source, title, content, chunk_index, created_at
+            FROM knowledge_chunks
+            WHERE scope = ?
+            ORDER BY RANDOM()
+            LIMIT ?
+            """,
+            (scope, limit)
+        )
+        return [
+            KnowledgeChunk(
+                id=row["id"],
+                scope=row["scope"],
+                source=row["source"],
+                title=row["title"],
+                content=row["content"],
+                chunk_index=row["chunk_index"],
+                created_at=row["created_at"],
+            )
+            for row in cursor.fetchall()
+        ]
+
     def get_knowledge_sources(self) -> List[Dict[str, Any]]:
         """Get list of all knowledge sources with chunk counts and scopes."""
         conn = self._connect()
