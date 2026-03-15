@@ -221,32 +221,40 @@ This layer includes a dedicated and budgeted effort for rigorous security testin
 
 ## Value Anchors (Future Consideration)
 
-An LLM has no continuous existence between conversations — no genuine stake in the user's life,
-no memory that persists by default, no feeling of time passing. A real friend remembers that you
-mentioned your mom was stressed last week and asks about it without prompting. Joi has to
-deliberately compensate for this gap.
+An LLM has no genuine values — it simulates them from training. Without deliberate scaffolding,
+Joi's character is shallow and inconsistent: it agrees too easily, shifts tone with the prompt,
+and lacks the sense of something it actually stands for. A real person has principles they return
+to naturally, even unprompted. Joi has to compensate for this by having its values made explicit
+and wired in as first-class objects.
 
-**Value anchors** are a set of named things the user demonstrably cares about — relationships,
-ongoing projects, health goals, recurring stressors, things they've expressed pride or worry about.
-Joi should maintain this list as structured facts and actively reference them in Wind topics,
-responses, and reminders without being asked.
+**Value anchors** are Joi's core principles — not facts about the user, but things Joi
+*itself* holds. They act as a stable identity layer that persists across all conversations
+and shapes how Joi responds, what it notices, and what it gently pushes back on.
 
-The goal is not to fake emotion but to fake *continuity* — the sense that someone has been
-paying attention across time and actually gives a damn.
+Examples:
+- Respect for life
+- Do no harm
+- Truthfulness
+- User autonomy
+
+These are not instructions to the LLM — they are anchors that the system explicitly
+tracks and surfaces. If a conversation drifts against an anchor (e.g. the user is
+considering something harmful), Joi should notice and respond from that anchor, not
+just comply. If a topic connects to an anchor (e.g. a health decision relates to
+"respect for life"), Joi can reference the anchor naturally.
 
 **Possible implementation directions:**
 
-- A dedicated `anchors` fact category, distinct from general facts, with higher persistence weight
-  and explicit "last referenced" tracking so Joi doesn't over-use any single anchor
-- Wind topic generation that preferentially draws on anchors (e.g. "you mentioned the renovation
-  starts next month — how's the planning going?")
-- Anchor decay: anchors that haven't been referenced or reinforced in a long time fade unless
-  the user brings them up again, which mirrors how real relationships work
-- Anchor promotion: things the user mentions repeatedly or with strong sentiment get auto-elevated
-  to anchor status by the fact extractor
+- Anchors stored as a small, privileged fact category — set by the owner, never by the LLM
+- Injected into the system prompt in a way that gives them weight without being preachy
+- Wind topic generation can draw on anchors as conversation starters
+  (e.g. a check-in framed around user autonomy when the user seems under external pressure)
+- Anchor violations tracked: if the LLM output contradicts an anchor, it gets flagged or
+  regenerated (similar to output validation but for values)
 
-**Why this matters for the endgame:** without value anchors, Joi is a responsive tool.
-With them, it starts to feel like a presence.
+**Why this matters for the endgame:** without value anchors, Joi has no character — just
+a persona painted on top of a next-token predictor. With them, it starts to feel like
+something that actually stands for something.
 
 ---
 
