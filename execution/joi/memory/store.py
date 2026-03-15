@@ -249,7 +249,9 @@ CREATE TABLE IF NOT EXISTS wind_state (
     total_ignored INTEGER DEFAULT 0,
     total_deflected INTEGER DEFAULT 0,
     last_engaged_at TEXT,
-    last_deflected_at TEXT
+    last_deflected_at TEXT,
+    -- Hot conversation suppression (Phase 5)
+    convo_gap_ema_seconds REAL DEFAULT NULL
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -667,6 +669,11 @@ class MemoryStore:
                 conn.execute("ALTER TABLE wind_state ADD COLUMN total_deflected INTEGER DEFAULT 0")
                 conn.execute("ALTER TABLE wind_state ADD COLUMN last_engaged_at TEXT")
                 conn.execute("ALTER TABLE wind_state ADD COLUMN last_deflected_at TEXT")
+                conn.commit()
+            # Phase 5: Hot conversation gap EMA
+            if "convo_gap_ema_seconds" not in wind_columns:
+                logger.info("Migration: Adding 'convo_gap_ema_seconds' column to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN convo_gap_ema_seconds REAL DEFAULT NULL")
                 conn.commit()
 
         # Check pending_topics table for engagement columns (v8)

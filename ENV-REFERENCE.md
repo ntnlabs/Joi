@@ -124,6 +124,7 @@ Prompts directory structure:
 | `JOI_INGESTION_KEEP_FILES` | `0` | Set to `1` to keep source files after ingestion |
 | `JOI_INGESTION_CHUNK_SIZE` | `500` | Chunk size for RAG ingestion (tokens) |
 | `JOI_INGESTION_OVERLAP` | `50` | Chunk overlap for RAG ingestion (tokens) |
+| `JOI_MAX_DOCUMENT_SIZE` | `1048576` | Max document size in bytes; Joi's ingest guard is 2x this (should match `MESH_MAX_DOCUMENT_SIZE`) |
 
 ### HMAC Authentication
 
@@ -169,6 +170,7 @@ Prompts directory structure:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `MESH_MAX_DOCUMENT_SIZE` | `1048576` | Max attachment size in bytes before forwarding to Joi (should match `JOI_MAX_DOCUMENT_SIZE`) |
 | `MESH_ENABLE_FORWARD` | `0` | Set to `1` to enable forwarding to Joi |
 | `MESH_JOI_URL` | (required) | Joi API base URL (e.g. `http://10.42.0.10:8443`) |
 | `MESH_FORWARD_TIMEOUT` | `120` | Timeout for Joi requests in seconds |

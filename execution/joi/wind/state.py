@@ -35,6 +35,8 @@ class WindState:
     total_deflected: int = 0
     last_engaged_at: Optional[datetime] = None
     last_deflected_at: Optional[datetime] = None
+    # Hot conversation suppression (Phase 5)
+    convo_gap_ema_seconds: Optional[float] = None
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -85,7 +87,8 @@ class WindStateManager:
                    proactive_day_bucket, unanswered_proactive_count, wind_snooze_until,
                    updated_at, threshold_offset, accumulated_impulse,
                    engagement_score, total_proactives_sent, total_engaged,
-                   total_ignored, total_deflected, last_engaged_at, last_deflected_at
+                   total_ignored, total_deflected, last_engaged_at, last_deflected_at,
+                   convo_gap_ema_seconds
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -115,6 +118,7 @@ class WindStateManager:
             total_deflected=row["total_deflected"] or 0,
             last_engaged_at=_parse_datetime(row["last_engaged_at"]),
             last_deflected_at=_parse_datetime(row["last_deflected_at"]),
+            convo_gap_ema_seconds=row["convo_gap_ema_seconds"],
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -236,21 +240,36 @@ class WindStateManager:
             "total": state.total_proactives_sent
         })
 
-    def record_user_interaction(self, conversation_id: str) -> None:
+    def record_user_interaction(self, conversation_id: str, ema_alpha: float = 0.3) -> None:
         """
         Record a user interaction.
 
         Updates:
         - last_user_interaction_at
         - unanswered_proactive_count (reset to 0)
+        - convo_gap_ema_seconds (EMA of inter-message gaps)
         """
         now = datetime.now()
+        state = self.get_state(conversation_id)
 
-        self.update_state(
-            conversation_id,
-            last_user_interaction_at=now,
-            unanswered_proactive_count=0,
-        )
+        updates: dict = {
+            "last_user_interaction_at": now,
+            "unanswered_proactive_count": 0,
+        }
+
+        if state and state.last_user_interaction_at:
+            gap = min(
+                (now - state.last_user_interaction_at).total_seconds(),
+                4 * 3600,  # cap at 4 hours so stale gaps don't permanently inflate EMA
+            )
+            old_ema = state.convo_gap_ema_seconds
+            if old_ema is None:
+                new_ema = gap  # bootstrap from first observed gap
+            else:
+                new_ema = (1 - ema_alpha) * old_ema + ema_alpha * gap
+            updates["convo_gap_ema_seconds"] = round(new_ema, 1)
+
+        self.update_state(conversation_id, **updates)
         logger.debug("Recorded user interaction", extra={"conversation_id": conversation_id})
 
     def record_outbound(self, conversation_id: str) -> None:

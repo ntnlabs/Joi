@@ -277,7 +277,10 @@ class WindOrchestrator:
             message_text: User's message text (for engagement classification)
             reply_to_id: Message ID being replied to (for direct reply detection)
         """
-        self.state_manager.record_user_interaction(conversation_id)
+        self.state_manager.record_user_interaction(
+            conversation_id,
+            ema_alpha=self.config.active_convo_ema_alpha,
+        )
 
         # Phase 4a: Evaluate pending topics
         if message_text:
