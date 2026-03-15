@@ -2177,7 +2177,7 @@ def _generate_reminder_message(
     The reminder title is user-supplied data and is wrapped in triple-quotes
     to prevent prompt injection.
     """
-    base_prompt = "You are Joi, a warm and thoughtful AI assistant."
+    base_prompt = "You are Joi, an AI assistant."
 
     facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
     system_parts = [base_prompt]
@@ -2185,26 +2185,26 @@ def _generate_reminder_message(
         system_parts.append(f"\n\n{facts_text}")
     system_prompt = "".join(system_parts)
 
-    # Build injection-safe context line
-    recurrence_note = ""
+    # Build context notes
+    context_notes = []
     if is_recurring:
-        recurrence_note = " This is a recurring reminder."
-    snooze_note = ""
+        context_notes.append("This is a recurring reminder.")
     if snooze_count > 0:
-        snooze_note = f" The user has snoozed this {snooze_count} time(s) before."
+        context_notes.append(f"The user snoozed this {snooze_count} time(s) before.")
+    context_line = (" " + " ".join(context_notes)) if context_notes else ""
 
-    user_prompt = f"""The user asked you to remind them about this:
+    user_prompt = f"""The user asked you to remind them about this at this time:
 \"\"\"
 {title}
 \"\"\"
 
-Write a brief, warm reminder message.{recurrence_note}{snooze_note}
+Deliver the reminder now in 1-2 sentences.{context_line}
 Rules:
-- Stay in character as Joi
-- Be warm but not overly enthusiastic
-- Keep it short (1-2 sentences)
-- Sound natural
-- No greetings like "Hey!" or "Hi!" - just the reminder
+- Say it's time / they asked you to remind them — keep it simple and direct
+- Do NOT say you forgot, apologize, or reference shared experiences
+- Do NOT add relationship commentary or emotional context
+- The tone can be warm, dry, or light — match what you know about the user
+- No greetings like "Hey!" or "Hi!"
 
 Just the message, nothing else."""
 
