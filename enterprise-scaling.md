@@ -44,8 +44,45 @@ No concurrent processing per `conversation_id`.
 - Start with one writable central DB.
 - Later: add replicas/failover, but keep one active writer to avoid split-brain writes.
 
+## Database: SQLCipher → PostgreSQL
+
+SQLCipher is the right choice for the current single-node deployment — encrypted at rest,
+zero operational overhead. It becomes a bottleneck at scale:
+
+- Single writer — no horizontal writes, concurrent processes serialize or fail
+- No replication or hot standby
+- No connection pooling
+- Backup is a file copy — fragile under live multi-process writes
+
+**Target: PostgreSQL.** Proper multi-writer ACID, replication, pgBouncer for pooling,
+row-level security for tenant isolation. At-rest encryption covered by LUKS (already in
+place) + PostgreSQL encryption options. SQLCipher's role goes away.
+
+This is a prerequisite for any multi-user or multi-instance deployment.
+
+## DB Abstraction Layer (Do This Before the Migration)
+
+Raw SQL is currently scattered across `store.py`, `topics.py`, `state.py`, `feedback.py`,
+`reminders.py`, and others. Migrating to PostgreSQL in this state means touching every file.
+
+The plan:
+
+1. **Per-domain repository interfaces** — `MessageRepository`, `FactRepository`,
+   `ReminderRepository`, `WindStateRepository`, etc. Named methods only, no raw SQL
+   outside these files.
+2. **SQLite/SQLCipher backend** behind the interface — same behaviour, just reorganised.
+   Drop-in for current code.
+3. **PostgreSQL backend** behind the same interface — rest of codebase untouched.
+4. **Switch via config** — `JOI_DB_BACKEND=sqlite` (default) or `postgres`, connection
+   string injected at startup.
+
+This is a mechanical refactor — no logic changes, just boundary drawing. Do it before
+the first multi-user deployment or any serious load testing.
+
 ## Incremental Rollout
 1. Add queue between frontend and backend workers.
 2. Enforce per-conversation serialization in frontend/queue layer.
 3. Move LLM execution to worker nodes.
 4. Keep memory access centralized from day one.
+5. Draw DB abstraction layer boundaries.
+6. Swap SQLCipher for PostgreSQL behind the abstraction.
