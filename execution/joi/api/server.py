@@ -1517,6 +1517,9 @@ def receive_message(msg: InboundMessage):
         pending_fact = None
         pending_response = None
 
+        # Emit typing indicator immediately so user gets feedback before any LLM work
+        _send_typing_indicator(msg)
+
         # Check for "remember this" requests (only from allowed senders)
         # Uses hybrid approach: keyword filter + LLM detection/extraction
         # Note: This is inside the queue to ensure all LLM calls are serialized
@@ -1607,9 +1610,6 @@ def receive_message(msg: InboundMessage):
             "context_source": "custom" if custom_context else "default",
             "action": "llm_generate"
         })
-
-        # Emit typing indicator so user sees Joi is working
-        _send_typing_indicator(msg)
 
         queue_msg.heartbeat()  # Signal still working before LLM call
         llm_response = llm.chat(messages=chat_messages, system=enriched_prompt, model=custom_model)
@@ -1989,9 +1989,16 @@ def _send_typing_indicator(msg: InboundMessage) -> None:
             hmac_headers = create_request_headers(body, current_secret)
             headers.update(hmac_headers)
         with httpx.Client(timeout=5.0) as client:
-            client.post(url, content=body, headers=headers)
+            resp = client.post(url, content=body, headers=headers)
+        if resp.status_code != 200:
+            logger.warning("Typing indicator rejected by mesh", extra={
+                "status_code": resp.status_code,
+                "action": "typing_indicator",
+            })
+        else:
+            logger.debug("Typing indicator sent", extra={"action": "typing_indicator"})
     except Exception as exc:
-        logger.debug("Typing indicator failed", extra={"error": str(exc)})
+        logger.warning("Typing indicator failed", extra={"error": str(exc), "action": "typing_indicator"})
 
 
 def _send_to_mesh(
