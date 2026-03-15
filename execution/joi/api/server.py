@@ -632,11 +632,22 @@ ALWAYS_REMEMBER_KEYWORDS = ["always remember", "never forget", "important:"]
 IMPORTANT_CATEGORIES = ["personal", "relationship"]
 IMPORTANT_KEYS = ["name", "profession", "job", "partner", "spouse", "wife", "husband", "child", "children"]
 
+# Question forms directed at Joi ("do you remember X?") — not instructions to save
+_REMEMBER_QUESTION_RE = re.compile(
+    r"\b(do|did|can|could|don'?t|doesn'?t|won'?t|will|would)\s+you\b[^.?!]*\bremember\b",
+    re.I,
+)
+
 
 def _has_remember_keywords(text: str) -> bool:
     """Quick check if message might contain a remember request."""
     text_lower = text.lower()
-    return any(kw in text_lower for kw in REMEMBER_KEYWORDS)
+    if not any(kw in text_lower for kw in REMEMBER_KEYWORDS):
+        return False
+    # Exclude question forms asking if Joi remembers — not instructions to save a fact
+    if _REMEMBER_QUESTION_RE.search(text):
+        return False
+    return True
 
 
 def _should_mark_important(text: str, category: str, key: str) -> bool:
@@ -701,6 +712,9 @@ This includes: their name, preferences, facts about them, things they like/disli
 personal info, work info, or explicitly asking me to remember something.
 
 Rules:
+- "Do you remember X?" = asking about my memory = false
+- "Remember that X" or "Remember X" = instruction to save = true
+- "I want you to remember X" = instruction to save = true
 - If the user is ASKING a question (even one containing the word "remember"), return false.
 - If the user is TELLING me something factual about themselves, return true.
 - Casual chat, commands, and rhetorical questions are always false.
