@@ -69,14 +69,17 @@ JOI_CONSOLIDATION_ARCHIVE=0
 # Set to 0 to disable knowledge retrieval
 JOI_RAG_ENABLED=1
 # Max tokens for RAG context in prompts
-#JOI_RAG_MAX_TOKENS=500
+#JOI_RAG_MAX_TOKENS=1500
+# Ollama embedding model for semantic search (leave empty to use BM25 FTS only)
+# Pull with: ollama pull nomic-embed-text
+#JOI_EMBEDDING_MODEL=
 
 # --- Facts & Summaries FTS ---
 # Full-text search context injection (facts and conversation summaries)
 #JOI_FACTS_FTS_ENABLED=1
 #JOI_FACTS_FTS_MAX_TOKENS=300
 #JOI_SUMMARIES_FTS_ENABLED=1
-#JOI_SUMMARIES_FTS_MAX_TOKENS=400
+#JOI_SUMMARIES_FTS_MAX_TOKENS=1500
 
 # --- Knowledge Ingestion ---
 # Directory watched for new knowledge files to ingest into RAG

@@ -303,7 +303,7 @@ _validate_compaction_settings()
 
 # RAG settings
 RAG_ENABLED = os.getenv("JOI_RAG_ENABLED", "1") == "1"  # Default: enabled
-RAG_MAX_TOKENS = int(os.getenv("JOI_RAG_MAX_TOKENS", "500"))  # Max tokens for RAG context
+RAG_MAX_TOKENS = int(os.getenv("JOI_RAG_MAX_TOKENS", "1500"))  # Max tokens for RAG context
 
 # FTS search settings for facts and summaries
 FACTS_FTS_ENABLED = os.getenv("JOI_FACTS_FTS_ENABLED", "1") == "1"  # Default: enabled
