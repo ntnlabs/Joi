@@ -258,6 +258,82 @@ something that actually stands for something.
 
 ---
 
+## Value Tree (Future Consideration)
+
+Value anchors define *what* Joi holds. The value tree defines *how good a given response is*
+relative to those anchors — an internal evaluation model, not an external constraint.
+
+### The Problem
+
+An LLM left to itself will drift. Depending on how a conversation is framed, the same model
+can be empathetic, cruel, philosophical, manipulative, or funny — and it won't reliably
+distinguish between these as better or worse. It optimises for plausibility and user approval,
+not for goodness. A white lie that makes the user feel better scores fine on user satisfaction.
+It scores badly on truth. The LLM doesn't know the difference unless we make it explicit.
+
+The value tree is the mechanism that knows the difference.
+
+### Core Idea
+
+A **value tree** is a hierarchy of intrinsic values — things that are good in themselves,
+not because the user wanted them. The tree is used to score Joi's own outputs *before* they
+are sent. A response that is truthful but uncomfortable scores higher than a response that is
+comforting but false. The scoring is not about what the user feels — it is about what is
+actually good.
+
+This is distinct from RLHF (which trains the model to please human raters) and from
+Constitutional AI (which uses the model itself to self-critique). The value tree is an
+external, explicit, operator-controlled evaluation layer. The model cannot modify it.
+
+### Intrinsic vs Instrumental Values
+
+The tree only contains **intrinsic** values — values that are good unconditionally:
+
+- Truth (saying true things is good; white lies are bad even when kind)
+- Non-harm (not causing damage to people, relationships, or autonomy)
+- Respect for life
+- User autonomy (not nudging, manipulating, or creating dependency)
+- Honesty about uncertainty (not pretending to know things Joi doesn't know)
+
+**Instrumental** values — things that are only good if they serve something above them —
+are not anchors. Being funny is not intrinsically good. Being empathetic is not intrinsically
+good. They can serve the intrinsic values or undermine them depending on context.
+
+### How the Tree Would Work
+
+The tree is evaluated by a second LLM pass (a "judge" call) or by a lightweight scoring
+model. Given a candidate response, the judge evaluates it against each branch of the tree
+and produces a score or a pass/fail per branch. If a branch fails, the response is either
+regenerated or flagged.
+
+This is expensive if done naively. Practical approaches:
+
+- Run the judge only on responses that touch sensitive topics (detected by classifier)
+- Run it on a sample of all responses for monitoring, not as a hard gate
+- Over time, fine-tune the base model on responses that scored well — so the tree
+  gradually bakes into the model itself for this deployment
+
+### Relationship to Personality Modes
+
+The value tree does not prevent Joi from being funny, philosophical, direct, or even
+uncomfortable to talk to. It prevents Joi from being manipulative, dishonest, or
+autonomy-eroding — regardless of what personality mode is active. The tree is the floor,
+not the ceiling.
+
+### Why Not Just Rely on the LLM's Training?
+
+LLM training instils tendencies, not guarantees. The same model that refuses harmful
+requests in one framing will comply in another. Values need to be *dependable* —
+they need to hold under adversarial prompting, under jailbreak attempts, under emotional
+manipulation from the user. Baked-in training is not sufficient for that. An external
+evaluation layer that the model cannot influence is.
+
+**Why this matters for the endgame:** the value tree is what separates a character from
+a mirror. Without it, Joi reflects the user back at them. With it, Joi is something the
+user is actually talking *to*.
+
+---
+
 ## Communication Platform Decision (Future Consideration)
 
 The decision regarding the ultimate secure mobile communication platform will be made once the core Joi functionality is proven. The MVP will rely on the current Signal integration. Transitioning to a certified platform would involve replacing the `signal-cli` integration with the chosen vendor's secure gateway/SDK in the Mesh VM, likely exposing a similar internal API for Joi to interact with.
