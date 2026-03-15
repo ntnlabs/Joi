@@ -1358,7 +1358,18 @@ class MemoryStore:
         # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
         # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
         import re
-        words = re.findall(r'\w+', query)
+        _STOPWORDS = {
+            "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "it",
+            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+            "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+            "have", "has", "had", "do", "does", "did", "will", "would", "could",
+            "should", "may", "might", "this", "that", "what", "how", "about",
+            "not", "no", "so", "if", "as", "up", "out", "can", "just", "than",
+        }
+        all_words = re.findall(r'\w+', query)
+        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 2]
+        if not words:
+            words = all_words  # Fall back to full list so FTS still runs
         if not words:
             return []
 
