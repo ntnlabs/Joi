@@ -1995,34 +1995,37 @@ cmd_facts() {
             [[ -z "$fact_id" ]] && error "show requires a fact ID"
             [[ ! "$fact_id" =~ ^[0-9]+$ ]] && error "Fact ID must be a number"
 
-            local row
-            row=$(db_exec "$(cat <<SQL
-SELECT
-    id, conversation_id, category, key, value,
-    confidence, source, active, important,
-    datetime(learned_at/1000, 'unixepoch') AS learned_at,
-    datetime(updated_at/1000, 'unixepoch') AS updated_at
-FROM user_facts WHERE id = $fact_id;
-SQL
-)" | awk 'NF && $0 != "ok"' | head -1)
-
-            if [[ -z "$row" ]]; then
+            local exists
+            exists=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE id = $fact_id;")
+            if [[ "${exists:-0}" == "0" ]]; then
                 echo "Fact #$fact_id not found."
                 exit 1
             fi
 
-            IFS='|' read -r id conv cat key val conf src act imp learned updated <<< "$row"
-            echo "ID:              $id"
-            echo "conversation_id: $conv"
-            echo "category:        $cat"
-            echo "key:             $key"
-            echo "value:           $val"
-            echo "confidence:      $conf"
-            echo "source:          $src"
-            echo "active:          $act"
-            echo "important:       $imp"
-            echo "learned_at:      $learned"
-            echo "updated_at:      $updated"
+            # Query each field separately to avoid pipe-in-value splitting issues
+            local f_conv f_cat f_key f_val f_conf f_src f_act f_imp f_learned f_updated
+            f_conv=$(db_scalar    "SELECT conversation_id FROM user_facts WHERE id = $fact_id;")
+            f_cat=$(db_scalar     "SELECT category        FROM user_facts WHERE id = $fact_id;")
+            f_key=$(db_scalar     "SELECT key             FROM user_facts WHERE id = $fact_id;")
+            f_val=$(db_scalar     "SELECT value           FROM user_facts WHERE id = $fact_id;")
+            f_conf=$(db_scalar    "SELECT confidence      FROM user_facts WHERE id = $fact_id;")
+            f_src=$(db_scalar     "SELECT source          FROM user_facts WHERE id = $fact_id;")
+            f_act=$(db_scalar     "SELECT active          FROM user_facts WHERE id = $fact_id;")
+            f_imp=$(db_scalar     "SELECT important       FROM user_facts WHERE id = $fact_id;")
+            f_learned=$(db_scalar "SELECT datetime(learned_at/1000,'unixepoch') FROM user_facts WHERE id = $fact_id;")
+            f_updated=$(db_scalar "SELECT datetime(updated_at/1000,'unixepoch') FROM user_facts WHERE id = $fact_id;")
+
+            echo "ID:              $fact_id"
+            echo "conversation_id: $f_conv"
+            echo "category:        $f_cat"
+            echo "key:             $f_key"
+            echo "value:           $f_val"
+            echo "confidence:      $f_conf"
+            echo "source:          $f_src"
+            echo "active:          $f_act"
+            echo "important:       $f_imp"
+            echo "learned_at:      $f_learned"
+            echo "updated_at:      $f_updated"
             ;;
 
         list)
