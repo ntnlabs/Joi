@@ -11,7 +11,7 @@ import time
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -62,6 +62,9 @@ from memory import MemoryConsolidator, MemoryStore
 
 # Import Wind module (path already set above)
 from wind import WindOrchestrator, WindConfig
+
+# Import Reminder subsystem
+from reminders import ReminderManager
 
 logger = logging.getLogger("joi.api")
 
@@ -366,6 +369,8 @@ wind_orchestrator = WindOrchestrator(
     llm_client=llm,
 )
 
+reminder_manager = ReminderManager(db_connection_factory=memory._connect)
+
 # Initialize memory consolidator
 consolidator = MemoryConsolidator(
     memory=memory,
@@ -383,6 +388,10 @@ _DURATION_HOURS   = re.compile(r"(\d+)\s*h(?:ours?)?", re.I)
 _DURATION_MINS    = re.compile(r"(\d+)\s*m(?:in(?:utes?)?)?", re.I)
 _DURATION_DAYS    = re.compile(r"(\d+)\s*d(?:ays?)?", re.I)
 _DURATION_TONIGHT = re.compile(r"\btonight\b", re.I)
+
+# --- Reminder Command Patterns ---
+_REMINDER_TRIGGER = re.compile(r"\bremind\s+me\b", re.I)
+_REMINDER_ABOUT   = re.compile(r"\b(?:to|about)\b", re.I)
 
 
 # --- Group Membership Cache ---
@@ -1118,10 +1127,12 @@ def startup_event():
             check_fingerprints=_check_fingerprints,
             get_wind_config=_get_wind_config,
             generate_proactive_message=_generate_proactive_message,
+            generate_reminder_message=_generate_reminder_message,
             send_to_mesh=_send_to_mesh,
             run_auto_ingestion=run_auto_ingestion,
             cleanup_send_caches=_cleanup_send_caches,
             InboundConversation=InboundConversation,
+            reminder_manager=reminder_manager,
         )
         scheduler.start()
     wind_config = _get_wind_config()
@@ -1479,6 +1490,19 @@ def receive_message(msg: InboundMessage):
                 recipient_transport_id=msg.conversation.id,
                 conversation=msg.conversation,
                 text=snooze_reply,
+                reply_to=msg.message_id,
+            )
+            return InboundResponse(status="ok", message_id=msg.message_id)
+
+    # Reminder command: owner can set reminders
+    if msg.is_owner and msg.conversation.type == "direct" and user_text:
+        reminder_reply = _handle_reminder_command(user_text, msg.conversation.id)
+        if reminder_reply:
+            _send_to_mesh(
+                recipient_id="owner",
+                recipient_transport_id=msg.conversation.id,
+                conversation=msg.conversation,
+                text=reminder_reply,
                 reply_to=msg.message_id,
             )
             return InboundResponse(status="ok", message_id=msg.message_id)
@@ -2067,6 +2091,152 @@ def _handle_wind_snooze_command(text: str, conversation_id: str) -> Optional[str
         label = f"{total_minutes}m"
 
     return f"Wind snoozed for {label}."
+
+
+def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
+    """
+    Return a confirmation string if text is a reminder command, else None.
+
+    Recognizes: "remind me in 5m to check the oven"
+                "remind me tonight to call mom"
+                "remind me in 2h about the meeting"
+    """
+    if not _REMINDER_TRIGGER.search(text):
+        return None
+
+    if len(text.split()) > 25:
+        return None
+
+    now = datetime.now(timezone.utc)
+    time_end = -1
+
+    if m := _DURATION_TONIGHT.search(text):
+        import zoneinfo
+        tz = zoneinfo.ZoneInfo(TIME_AWARENESS_TIMEZONE)
+        now_local = now.astimezone(tz)
+        # "Tonight" = 9pm local time
+        candidate = now_local.replace(hour=21, minute=0, second=0, microsecond=0)
+        if candidate <= now_local:
+            candidate += timedelta(days=1)
+        due_at = candidate.astimezone(timezone.utc)
+        time_end = m.end()
+    elif m := _DURATION_HOURS.search(text):
+        due_at = now + timedelta(hours=min(int(m.group(1)), 168))
+        time_end = m.end()
+    elif m := _DURATION_MINS.search(text):
+        due_at = now + timedelta(minutes=max(1, min(int(m.group(1)), 10080)))
+        time_end = m.end()
+    elif m := _DURATION_DAYS.search(text):
+        due_at = now + timedelta(days=min(int(m.group(1)), 365))
+        time_end = m.end()
+    else:
+        return None  # No time expression found
+
+    # Find "to/about" keyword after the time expression to extract the title
+    about_match = _REMINDER_ABOUT.search(text, pos=max(0, time_end))
+    if not about_match:
+        # Fall back: try anywhere in the text
+        about_match = _REMINDER_ABOUT.search(text)
+        if not about_match:
+            return None
+
+    title = text[about_match.end():].strip().strip("., ")
+    if not title:
+        return None
+
+    # Set reminder with 24h expiry for one-shots
+    expires_at = now + timedelta(hours=24)
+    reminder_manager.add(
+        conversation_id=conversation_id,
+        title=title,
+        due_at=due_at,
+        expires_at=expires_at,
+    )
+
+    delta = due_at - now
+    total_minutes = int(delta.total_seconds() / 60)
+    if total_minutes >= 1440:
+        label = f"{total_minutes // 1440}d"
+    elif total_minutes >= 60:
+        label = f"{total_minutes // 60}h"
+    else:
+        label = f"{total_minutes}m"
+
+    return f"Reminder set for {label}."
+
+
+def _generate_reminder_message(
+    title: str,
+    conversation_id: str,
+    is_recurring: bool = False,
+    snooze_count: int = 0,
+) -> Optional[str]:
+    """
+    Generate a reminder message using an injection-safe prompt.
+
+    The reminder title is user-supplied data and is wrapped in triple-quotes
+    to prevent prompt injection.
+    """
+    base_prompt = "You are Joi, a warm and thoughtful AI assistant."
+
+    facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
+    system_parts = [base_prompt]
+    if facts_text:
+        system_parts.append(f"\n\n{facts_text}")
+    system_prompt = "".join(system_parts)
+
+    # Build injection-safe context line
+    recurrence_note = ""
+    if is_recurring:
+        recurrence_note = " This is a recurring reminder."
+    snooze_note = ""
+    if snooze_count > 0:
+        snooze_note = f" The user has snoozed this {snooze_count} time(s) before."
+
+    user_prompt = f"""The user asked you to remind them about this:
+\"\"\"
+{title}
+\"\"\"
+
+Write a brief, warm reminder message.{recurrence_note}{snooze_note}
+Rules:
+- Stay in character as Joi
+- Be warm but not overly enthusiastic
+- Keep it short (1-2 sentences)
+- Sound natural
+- No greetings like "Hey!" or "Hi!" - just the reminder
+
+Just the message, nothing else."""
+
+    try:
+        response = llm.chat(
+            messages=[{"role": "user", "content": user_prompt}],
+            system=system_prompt,
+        )
+        if response.error or not response.text:
+            logger.warning("Reminder: LLM generation failed", extra={"error": response.error})
+            return None
+
+        text = response.text.strip()
+
+        is_valid, text = validate_output(text)
+        if not is_valid:
+            logger.warning("Reminder: generated message failed validation")
+            return None
+
+        if len(text) > 500:
+            text = text[:500]
+
+        logger.info("Reminder: generated message", extra={
+            "length": len(text),
+            "title": title[:30],
+            "action": "reminder_generate",
+        })
+        return text
+
+    except Exception as e:
+        logger.error("Reminder: message generation error", extra={"error": str(e)})
+        return None
 
 
 def _send_to_mesh(

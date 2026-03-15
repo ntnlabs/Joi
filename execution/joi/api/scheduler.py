@@ -49,10 +49,12 @@ class Scheduler:
         self._check_fingerprints: Optional[Callable] = None
         self._get_wind_config: Optional[Callable] = None
         self._generate_proactive_message: Optional[Callable] = None
+        self._generate_reminder_message: Optional[Callable] = None
         self._send_to_mesh: Optional[Callable] = None
         self._run_auto_ingestion: Optional[Callable] = None
         self._cleanup_send_caches: Optional[Callable] = None
         self._InboundConversation = None
+        self._reminder_manager = None
 
     def set_dependencies(
         self,
@@ -67,10 +69,12 @@ class Scheduler:
         check_fingerprints: Callable,
         get_wind_config: Callable,
         generate_proactive_message: Callable,
+        generate_reminder_message: Callable,
         send_to_mesh: Callable,
         run_auto_ingestion: Callable,
         cleanup_send_caches: Callable,
         InboundConversation,
+        reminder_manager,
     ):
         """Set dependencies after construction to avoid circular imports."""
         self._memory = memory
@@ -85,9 +89,11 @@ class Scheduler:
         self._get_wind_config = get_wind_config
         self._cleanup_send_caches = cleanup_send_caches
         self._generate_proactive_message = generate_proactive_message
+        self._generate_reminder_message = generate_reminder_message
         self._send_to_mesh = send_to_mesh
         self._run_auto_ingestion = run_auto_ingestion
         self._InboundConversation = InboundConversation
+        self._reminder_manager = reminder_manager
 
     def start(self):
         """Start the scheduler thread."""
@@ -423,43 +429,52 @@ class Scheduler:
 
     def _check_reminders(self):
         """Check for due reminders and send them."""
-        if not self._wind_orchestrator:
+        if not self._reminder_manager or not self._generate_reminder_message:
             return
         try:
-            # Get reminders that are due
-            due_reminders = self._wind_orchestrator.topic_manager.get_due_reminders()
+            from reminders import parse_recurrence_interval
 
-            for topic in due_reminders:
-                # Compact context before sending to ensure clean context when user replies
-                self._compact_before_wind(topic.conversation_id)
+            due_reminders = self._reminder_manager.get_due()
 
-                # Generate reminder message
-                message_text = self._generate_proactive_message(
-                    topic_title=topic.title,
-                    topic_content=topic.content,
-                    conversation_id=topic.conversation_id,
+            for reminder in due_reminders:
+                # Compact context before sending
+                self._compact_before_wind(reminder.conversation_id)
+
+                # Determine recurrence context for prompt
+                is_recurring = bool(reminder.recurrence)
+
+                # Generate reminder message with injection-safe prompt
+                message_text = self._generate_reminder_message(
+                    title=reminder.title,
+                    conversation_id=reminder.conversation_id,
+                    is_recurring=is_recurring,
+                    snooze_count=reminder.snooze_count,
                 )
 
                 if not message_text:
-                    logger.warning("Reminder: failed to generate message", extra={"topic_id": topic.id})
-                    # Mark as mentioned anyway to avoid retrying forever
-                    self._wind_orchestrator.topic_manager.mark_mentioned(topic.id)
+                    logger.warning("Reminder: failed to generate message", extra={
+                        "reminder_id": reminder.id,
+                        "action": "reminder_generate_fail",
+                    })
+                    # Mark fired to avoid retrying forever
+                    self._reminder_manager.mark_fired(reminder.id)
                     continue
 
-                # Determine conversation type
-                is_group = not topic.conversation_id.startswith("+")
-                conv_type = "group" if is_group else "direct"
-                conversation = self._InboundConversation(type=conv_type, id=topic.conversation_id)
-
+                # Only DM sends for now
+                is_group = not reminder.conversation_id.startswith("+")
                 if is_group:
-                    logger.warning("Reminder: group sends not yet supported", extra={"topic_id": topic.id})
-                    self._wind_orchestrator.topic_manager.mark_mentioned(topic.id)
+                    logger.warning("Reminder: group sends not yet supported", extra={
+                        "reminder_id": reminder.id,
+                    })
+                    self._reminder_manager.mark_fired(reminder.id)
                     continue
 
-                # Send the reminder
+                conv_type = "direct"
+                conversation = self._InboundConversation(type=conv_type, id=reminder.conversation_id)
+
                 success = self._send_to_mesh(
                     recipient_id="owner",
-                    recipient_transport_id=topic.conversation_id,
+                    recipient_transport_id=reminder.conversation_id,
                     conversation=conversation,
                     text=message_text,
                     reply_to=None,
@@ -467,32 +482,37 @@ class Scheduler:
                 )
 
                 if success:
-                    # Generate message_id for tracking
                     message_id = str(uuid.uuid4())
 
-                    # Store outbound message first
                     self._memory.store_message(
                         message_id=message_id,
                         direction="outbound",
                         content_type="text",
                         content_text=f"[REMINDER] {message_text}",
                         timestamp=int(time.time() * 1000),
-                        conversation_id=topic.conversation_id,
+                        conversation_id=reminder.conversation_id,
                     )
 
-                    # Mark topic as sent with message_id for engagement tracking
-                    self._wind_orchestrator.topic_manager.mark_sent(topic.id, message_id)
+                    # Mark fired then reschedule if recurring
+                    self._reminder_manager.mark_fired(reminder.id)
+                    if reminder.recurrence:
+                        interval = parse_recurrence_interval(reminder.recurrence)
+                        if interval and reminder.due_at:
+                            new_due = reminder.due_at + interval
+                            self._reminder_manager.reschedule(reminder.id, new_due)
 
                     logger.info("Reminder sent", extra={
-                        "topic_id": topic.id,
-                        "title": topic.title[:30],
-                        "conversation_id": topic.conversation_id,
-                        "message_id": message_id
+                        "reminder_id": reminder.id,
+                        "title": reminder.title[:30],
+                        "conversation_id": reminder.conversation_id,
+                        "recurring": is_recurring,
+                        "action": "reminder_sent",
                     })
                 else:
                     logger.error("Reminder: failed to send", extra={
-                        "topic_id": topic.id,
-                        "conversation_id": topic.conversation_id
+                        "reminder_id": reminder.id,
+                        "conversation_id": reminder.conversation_id,
+                        "action": "reminder_send_fail",
                     })
 
         except Exception as e:

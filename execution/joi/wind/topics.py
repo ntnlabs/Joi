@@ -23,7 +23,7 @@ class PendingTopic:
     status: str = "pending"
     created_at: Optional[datetime] = None
     expires_at: Optional[datetime] = None
-    due_at: Optional[datetime] = None  # For reminders: when to trigger
+    due_at: Optional[datetime] = None
     mentioned_at: Optional[datetime] = None
     novelty_key: Optional[str] = None
     source_event_id: Optional[str] = None
@@ -232,36 +232,6 @@ class TopicManager:
             topic_id, conversation_id, topic_type, title[:50], priority
         )
         return topic_id
-
-    def get_due_reminders(self, now: Optional[datetime] = None) -> List[PendingTopic]:
-        """
-        Get all reminders that are due (due_at <= now).
-
-        Returns topics with status='pending' and due_at in the past.
-        """
-        if now is None:
-            now = datetime.now()
-        now_iso = now.isoformat()
-        conn = self._connect()
-
-        cursor = conn.execute(
-            """
-            SELECT id, conversation_id, topic_type, title, content, priority,
-                   status, created_at, expires_at, due_at, mentioned_at, novelty_key,
-                   source_event_id, outcome, outcome_at, retry_count, last_retry_at,
-                   sent_message_id
-            FROM pending_topics
-            WHERE status = ?
-              AND topic_type = 'reminder'
-              AND due_at IS NOT NULL
-              AND due_at <= ?
-              AND (expires_at IS NULL OR expires_at > ?)
-            ORDER BY due_at ASC, priority DESC
-            """,
-            (self.STATUS_PENDING, now_iso, now_iso)
-        )
-
-        return [self._row_to_topic(row) for row in cursor.fetchall()]
 
     def mark_mentioned(self, topic_id: int) -> None:
         """

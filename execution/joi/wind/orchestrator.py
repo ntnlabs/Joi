@@ -22,7 +22,6 @@ LIFECYCLE_RULES = {
     "tension": {"engaged": "resolve", "ignored": "retry_1", "deflected": "dismiss"},
     "affinity": {"engaged": "mark_engaged", "ignored": "retry_2", "deflected": "cooldown_3"},
     "discovery": {"engaged": "convert_affinity", "ignored": "expire", "deflected": "cooldown_7"},
-    "reminder": {"engaged": "complete", "ignored": "retry_ttl", "deflected": "defer_1"},
     "followup": {"engaged": "complete", "ignored": "retry_1", "deflected": "dismiss"},
     # Phase 4b: Ghost probe — rare re-check for deeply-rejected families
     "ghost": {"engaged": "mark_engaged", "ignored": "cooldown_90", "deflected": "undertaker_promote"},
