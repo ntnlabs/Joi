@@ -49,13 +49,13 @@ Hard gates run first. Any failure skips the tick entirely — no score computed,
 |-----|---------|-------------|
 | `quiet_hours_start` | `23` | Start of quiet window (local hour, 0–23). Wind will not send from this hour onward. |
 | `quiet_hours_end` | `7` | End of quiet window (local hour, 0–23). Wind resumes at this hour. Supports overnight ranges (e.g., start=23, end=7). |
-| `min_cooldown_seconds` | `3600` | Minimum seconds between proactive sends. Prevents bursts even if accumulator resets fast. |
+| `min_cooldown_minutes` | `60` | Minimum minutes between proactive sends. Prevents bursts even if accumulator resets fast. |
 | `daily_cap` | `3` | Max proactive messages per calendar day. Hard stop regardless of score. |
 | `max_unanswered_streak` | `2` | Stop sending after N consecutive proactives with no user reply. Resets when user responds. |
-| `min_silence_seconds` | `1800` | Minimum seconds since last user message before Wind is eligible. Prevents interrupting active conversations. |
+| `min_silence_minutes` | `30` | Minimum minutes since last user message before Wind is eligible. Prevents interrupting active conversations. |
 
 **Tuning notes:**
-- `min_silence_seconds` is the most impactful gate for responsiveness. Lower it (e.g., 600–900) for more aggressive behavior.
+- `min_silence_minutes` is the most impactful gate for responsiveness. Lower it (e.g., 10–15) for more aggressive behavior.
 - `daily_cap` interacts with `fatigue_weight` — cap provides a hard stop, fatigue provides gradual suppression before the cap.
 - `max_unanswered_streak=2` means after 2 ignored proactives, Wind goes quiet until the user engages.
 
@@ -76,7 +76,7 @@ This score is added to the accumulator each eligible tick. The accumulator reset
 | Key | Default | Factor | Range | Description |
 |-----|---------|--------|-------|-------------|
 | `base_impulse` | `0.1` | base | `[0, 1]` | Constant per-tick contribution. Ensures accumulator always grows when gates pass. |
-| `silence_weight` | `0.3` | silence | `[0, weight]` | Max contribution from silence. Scales linearly from `min_silence_seconds` to `silence_cap_hours`. |
+| `silence_weight` | `0.3` | silence | `[0, weight]` | Max contribution from silence. Scales linearly from `min_silence_minutes` to `silence_cap_hours`. |
 | `silence_cap_hours` | `24.0` | silence | — | Silence stops contributing beyond this many hours. |
 | `topic_pressure_weight` | `0.2` | topic_pressure | `[0, weight]` | Boost when there are queued topics ready to send. Higher = more eager to send when topics exist. |
 | `fatigue_weight` | `0.3` | fatigue | `[-weight, 0]` | **Negative** damper. Scales with `proactive_sent_today / daily_cap`. At cap, full weight is subtracted. |
@@ -86,7 +86,7 @@ This score is added to the accumulator each eligible tick. The accumulator reset
 ```
 silence_contribution = ((elapsed_hours - min_silence_hours) / (silence_cap_hours - min_silence_hours)) * silence_weight
 ```
-Capped at `silence_weight`. Zero if elapsed < `min_silence_seconds`.
+Capped at `silence_weight`. Zero if elapsed < `min_silence_minutes`.
 
 **Fatigue factor formula:**
 ```
@@ -151,8 +151,8 @@ The engagement score per conversation starts at 0.5 (neutral) and shifts based o
   "shadow_mode": false,
   "quiet_hours_start": 0,
   "quiet_hours_end": 7,
-  "min_cooldown_seconds": 600,
-  "min_silence_seconds": 1200,
+  "min_cooldown_minutes": 10,
+  "min_silence_minutes": 20,
   "daily_cap": 4,
   "max_unanswered_streak": 2,
   "impulse_threshold": 0.4,
@@ -171,8 +171,8 @@ The engagement score per conversation starts at 0.5 (neutral) and shifts based o
   "shadow_mode": false,
   "quiet_hours_start": 22,
   "quiet_hours_end": 9,
-  "min_cooldown_seconds": 3600,
-  "min_silence_seconds": 3600,
+  "min_cooldown_minutes": 60,
+  "min_silence_minutes": 60,
   "daily_cap": 2,
   "max_unanswered_streak": 1,
   "impulse_threshold": 0.7,
