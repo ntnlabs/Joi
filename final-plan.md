@@ -351,6 +351,57 @@ user is actually talking *to*.
 
 ---
 
+## Enterprise Scaling (Future Consideration)
+
+### Database: SQLCipher → Something More Robust
+
+SQLCipher is a good fit for the current single-node, single-process deployment — encrypted
+at rest, no server to manage, zero operational overhead. But it has hard limits that will
+matter at scale:
+
+- **Single writer**: SQLite's WAL mode helps, but concurrent writes from multiple processes
+  or nodes will serialize or fail. No horizontal scaling.
+- **No replication**: no built-in hot standby, no failover, no read replicas.
+- **No connection pooling**: each thread holds its own connection; under load this becomes
+  a bottleneck.
+- **Backup is a file copy**: works fine now, becomes fragile with live multi-process writes.
+
+The natural upgrade path is **PostgreSQL** — battle-tested, proper ACID multi-writer,
+replication, connection pooling via pgBouncer, row-level security for multi-tenant isolation,
+and pgcrypto for column-level encryption where needed. SQLCipher's at-rest encryption
+role would be covered by LUKS (already in place) + PostgreSQL's own encryption options.
+
+This is not urgent for the current single-user deployment, but it is a prerequisite for
+any multi-user or multi-instance scenario.
+
+### DB Abstraction Layer (Prerequisite for Migration)
+
+Before the database can be swapped, all DB operations need to go through a single
+translation layer — right now they are scattered across `store.py`, `topics.py`,
+`state.py`, `feedback.py`, `reminders.py`, and others, each writing raw SQL directly.
+Migrating to PostgreSQL with the codebase in this state would mean touching every file.
+
+The plan:
+
+1. **Define a repository interface per domain** — e.g. `MessageRepository`,
+   `FactRepository`, `ReminderRepository`, `WindStateRepository`. Each exposes
+   named methods (`get_due_reminders()`, `store_message()`, etc.), no raw SQL outside
+   these files.
+2. **Implement SQLite/SQLCipher backend** behind that interface — drop-in replacement
+   for the current code, same behaviour, just reorganised.
+3. **Add PostgreSQL backend** behind the same interface — at that point the rest of the
+   codebase is untouched.
+4. **Switch via config** — `JOI_DB_BACKEND=sqlite` (default) or `postgres`, connection
+   string injected at startup.
+
+This is a significant refactor but a clean one: no logic changes, just boundary drawing.
+The current code is consistent enough that the extraction is mechanical rather than creative.
+
+**When to do it:** before the first multi-user deployment, or before any serious load
+testing. Not now.
+
+---
+
 ## Communication Platform Decision (Future Consideration)
 
 The decision regarding the ultimate secure mobile communication platform will be made once the core Joi functionality is proven. The MVP will rely on the current Signal integration. Transitioning to a certified platform would involve replacing the `signal-cli` integration with the chosen vendor's secure gateway/SDK in the Mesh VM, likely exposing a similar internal API for Joi to interact with.
