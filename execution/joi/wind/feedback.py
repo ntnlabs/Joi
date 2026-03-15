@@ -6,6 +6,7 @@ cooldowns, and engagement history. All tracking is per-conversation.
 """
 
 import logging
+import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional
@@ -14,8 +15,11 @@ logger = logging.getLogger("joi.wind.feedback")
 
 # Default configuration
 DEFAULT_COOLDOWN_THRESHOLD = 0.7  # rejection_weight >= this triggers cooldown
-DEFAULT_COOLDOWN_DAYS = 7  # Days to cooldown a topic family
-DEFAULT_DECAY_RATE = 0.05  # 5% decay per day for rejection weight
+DEFAULT_COOLDOWN_DAYS = 9   # Days to cooldown a topic family (center of jitter window)
+DEFAULT_DECAY_RATE = 0.05   # 5% decay per day for rejection weight
+DEFAULT_INTEREST_DECAY_RATE = 0.02  # 2% decay per day for interest_weight
+DEFAULT_COOLDOWN_JITTER_DAYS = 2    # ±N days random jitter on cooldown duration
+DEFAULT_UNDERTAKER_THRESHOLD = 2.0  # rejection_weight to auto-promote to undertaker
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -50,6 +54,7 @@ class TopicFeedback:
     last_positive_at: Optional[datetime] = None
     last_negative_at: Optional[datetime] = None
     cooldown_until: Optional[datetime] = None
+    undertaker: bool = False  # Phase 4b: permanently blocked family
     updated_at: Optional[datetime] = None
 
 
@@ -70,6 +75,9 @@ class TopicFeedbackManager:
         cooldown_threshold: float = DEFAULT_COOLDOWN_THRESHOLD,
         cooldown_days: int = DEFAULT_COOLDOWN_DAYS,
         decay_rate: float = DEFAULT_DECAY_RATE,
+        interest_decay_rate: float = DEFAULT_INTEREST_DECAY_RATE,
+        cooldown_jitter_days: int = DEFAULT_COOLDOWN_JITTER_DAYS,
+        undertaker_threshold: float = DEFAULT_UNDERTAKER_THRESHOLD,
     ):
         """
         Initialize TopicFeedbackManager.
@@ -77,13 +85,19 @@ class TopicFeedbackManager:
         Args:
             db_connection_factory: Callable that returns a database connection
             cooldown_threshold: Rejection weight that triggers cooldown
-            cooldown_days: Days to cooldown a topic family
+            cooldown_days: Center of cooldown window in days (actual = days ± jitter)
             decay_rate: Daily decay rate for rejection weight (0.05 = 5%)
+            interest_decay_rate: Daily decay rate for interest_weight (0.02 = 2%)
+            cooldown_jitter_days: Random ±N days applied to cooldown duration
+            undertaker_threshold: rejection_weight at which family is auto-promoted to undertaker
         """
         self._connect = db_connection_factory
         self._cooldown_threshold = cooldown_threshold
         self._cooldown_days = cooldown_days
         self._decay_rate = decay_rate
+        self._interest_decay_rate = interest_decay_rate
+        self._cooldown_jitter_days = cooldown_jitter_days
+        self._undertaker_threshold = undertaker_threshold
 
     def get_feedback(
         self,
@@ -96,7 +110,7 @@ class TopicFeedbackManager:
             """
             SELECT id, conversation_id, topic_family, rejection_weight, interest_weight,
                    engagement_count, ignore_count, deflection_count,
-                   last_positive_at, last_negative_at, cooldown_until, updated_at
+                   last_positive_at, last_negative_at, cooldown_until, undertaker, updated_at
             FROM topic_feedback
             WHERE conversation_id = ? AND topic_family = ?
             """,
@@ -118,6 +132,7 @@ class TopicFeedbackManager:
             last_positive_at=_parse_datetime(row["last_positive_at"]),
             last_negative_at=_parse_datetime(row["last_negative_at"]),
             cooldown_until=_parse_datetime(row["cooldown_until"]),
+            undertaker=bool(row["undertaker"] or 0),
             updated_at=_parse_datetime(row["updated_at"]),
         )
 
@@ -268,25 +283,41 @@ class TopicFeedbackManager:
             return
 
         if feedback.rejection_weight >= self._cooldown_threshold:
-            cooldown_until = datetime.now() + timedelta(days=self._cooldown_days)
+            # Apply jitter to cooldown duration (anti-periodicity)
+            jitter = random.randint(-self._cooldown_jitter_days, self._cooldown_jitter_days)
+            actual_days = max(1, self._cooldown_days + jitter)
+            now = datetime.now()
+            cooldown_until = now + timedelta(days=actual_days)
+
+            # Check for undertaker promotion
+            promote_undertaker = feedback.rejection_weight >= self._undertaker_threshold
+
             conn = self._connect()
             conn.execute(
                 """
                 UPDATE topic_feedback
-                SET cooldown_until = ?, updated_at = ?
+                SET cooldown_until = ?, undertaker = ?, updated_at = ?
                 WHERE conversation_id = ? AND topic_family = ?
                 """,
-                (_format_datetime(cooldown_until), _format_datetime(datetime.now()),
-                 conversation_id, topic_family)
+                (_format_datetime(cooldown_until), 1 if promote_undertaker else (1 if feedback.undertaker else 0),
+                 _format_datetime(now), conversation_id, topic_family)
             )
             conn.commit()
 
-            logger.info("Topic family put in cooldown", extra={
-                "conversation_id": conversation_id,
-                "topic_family": topic_family,
-                "rejection_weight": feedback.rejection_weight,
-                "cooldown_until": cooldown_until.isoformat(),
-            })
+            if promote_undertaker:
+                logger.info("Topic family promoted to undertaker", extra={
+                    "conversation_id": conversation_id,
+                    "topic_family": topic_family,
+                    "rejection_weight": feedback.rejection_weight,
+                })
+            else:
+                logger.info("Topic family put in cooldown", extra={
+                    "conversation_id": conversation_id,
+                    "topic_family": topic_family,
+                    "rejection_weight": feedback.rejection_weight,
+                    "cooldown_days": actual_days,
+                    "cooldown_until": cooldown_until.isoformat(),
+                })
 
     def is_in_cooldown(
         self,
@@ -299,7 +330,14 @@ class TopicFeedbackManager:
             now = datetime.now()
 
         feedback = self.get_feedback(conversation_id, topic_family)
-        if not feedback or not feedback.cooldown_until:
+        if not feedback:
+            return False
+
+        # Undertaker = permanently blocked
+        if feedback.undertaker:
+            return True
+
+        if not feedback.cooldown_until:
             return False
 
         return now < feedback.cooldown_until
@@ -319,6 +357,10 @@ class TopicFeedbackManager:
         if not feedback:
             return 0.0  # Neutral
 
+        # Undertaker = strongly negative (never surface)
+        if feedback.undertaker:
+            return -1.0
+
         # preference = interest - rejection
         return max(-1.0, min(1.0, feedback.interest_weight - feedback.rejection_weight))
 
@@ -336,37 +378,45 @@ class TopicFeedbackManager:
         conn = self._connect()
 
         # Decay formula: new_weight = old_weight * (1 - decay_rate)
-        decay_multiplier = 1.0 - self._decay_rate
+        rejection_multiplier = 1.0 - self._decay_rate
+        interest_multiplier = 1.0 - self._interest_decay_rate
 
         if conversation_id:
             cursor = conn.execute(
                 """
                 UPDATE topic_feedback
-                SET rejection_weight = rejection_weight * ?,
+                SET rejection_weight = CASE WHEN rejection_weight > 0
+                        THEN rejection_weight * ? ELSE rejection_weight END,
+                    interest_weight = CASE WHEN interest_weight > 0
+                        THEN interest_weight * ? ELSE interest_weight END,
                     updated_at = ?
-                WHERE conversation_id = ? AND rejection_weight > 0
+                WHERE conversation_id = ? AND (rejection_weight > 0 OR interest_weight > 0)
                 """,
-                (decay_multiplier, _format_datetime(now), conversation_id)
+                (rejection_multiplier, interest_multiplier, _format_datetime(now), conversation_id)
             )
         else:
             cursor = conn.execute(
                 """
                 UPDATE topic_feedback
-                SET rejection_weight = rejection_weight * ?,
+                SET rejection_weight = CASE WHEN rejection_weight > 0
+                        THEN rejection_weight * ? ELSE rejection_weight END,
+                    interest_weight = CASE WHEN interest_weight > 0
+                        THEN interest_weight * ? ELSE interest_weight END,
                     updated_at = ?
-                WHERE rejection_weight > 0
+                WHERE rejection_weight > 0 OR interest_weight > 0
                 """,
-                (decay_multiplier, _format_datetime(now))
+                (rejection_multiplier, interest_multiplier, _format_datetime(now))
             )
 
         conn.commit()
         count = cursor.rowcount
 
         if count > 0:
-            logger.info("Applied rejection weight decay", extra={
+            logger.info("Applied weight decay", extra={
                 "conversation_id": conversation_id or "all",
                 "records_updated": count,
-                "decay_rate": self._decay_rate,
+                "rejection_decay_rate": self._decay_rate,
+                "interest_decay_rate": self._interest_decay_rate,
             })
 
         return count
@@ -430,7 +480,7 @@ class TopicFeedbackManager:
             """
             SELECT id, conversation_id, topic_family, rejection_weight, interest_weight,
                    engagement_count, ignore_count, deflection_count,
-                   last_positive_at, last_negative_at, cooldown_until, updated_at
+                   last_positive_at, last_negative_at, cooldown_until, undertaker, updated_at
             FROM topic_feedback
             WHERE conversation_id = ?
             ORDER BY topic_family
@@ -451,6 +501,7 @@ class TopicFeedbackManager:
                 last_positive_at=_parse_datetime(row["last_positive_at"]),
                 last_negative_at=_parse_datetime(row["last_negative_at"]),
                 cooldown_until=_parse_datetime(row["cooldown_until"]),
+                undertaker=bool(row["undertaker"] or 0),
                 updated_at=_parse_datetime(row["updated_at"]),
             )
             for row in cursor.fetchall()
@@ -470,9 +521,9 @@ class TopicFeedbackManager:
             """
             SELECT id, conversation_id, topic_family, rejection_weight, interest_weight,
                    engagement_count, ignore_count, deflection_count,
-                   last_positive_at, last_negative_at, cooldown_until, updated_at
+                   last_positive_at, last_negative_at, cooldown_until, undertaker, updated_at
             FROM topic_feedback
-            WHERE conversation_id = ? AND cooldown_until > ?
+            WHERE conversation_id = ? AND (cooldown_until > ? OR undertaker = 1)
             ORDER BY cooldown_until
             """,
             (conversation_id, _format_datetime(now))
@@ -491,10 +542,101 @@ class TopicFeedbackManager:
                 last_positive_at=_parse_datetime(row["last_positive_at"]),
                 last_negative_at=_parse_datetime(row["last_negative_at"]),
                 cooldown_until=_parse_datetime(row["cooldown_until"]),
+                undertaker=bool(row["undertaker"] or 0),
                 updated_at=_parse_datetime(row["updated_at"]),
             )
             for row in cursor.fetchall()
         ]
+
+
+    def mark_undertaker(
+        self,
+        conversation_id: str,
+        topic_family: str,
+    ) -> None:
+        """
+        Permanently block a topic family (undertaker state).
+
+        Called by lifecycle action 'undertaker_promote' when a ghost probe is deflected.
+        """
+        now = datetime.now()
+        conn = self._connect()
+        conn.execute(
+            """
+            UPDATE topic_feedback
+            SET undertaker = 1, updated_at = ?
+            WHERE conversation_id = ? AND topic_family = ?
+            """,
+            (_format_datetime(now), conversation_id, topic_family)
+        )
+        conn.commit()
+
+        logger.info("Topic family marked as undertaker", extra={
+            "conversation_id": conversation_id,
+            "topic_family": topic_family,
+            "action": "undertaker_promote",
+        })
+
+    def record_user_initiated_mention(
+        self,
+        conversation_id: str,
+        topic_family: str,
+    ) -> None:
+        """
+        User spontaneously mentioned a cooled-down topic — weak positive signal.
+
+        Reduces rejection_weight by 0.1 and clears the cooldown, allowing Wind
+        to bring the topic back sooner. Does not affect undertaker families.
+        """
+        now = datetime.now()
+        conn = self._connect()
+        conn.execute(
+            """
+            UPDATE topic_feedback
+            SET rejection_weight = MAX(0.0, rejection_weight - 0.1),
+                cooldown_until = NULL,
+                updated_at = ?
+            WHERE conversation_id = ? AND topic_family = ?
+              AND cooldown_until IS NOT NULL AND undertaker = 0
+            """,
+            (_format_datetime(now), conversation_id, topic_family)
+        )
+        conn.commit()
+
+        logger.info("Cooldown break: user initiated mention", extra={
+            "conversation_id": conversation_id,
+            "topic_family": topic_family,
+            "action": "cooldown_break",
+        })
+
+    def get_deeply_rejected_families(
+        self,
+        conversation_id: str,
+        min_rejection: float,
+        max_rejection: float,
+        inactive_since: datetime,
+    ) -> List[str]:
+        """
+        Return topic families with rejection in (min, max) range and no activity since cutoff.
+
+        Used by ghost probe scheduler to find candidates for re-check after long silence.
+        Excludes undertaker families.
+        """
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT topic_family
+            FROM topic_feedback
+            WHERE conversation_id = ?
+              AND rejection_weight > ?
+              AND rejection_weight < ?
+              AND undertaker = 0
+              AND (last_negative_at IS NULL OR last_negative_at < ?)
+            ORDER BY rejection_weight DESC
+            """,
+            (conversation_id, min_rejection, max_rejection, _format_datetime(inactive_since))
+        )
+        return [row["topic_family"] for row in cursor.fetchall()]
 
 
 def normalize_topic_family(topic_type: str, title: str) -> str:
