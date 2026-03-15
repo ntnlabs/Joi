@@ -219,6 +219,37 @@ This layer includes a dedicated and budgeted effort for rigorous security testin
 
 ---
 
+## Value Anchors (Future Consideration)
+
+An LLM has no continuous existence between conversations — no genuine stake in the user's life,
+no memory that persists by default, no feeling of time passing. A real friend remembers that you
+mentioned your mom was stressed last week and asks about it without prompting. Joi has to
+deliberately compensate for this gap.
+
+**Value anchors** are a set of named things the user demonstrably cares about — relationships,
+ongoing projects, health goals, recurring stressors, things they've expressed pride or worry about.
+Joi should maintain this list as structured facts and actively reference them in Wind topics,
+responses, and reminders without being asked.
+
+The goal is not to fake emotion but to fake *continuity* — the sense that someone has been
+paying attention across time and actually gives a damn.
+
+**Possible implementation directions:**
+
+- A dedicated `anchors` fact category, distinct from general facts, with higher persistence weight
+  and explicit "last referenced" tracking so Joi doesn't over-use any single anchor
+- Wind topic generation that preferentially draws on anchors (e.g. "you mentioned the renovation
+  starts next month — how's the planning going?")
+- Anchor decay: anchors that haven't been referenced or reinforced in a long time fade unless
+  the user brings them up again, which mirrors how real relationships work
+- Anchor promotion: things the user mentions repeatedly or with strong sentiment get auto-elevated
+  to anchor status by the fact extractor
+
+**Why this matters for the endgame:** without value anchors, Joi is a responsive tool.
+With them, it starts to feel like a presence.
+
+---
+
 ## Communication Platform Decision (Future Consideration)
 
 The decision regarding the ultimate secure mobile communication platform will be made once the core Joi functionality is proven. The MVP will rely on the current Signal integration. Transitioning to a certified platform would involve replacing the `signal-cli` integration with the chosen vendor's secure gateway/SDK in the Mesh VM, likely exposing a similar internal API for Joi to interact with.
