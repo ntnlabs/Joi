@@ -8,7 +8,7 @@ They do not go through Wind's engagement tracking or lifecycle pipeline.
 import logging
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 logger = logging.getLogger("joi.reminders")
@@ -161,7 +161,7 @@ class ReminderManager:
         Returns reminders with status='pending' whose due_at is in the past.
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
         now_iso = now.isoformat()
         conn = self._connect()
         cursor = conn.execute(
