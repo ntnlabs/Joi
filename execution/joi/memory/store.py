@@ -128,7 +128,7 @@ class KnowledgeChunk:
 SCHEMA_VERSION = 11
 
 # SQL for creating tables
-SCHEMA_SQL = """
+SCHEMA_SQL = f"""
 -- Messages table (conversation history)
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -163,7 +163,7 @@ CREATE TABLE IF NOT EXISTS system_state (
 
 -- Initialize default system state if not exists
 INSERT OR IGNORE INTO system_state (key, value) VALUES
-    ('schema_version', '6'),
+    ('schema_version', '{SCHEMA_VERSION}'),
     ('last_interaction_at', '0'),
     ('last_impulse_check_at', '0'),
     ('messages_sent_this_hour', '0'),
@@ -845,7 +845,7 @@ class MemoryStore:
 
         # Define FTS tables and their corresponding main tables
         fts_configs = [
-            ("user_facts_fts", "user_facts", "active = 1"),
+            ("user_facts_fts", "user_facts", None),
             ("summaries_fts", "context_summaries", None),
             ("knowledge_fts", "knowledge_chunks", None),
         ]

@@ -618,19 +618,9 @@ class WindOrchestrator:
         actual_days = max(1, days + random.randint(-jitter, jitter))
         cooldown_until = now + timedelta(days=actual_days)
 
-        conn = self._db_connect()
-        # Ensure feedback entry exists
+        # Ensure feedback entry exists, then set cooldown via manager
         self.feedback_manager.get_or_create_feedback(conversation_id, topic_family)
-
-        conn.execute(
-            """
-            UPDATE topic_feedback
-            SET cooldown_until = ?, updated_at = ?
-            WHERE conversation_id = ? AND topic_family = ?
-            """,
-            (cooldown_until.isoformat(), now.isoformat(), conversation_id, topic_family)
-        )
-        conn.commit()
+        self.feedback_manager.set_cooldown(conversation_id, topic_family, cooldown_until)
 
         logger.info("Applied topic family cooldown", extra={
             "conversation_id": conversation_id,
@@ -641,21 +631,8 @@ class WindOrchestrator:
 
     def _defer_topic(self, topic_id: int, days: int) -> None:
         """Defer a topic's due_at by N days."""
-        now = datetime.now()
-        new_due = now + timedelta(days=days)
-
-        conn = self._db_connect()
-        conn.execute(
-            """
-            UPDATE pending_topics
-            SET due_at = ?, status = 'pending', outcome = NULL, outcome_at = NULL,
-                sent_message_id = NULL
-            WHERE id = ?
-            """,
-            (new_due.isoformat(), topic_id)
-        )
-        conn.commit()
-
+        new_due = datetime.now() + timedelta(days=days)
+        self.topic_manager.defer_topic(topic_id, new_due)
         logger.info("Deferred topic", extra={
             "topic_id": topic_id,
             "defer_days": days,
@@ -873,6 +850,10 @@ class WindOrchestrator:
             now = datetime.now()
 
         if not self.memory:
+            return
+
+        # Skip if a pending discovery topic already exists — avoid queue spam on every tick
+        if self.topic_manager.count_pending_by_type(conversation_id, "discovery") > 0:
             return
 
         from config.prompts import sanitize_scope
