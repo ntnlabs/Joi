@@ -3,9 +3,10 @@ Wind state management for per-conversation proactive messaging state.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, date
-from typing import Optional
+from typing import Dict, Optional
 
 logger = logging.getLogger("joi.wind.state")
 
@@ -67,6 +68,9 @@ class WindStateManager:
     Uses the wind_state table for persistence.
     """
 
+    # Seconds after last typing indicator before the "user is typing" window expires
+    TYPING_SUPPRESSION_WINDOW = 30.0
+
     def __init__(self, db_connection_factory):
         """
         Initialize WindStateManager.
@@ -76,6 +80,17 @@ class WindStateManager:
                                    (typically memory._connect)
         """
         self._connect = db_connection_factory
+        # In-memory typing timestamps: conversation_id -> epoch seconds of last STARTED event
+        self._typing_timestamps: Dict[str, float] = {}
+
+    def record_typing(self, conversation_id: str) -> None:
+        """Record that the user started typing in a conversation."""
+        self._typing_timestamps[conversation_id] = time.time()
+
+    def is_typing(self, conversation_id: str) -> bool:
+        """Return True if a typing indicator was seen within the suppression window."""
+        ts = self._typing_timestamps.get(conversation_id)
+        return ts is not None and time.time() - ts < self.TYPING_SUPPRESSION_WINDOW
 
     def get_state(self, conversation_id: str) -> Optional[WindState]:
         """
