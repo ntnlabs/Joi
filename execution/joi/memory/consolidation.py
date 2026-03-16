@@ -131,6 +131,17 @@ def validate_fact(fact: Any) -> bool:
     except (TypeError, ValueError):
         fact["confidence"] = 0.8
 
+    # ttl_hours must be a positive number if present
+    if "ttl_hours" in fact:
+        try:
+            ttl = float(fact["ttl_hours"])
+            if ttl <= 0:
+                del fact["ttl_hours"]
+            else:
+                fact["ttl_hours"] = ttl
+        except (TypeError, ValueError):
+            del fact["ttl_hours"]
+
     return True
 
 
@@ -250,6 +261,8 @@ class MemoryConsolidator:
         # Only extract facts from what the user said — Joi's outbound messages
         # (including [REMINDER] and [WIND] proactives) contain no user facts.
         inbound_messages = [m for m in messages if m.direction == "inbound"]
+        # detected_at = timestamp of the most recent inbound message in the batch
+        detected_at = max((m.timestamp for m in inbound_messages), default=None) if inbound_messages else None
         if not inbound_messages:
             return []
 
@@ -362,6 +375,8 @@ Corrected JSON:"""
                         source="inferred",
                         conversation_id=convo_id,
                         important=bool(is_important),
+                        ttl_hours=fact.get("ttl_hours"),
+                        detected_at=detected_at,
                     )
                     stored_count += 1
                 except (KeyError, TypeError, ValueError) as e:
