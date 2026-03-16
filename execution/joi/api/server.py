@@ -335,17 +335,24 @@ def _cleanup_send_caches():
     now = time.time()
     cutoff = now - _SEND_CACHE_CLEANUP_AGE
     with _send_locks_lock:
-        # Find stale conversation IDs and remove timestamps only
+        # Find stale conversation IDs and remove timestamps + idle locks
         stale_ids = [cid for cid, ts in _last_send_times.items() if ts < cutoff]
         for cid in stale_ids:
             _last_send_times.pop(cid, None)
-            # DON'T delete lock - it may still be held by another thread
+            # Remove the lock only if it is idle (non-blocking acquire succeeds)
+            lock = _send_locks.get(cid)
+            if lock is not None and lock.acquire(blocking=False):
+                lock.release()
+                _send_locks.pop(cid, None)
         # If still too large, remove oldest timestamp entries
         if len(_last_send_times) > _SEND_CACHE_MAX_SIZE:
             sorted_ids = sorted(_last_send_times.items(), key=lambda x: x[1])
             for cid, _ in sorted_ids[:len(sorted_ids) - _SEND_CACHE_MAX_SIZE]:
                 _last_send_times.pop(cid, None)
-                # DON'T delete lock - it may still be held
+                lock = _send_locks.get(cid)
+                if lock is not None and lock.acquire(blocking=False):
+                    lock.release()
+                    _send_locks.pop(cid, None)
 
 
 def _get_send_lock(convo_id: str) -> threading.Lock:
@@ -1192,8 +1199,8 @@ def shutdown_event():
 @app.get("/health")
 def health():
     msg_count = memory.get_message_count()
-    facts = memory.get_facts(min_confidence=0.0, limit=1000)
-    summaries = memory.get_recent_summaries(days=30, limit=100)
+    fact_count = memory.count_facts(min_confidence=0.0)
+    summary_count = memory.count_summaries(days=30)
     knowledge_sources = memory.get_knowledge_sources()
     knowledge_chunks = sum(s["chunk_count"] for s in knowledge_sources)
     config_sync = config_push_client.get_status() if config_push_client else {"enabled": False}
@@ -1211,8 +1218,8 @@ def health():
         },
         "memory": {
             "messages": msg_count,
-            "facts": len(facts),
-            "summaries": len(summaries),
+            "facts": fact_count,
+            "summaries": summary_count,
             "context_size": CONTEXT_MESSAGE_COUNT,
         },
         "rag": {
@@ -1256,6 +1263,11 @@ def _check_ingest_rate_limit(scope: str) -> bool:
 
         # Remove old timestamps
         _ingest_times[scope] = [t for t in _ingest_times[scope] if t > cutoff]
+
+        # Prune empty scope keys to prevent unbounded growth
+        if not _ingest_times[scope]:
+            del _ingest_times[scope]
+            return True
 
         # Check limit
         if len(_ingest_times[scope]) >= _INGEST_RATE_LIMIT:
