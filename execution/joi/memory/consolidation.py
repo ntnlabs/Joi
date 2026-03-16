@@ -63,7 +63,7 @@ def parse_facts_json(response: str) -> List[Dict[str, Any]]:
             pass
 
     # Try to find JSON array in response
-    match = re.search(r'\[[\s\S]*?\]', response)
+    match = re.search(r'\[[\s\S]*\]', response)
     if match:
         try:
             parsed = json.loads(match.group())
