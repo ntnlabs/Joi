@@ -860,6 +860,11 @@ class InboundResponse(BaseModel):
     error: Optional[str] = None
 
 
+class TypingInboundRequest(BaseModel):
+    sender: str
+    conversation_id: str
+
+
 class DocumentIngestRequest(BaseModel):
     filename: str
     content_base64: str
@@ -1259,6 +1264,19 @@ def _check_ingest_rate_limit(scope: str) -> bool:
         # Record this request
         _ingest_times[scope].append(now)
         return True
+
+
+@app.post("/api/v1/typing/inbound")
+def typing_inbound(req: TypingInboundRequest, request: Request):
+    """
+    Receive typing indicator from mesh. Updates Wind's per-conversation typing state
+    so proactive messages are suppressed while the user is actively composing.
+    Best-effort — always returns 200.
+    """
+    _require_hmac(request)
+    if wind_orchestrator:
+        wind_orchestrator.state_manager.record_typing(req.conversation_id)
+    return {"status": "ok"}
 
 
 @app.post("/api/v1/document/ingest", response_model=DocumentIngestResponse)

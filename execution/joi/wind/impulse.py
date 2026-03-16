@@ -189,6 +189,15 @@ class ImpulseEngine:
                 gate_details=gates,
             )
 
+        # Gate 9: User is not currently typing
+        gates["not_typing"] = not self.state_manager.is_typing(conversation_id)
+        if not gates["not_typing"]:
+            return GateResult(
+                passed=False,
+                failed_gate="user_typing",
+                gate_details=gates,
+            )
+
         # All gates passed
         return GateResult(passed=True, gate_details=gates)
 
