@@ -2137,17 +2137,18 @@ def _handle_wind_snooze_command(text: str, conversation_id: str) -> Optional[str
     if not _SNOOZE_TRIGGER.search(text):
         return None
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now()  # naive local, consistent with Wind's internal datetime convention
 
     if _DURATION_TONIGHT.search(text):
         import zoneinfo
         tz = zoneinfo.ZoneInfo(wind_orchestrator.config.timezone)
         end_hour = wind_orchestrator.config.quiet_hours_end
-        now_local = now.astimezone(tz)
-        candidate = now_local.replace(hour=end_hour, minute=0, second=0, microsecond=0)
-        if candidate <= now_local:
+        now_aware = datetime.now(tz)
+        candidate = now_aware.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+        if candidate <= now_aware:
             candidate += timedelta(days=1)
-        until = candidate.astimezone(timezone.utc)
+        # convert to server-local naive so Wind's naive comparisons work
+        until = candidate.astimezone().replace(tzinfo=None)
     elif m := _DURATION_HOURS.search(text):
         until = now + timedelta(hours=min(int(m.group(1)), 168))
     elif m := _DURATION_MINS.search(text):
