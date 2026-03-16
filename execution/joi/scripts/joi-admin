@@ -2232,6 +2232,10 @@ SELECT
         WHEN expires_at IS NULL THEN '-'
         WHEN expires_at <= strftime('%s','now')*1000 THEN datetime(expires_at/1000,'unixepoch') || ' [expired]'
         ELSE datetime(expires_at/1000,'unixepoch')
+    END,
+    CASE
+        WHEN detected_at IS NULL THEN '-'
+        ELSE datetime(detected_at/1000,'unixepoch')
     END
 FROM user_facts
 $where_clause
@@ -2244,16 +2248,16 @@ SQL
                 exit 0
             fi
 
-            printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %s\n" \
-                "ID" "conversation_id" "category" "key" "value" "source" "act" "imp" "expires_at"
-            printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %s\n" \
+            printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %-19s  %s\n" \
+                "ID" "conversation_id" "category" "key" "value" "source" "act" "imp" "expires_at" "detected_at"
+            printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %-19s  %s\n" \
                 "----" "--------------------" "------------" "--------------------" \
-                "----------------------------" "--------" "---" "---" "-------------------"
-            while IFS='|' read -r id conv cat key val src act imp exp; do
+                "----------------------------" "--------" "---" "---" "-------------------" "-------------------"
+            while IFS='|' read -r id conv cat key val src act imp exp det; do
                 [[ -z "$id" ]] && continue
-                printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %s\n" \
+                printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %-19s  %s\n" \
                     "$id" "${conv:0:20}" "${cat:0:12}" "${key:0:20}" "${val:0:28}" \
-                    "${src:0:8}" "$act" "$imp" "${exp:0:28}"
+                    "${src:0:8}" "$act" "$imp" "${exp:0:19}" "${det:0:19}"
             done <<< "$rows"
             ;;
 
