@@ -194,14 +194,8 @@ class ImpulseEngine:
 
     def _check_not_quiet_hours(self, now: datetime) -> bool:
         """Check if we're outside quiet hours."""
-        try:
-            tz = ZoneInfo(self.config.timezone)
-            local_now = now.astimezone(tz)
-        except Exception:
-            # Fallback to naive datetime hour
-            local_now = now
-
-        hour = local_now.hour
+        # Wind uses naive local datetimes throughout; now.hour is already local time.
+        hour = now.hour
         start = self.config.quiet_hours_start
         end = self.config.quiet_hours_end
 
