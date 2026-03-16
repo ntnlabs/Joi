@@ -96,6 +96,8 @@ class UserFact:
     learned_at: int
     last_verified_at: Optional[int]
     important: bool = False  # Core facts always included in context
+    expires_at: Optional[int] = None  # ms epoch; None = permanent
+    detected_at: Optional[int] = None  # ms epoch of source message; None = unknown
 
 
 @dataclass
@@ -123,7 +125,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # SQL for creating tables
 SCHEMA_SQL = """
@@ -187,6 +189,8 @@ CREATE TABLE IF NOT EXISTS user_facts (
     last_referenced_at INTEGER,
     last_verified_at INTEGER,
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+    expires_at INTEGER,
+    detected_at INTEGER,
     UNIQUE(conversation_id, category, key, active)
 );
 
@@ -194,6 +198,7 @@ CREATE INDEX IF NOT EXISTS idx_facts_category ON user_facts(category, active);
 CREATE INDEX IF NOT EXISTS idx_facts_active ON user_facts(active, confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_facts_conversation ON user_facts(conversation_id, active);
 CREATE INDEX IF NOT EXISTS idx_facts_important ON user_facts(important, active);
+CREATE INDEX IF NOT EXISTS idx_facts_expires ON user_facts(expires_at) WHERE expires_at IS NOT NULL;
 
 -- Context summaries table (compressed conversation history, per-conversation)
 CREATE TABLE IF NOT EXISTS context_summaries (
@@ -401,6 +406,33 @@ CREATE TRIGGER IF NOT EXISTS summaries_au AFTER UPDATE ON context_summaries BEGI
     INSERT INTO summaries_fts(rowid, summary_text) VALUES (new.id, new.summary_text);
 END;
 """
+
+
+def _fact_temporal_suffix(fact: "UserFact", now_ms: int) -> str:
+    """Return a parenthetical temporal annotation for a fact, or empty string if none."""
+    parts = []
+    if fact.detected_at:
+        age_ms = now_ms - fact.detected_at
+        age_h = age_ms / 3_600_000
+        if age_h < 1:
+            parts.append("mentioned just now")
+        elif age_h < 24:
+            parts.append(f"mentioned {int(age_h)}h ago")
+        elif age_h < 48:
+            parts.append("mentioned yesterday")
+        else:
+            parts.append(f"mentioned {int(age_h / 24)} days ago")
+    if fact.expires_at:
+        ttl_ms = fact.expires_at - now_ms
+        if ttl_ms <= 0:
+            parts.append("expired")
+        elif ttl_ms < 2 * 3_600_000:
+            parts.append(f"expires in {max(1, int(ttl_ms / 60_000))}m")
+        elif ttl_ms < 48 * 3_600_000:
+            parts.append(f"expires in {int(ttl_ms / 3_600_000)}h")
+        else:
+            parts.append(f"expires in {int(ttl_ms / 86_400_000)}d")
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 class MemoryStore:
@@ -767,6 +799,21 @@ class MemoryStore:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, timestamp DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_archived ON messages(archived, timestamp DESC)")
             conn.commit()
+
+        # Migration v11: Add expires_at and detected_at to user_facts
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='user_facts'")
+        if cursor.fetchone():
+            cursor = conn.execute("PRAGMA table_info(user_facts)")
+            fact_cols_v11 = {row[1] for row in cursor.fetchall()}
+            if "expires_at" not in fact_cols_v11:
+                logger.info("Migration v11: Adding 'expires_at' and 'detected_at' columns to user_facts")
+                conn.execute("ALTER TABLE user_facts ADD COLUMN expires_at INTEGER")
+                conn.execute("ALTER TABLE user_facts ADD COLUMN detected_at INTEGER")
+                conn.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_facts_expires ON user_facts(expires_at)"
+                    " WHERE expires_at IS NOT NULL"
+                )
+                conn.commit()
 
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
@@ -1213,6 +1260,8 @@ class MemoryStore:
         source_message_id: Optional[str] = None,
         conversation_id: str = "",
         important: bool = False,
+        ttl_hours: Optional[float] = None,
+        detected_at: Optional[int] = None,
     ) -> int:
         """
         Store or update a fact about the user for a specific conversation.
@@ -1221,10 +1270,13 @@ class MemoryStore:
 
         Args:
             important: If True, fact is always included in context regardless of query.
+            ttl_hours: Hours until fact expires. None = permanent.
+            detected_at: ms epoch of the source message. None = unknown.
         """
         conn = self._connect()
         now_ms = int(time.time() * 1000)
         important_int = 1 if important else 0
+        expires_at = int(now_ms + ttl_hours * 3_600_000) if ttl_hours else None
 
         # Try to update existing active fact for this conversation
         # Note: important flag can only be promoted (0->1), never demoted (1->0)
@@ -1234,10 +1286,12 @@ class MemoryStore:
             UPDATE user_facts
             SET value = ?, confidence = ?, source = ?, source_message_id = ?,
                 important = CASE WHEN important = 1 THEN 1 ELSE ? END,
-                last_verified_at = ?, updated_at = ?
+                last_verified_at = ?, updated_at = ?, expires_at = ?, detected_at = ?
             WHERE conversation_id = ? AND category = ? AND key = ? AND active = 1
             """,
-            (value, confidence, source, source_message_id, important_int, now_ms, now_ms, conversation_id, category, key)
+            (value, confidence, source, source_message_id, important_int,
+             now_ms, now_ms, expires_at, detected_at,
+             conversation_id, category, key)
         )
 
         if cursor.rowcount == 0:
@@ -1246,10 +1300,11 @@ class MemoryStore:
                 """
                 INSERT INTO user_facts (
                     conversation_id, category, key, value, confidence, source, source_message_id,
-                    important, learned_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    important, learned_at, updated_at, expires_at, detected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (conversation_id, category, key, value, confidence, source, source_message_id, important_int, now_ms, now_ms)
+                (conversation_id, category, key, value, confidence, source, source_message_id,
+                 important_int, now_ms, now_ms, expires_at, detected_at)
             )
 
         conn.commit()
@@ -1259,7 +1314,8 @@ class MemoryStore:
             "key": key,
             "value": value,
             "confidence": confidence,
-            "important": important
+            "important": important,
+            "ttl_hours": ttl_hours,
         })
         return cursor.lastrowid or 0
 
@@ -1269,13 +1325,30 @@ class MemoryStore:
         category: Optional[str] = None,
         conversation_id: Optional[str] = None,
         limit: int = 50,
+        as_of: Optional[int] = None,
+        include_expired: bool = False,
     ) -> List[UserFact]:
-        """Get active user facts for a conversation, optionally filtered by category."""
+        """Get active user facts for a conversation, optionally filtered by category.
+
+        Args:
+            as_of: ms epoch to query facts as of (default: now). Used for temporal
+                   queries like "what was my schedule yesterday?". Ignored when
+                   include_expired=True.
+            include_expired: If True, include expired facts (skips expiry filter).
+        """
         conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        as_of_ms = as_of if as_of is not None else now_ms
 
         # Build query based on filters
         conditions = ["active = 1", "confidence >= ?"]
         params: list = [min_confidence]
+
+        if not include_expired:
+            conditions.append("learned_at <= ?")
+            params.append(as_of_ms)
+            conditions.append("(expires_at IS NULL OR expires_at > ?)")
+            params.append(as_of_ms)
 
         if conversation_id is not None:
             conditions.append("conversation_id = ?")
@@ -1291,7 +1364,7 @@ class MemoryStore:
         cursor = conn.execute(
             f"""
             SELECT id, conversation_id, category, key, value, confidence, source,
-                   learned_at, last_verified_at, important
+                   learned_at, last_verified_at, important, expires_at, detected_at
             FROM user_facts
             WHERE {where_clause}
             ORDER BY important DESC, category, confidence DESC
@@ -1312,6 +1385,8 @@ class MemoryStore:
                 learned_at=row["learned_at"],
                 last_verified_at=row["last_verified_at"],
                 important=bool(row["important"]),
+                expires_at=row["expires_at"],
+                detected_at=row["detected_at"],
             )
             for row in cursor.fetchall()
         ]
@@ -1322,6 +1397,7 @@ class MemoryStore:
         if not facts:
             return ""
 
+        now_ms = int(time.time() * 1000)
         lines = ["Known facts about the user:"]
         by_category: Dict[str, List[UserFact]] = {}
         for fact in facts:
@@ -1330,7 +1406,8 @@ class MemoryStore:
         for category, cat_facts in sorted(by_category.items()):
             lines.append(f"\n{category.title()}:")
             for fact in cat_facts:
-                lines.append(f"  - {fact.key}: {fact.value}")
+                suffix = _fact_temporal_suffix(fact, now_ms)
+                lines.append(f"  - {fact.key}: {fact.value}{suffix}")
 
         return "\n".join(lines)
 
@@ -1377,25 +1454,29 @@ class MemoryStore:
         # Safe because \w+ guarantees no double quotes in words
         fts_query = " OR ".join(f'"{word}"' for word in words[:20])
 
+        now_ms = int(time.time() * 1000)
+
         try:
             # Build conversation filter
             if conversation_id is not None:
                 convo_filter = "AND f.conversation_id = ?"
-                params = [fts_query, min_confidence, conversation_id, limit]
+                params = [fts_query, min_confidence, now_ms, conversation_id, limit]
             else:
                 convo_filter = ""
-                params = [fts_query, min_confidence, limit]
+                params = [fts_query, min_confidence, now_ms, limit]
 
             cursor = conn.execute(
                 f"""
                 SELECT f.id, f.conversation_id, f.category, f.key, f.value,
                        f.confidence, f.source, f.learned_at, f.last_verified_at,
-                       f.important, bm25(user_facts_fts) as rank
+                       f.important, f.expires_at, f.detected_at,
+                       bm25(user_facts_fts) as rank
                 FROM user_facts f
                 JOIN user_facts_fts fts ON f.id = fts.rowid
                 WHERE user_facts_fts MATCH ?
                   AND f.active = 1
                   AND f.confidence >= ?
+                  AND (f.expires_at IS NULL OR f.expires_at > ?)
                   {convo_filter}
                 ORDER BY rank
                 LIMIT ?
@@ -1420,6 +1501,8 @@ class MemoryStore:
                 learned_at=row["learned_at"],
                 last_verified_at=row["last_verified_at"],
                 important=bool(row["important"]),
+                expires_at=row["expires_at"],
+                detected_at=row["detected_at"],
             )
             for row in rows
         ]
@@ -1429,12 +1512,26 @@ class MemoryStore:
         min_confidence: float = 0.5,
         conversation_id: Optional[str] = None,
         limit: int = 50,
+        as_of: Optional[int] = None,
+        include_expired: bool = False,
     ) -> List[UserFact]:
-        """Get all important (core) facts for a conversation."""
+        """Get all important (core) facts for a conversation.
+
+        Args:
+            as_of: ms epoch to query facts as of (default: now). Ignored when
+                   include_expired=True.
+            include_expired: If True, include expired facts (skips expiry filter).
+        """
         conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        as_of_ms = as_of if as_of is not None else now_ms
 
         conditions = ["active = 1", "important = 1", "confidence >= ?"]
         params: list = [min_confidence]
+
+        if not include_expired:
+            conditions.append("(expires_at IS NULL OR expires_at > ?)")
+            params.append(as_of_ms)
 
         if conversation_id is not None:
             conditions.append("conversation_id = ?")
@@ -1446,7 +1543,7 @@ class MemoryStore:
         cursor = conn.execute(
             f"""
             SELECT id, conversation_id, category, key, value, confidence, source,
-                   learned_at, last_verified_at, important
+                   learned_at, last_verified_at, important, expires_at, detected_at
             FROM user_facts
             WHERE {where_clause}
             ORDER BY category, confidence DESC
@@ -1467,6 +1564,8 @@ class MemoryStore:
                 learned_at=row["learned_at"],
                 last_verified_at=row["last_verified_at"],
                 important=bool(row["important"]),
+                expires_at=row["expires_at"],
+                detected_at=row["detected_at"],
             )
             for row in cursor.fetchall()
         ]
@@ -1517,6 +1616,7 @@ class MemoryStore:
         if not all_facts:
             return ""
 
+        now_ms = int(time.time() * 1000)
         lines = ["Relevant facts about the user:"]
         total_chars = 0
         max_chars = max_tokens * 4  # Rough estimate
@@ -1533,13 +1633,101 @@ class MemoryStore:
             total_chars += len(cat_line)
 
             for fact in cat_facts:
-                fact_line = f"  - {fact.key}: {fact.value}"
+                suffix = _fact_temporal_suffix(fact, now_ms)
+                fact_line = f"  - {fact.key}: {fact.value}{suffix}"
                 if total_chars + len(fact_line) > max_chars:
                     break
                 lines.append(fact_line)
                 total_chars += len(fact_line)
 
         return "\n".join(lines)
+
+    def reschedule_fact(
+        self,
+        fact_id: int,
+        ttl_hours: float,
+        new_value: Optional[str] = None,
+    ) -> bool:
+        """
+        Reschedule a temporal fact (including expired ones) to a new expiry time.
+
+        Optionally updates the value (e.g. "meeting moved to Monday 10am").
+        Works on expired facts — no active/expiry pre-check.
+
+        Returns True if fact was found and updated, False otherwise.
+        """
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        new_expires_at = int(now_ms + ttl_hours * 3_600_000)
+
+        if new_value is not None:
+            cursor = conn.execute(
+                "UPDATE user_facts SET expires_at = ?, value = ?, updated_at = ? WHERE id = ?",
+                (new_expires_at, new_value, now_ms, fact_id),
+            )
+        else:
+            cursor = conn.execute(
+                "UPDATE user_facts SET expires_at = ?, updated_at = ? WHERE id = ?",
+                (new_expires_at, now_ms, fact_id),
+            )
+        conn.commit()
+        return cursor.rowcount > 0
+
+    def get_recently_expired_facts(
+        self,
+        days: int = 7,
+        conversation_id: Optional[str] = None,
+        limit: int = 20,
+    ) -> List[UserFact]:
+        """Get facts that expired within the last N days."""
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        since_ms = now_ms - days * 24 * 3_600_000
+
+        conditions = [
+            "active = 1",
+            "expires_at IS NOT NULL",
+            "expires_at <= ?",
+            "expires_at > ?",
+        ]
+        params: list = [now_ms, since_ms]
+
+        if conversation_id is not None:
+            conditions.append("conversation_id = ?")
+            params.append(conversation_id)
+
+        params.append(limit)
+        where_clause = " AND ".join(conditions)
+
+        cursor = conn.execute(
+            f"""
+            SELECT id, conversation_id, category, key, value, confidence, source,
+                   learned_at, last_verified_at, important, expires_at, detected_at
+            FROM user_facts
+            WHERE {where_clause}
+            ORDER BY expires_at DESC
+            LIMIT ?
+            """,
+            params,
+        )
+
+        return [
+            UserFact(
+                id=row["id"],
+                conversation_id=row["conversation_id"] or "",
+                category=row["category"],
+                key=row["key"],
+                value=row["value"],
+                confidence=row["confidence"],
+                source=row["source"],
+                learned_at=row["learned_at"],
+                last_verified_at=row["last_verified_at"],
+                important=bool(row["important"]),
+                expires_at=row["expires_at"],
+                detected_at=row["detected_at"],
+            )
+            for row in cursor.fetchall()
+        ]
 
     # --- Context Summaries Operations ---
 

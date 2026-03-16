@@ -394,6 +394,13 @@ _DURATION_TONIGHT = re.compile(r"\btonight\b", re.I)
 _REMINDER_TRIGGER = re.compile(r"\bremind\s+me\b", re.I)
 _REMINDER_ABOUT   = re.compile(r"\b(?:to|about)\b", re.I)
 
+# --- Reschedule Intent Detection ---
+_RESCHEDULE_TRIGGER = re.compile(
+    r"\b(?:reschedule|postpone|push\s+back|delay|move\s+(?:the\s+)?(?:meeting|appointment|event|"
+    r"service|call|visit)|put\s+off)\b",
+    re.I,
+)
+
 
 # --- Group Membership Cache ---
 # (class extracted to group_cache.py)
@@ -1522,6 +1529,11 @@ def receive_message(msg: InboundMessage):
             )
             return InboundResponse(status="ok", message_id=msg.message_id)
 
+    # Reschedule intent: owner can reschedule temporal facts via natural language.
+    # Does not return early — Joi's normal LLM response confirms the action.
+    if msg.is_owner and msg.conversation.type == "direct" and user_text:
+        _handle_reschedule_intent(user_text, msg.conversation.id)
+
     # All facts (explicit and inferred) use conversation_id as key
     # - DMs: phone number (per-user scope)
     # - Groups: group_id (group scope, facts include person names in key)
@@ -1961,6 +1973,33 @@ def _build_enriched_prompt(
         if facts_text:
             parts.append("\n\n" + facts_text)
 
+    # Add recently-expired temporal facts (last 7 days) so Joi can answer
+    # "what was my schedule yesterday?" and similar temporal queries.
+    if conversation_id:
+        expired_facts = memory.get_recently_expired_facts(days=7, conversation_id=conversation_id)
+        if expired_facts:
+            now_ms_ctx = int(time.time() * 1000)
+            exp_lines = ["Past events (last 7 days):"]
+            for ef in expired_facts:
+                age_h = (now_ms_ctx - ef.expires_at) / 3_600_000  # type: ignore[operator]
+                if age_h < 24:
+                    when = f"expired {int(age_h)}h ago"
+                elif age_h < 48:
+                    when = "expired yesterday"
+                else:
+                    when = f"expired {int(age_h / 24)} days ago"
+                mentioned = ""
+                if ef.detected_at:
+                    det_h = (now_ms_ctx - ef.detected_at) / 3_600_000
+                    if det_h < 24:
+                        mentioned = f", mentioned {int(det_h)}h ago"
+                    elif det_h < 48:
+                        mentioned = ", mentioned yesterday"
+                    else:
+                        mentioned = f", mentioned {int(det_h / 24)} days ago"
+                exp_lines.append(f"  - {ef.key}: {ef.value} ({when}{mentioned})")
+            parts.append("\n\n" + "\n".join(exp_lines))
+
     # Add recent conversation summaries for this conversation (FTS search with fallback)
     if SUMMARIES_FTS_ENABLED and user_message:
         summaries_text = memory.get_summaries_as_context(
@@ -2202,6 +2241,75 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
         label = f"{total_minutes}m"
 
     return f"Reminder set for {label}."
+
+
+def _handle_reschedule_intent(text: str, conversation_id: str) -> bool:
+    """
+    Detect and handle a reschedule intent in a user message.
+
+    Uses a focused LLM extraction call to identify the fact to reschedule and
+    the new time (as ttl_hours). Updates the DB if a match is found.
+
+    Returns True if a fact was successfully rescheduled (DB updated), False otherwise.
+    Falls through on any error — the main LLM response handles clarification.
+    """
+    if not _RESCHEDULE_TRIGGER.search(text):
+        return False
+
+    # Get current temporal facts for this conversation
+    temporal_facts = [
+        f for f in memory.get_facts(conversation_id=conversation_id, include_expired=True)
+        if f.expires_at is not None
+    ]
+    if not temporal_facts:
+        return False
+
+    facts_list = "\n".join(
+        f"  - id={f.id} key={f.key}: {f.value}" for f in temporal_facts
+    )
+
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    extraction_prompt = f"""The user wants to reschedule something. Current time: {now_iso}
+
+User message: "{text}"
+
+Current temporal facts:
+{facts_list}
+
+If the user is rescheduling one of these facts, respond with JSON:
+{{"fact_id": <id>, "ttl_hours": <hours from now until new time>}}
+
+If the new time is ambiguous or no fact matches, respond with: null
+
+Only valid JSON or null. No explanation."""
+
+    try:
+        response = llm.generate(prompt=extraction_prompt)
+        if response.error or not response.text:
+            return False
+
+        raw = response.text.strip()
+        if raw.lower() == "null" or not raw.startswith("{"):
+            return False
+
+        import json as _json
+        data = _json.loads(raw)
+        fact_id = int(data["fact_id"])
+        ttl_hours = float(data["ttl_hours"])
+        if ttl_hours <= 0 or ttl_hours > 8760:  # cap at 1 year
+            return False
+
+        rescheduled = memory.reschedule_fact(fact_id=fact_id, ttl_hours=ttl_hours)
+        if rescheduled:
+            logger.info("Rescheduled fact via NLU", extra={
+                "fact_id": fact_id,
+                "ttl_hours": ttl_hours,
+                "action": "fact_rescheduled",
+            })
+        return rescheduled
+    except Exception as e:
+        logger.debug("Reschedule intent extraction failed", extra={"error": str(e)})
+        return False
 
 
 def _generate_reminder_message(

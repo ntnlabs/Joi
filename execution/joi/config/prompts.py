@@ -496,12 +496,13 @@ Each fact needs these fields:
 - "value": the fact AS A COMPLETE SENTENCE with the person's name
 - "confidence": 0.0-1.0
 - "core": true/false - set true for fundamental identity facts (name, profession, family, key medical conditions) that should always be remembered
+- "ttl_hours": (optional) hours until this fact becomes invalid. Set for temporary facts: appointments/plans for today → 36, this week → 168, "currently sick/on vacation" → 72. Omit for permanent facts (name, job, preferences).
 
 Include the person's name in value (never "User" or "the user").
 If truly no facts, return: []
 
 Example:
-[{{"category": "personal", "key": "name", "value": "Peter is the user's name", "confidence": 1.0, "core": true}}, {{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0, "core": true}}, {{"category": "preference", "key": "coffee", "value": "Peter prefers black coffee", "confidence": 0.8, "core": false}}]
+[{{"category": "personal", "key": "name", "value": "Peter is the user's name", "confidence": 1.0, "core": true}}, {{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0, "core": true}}, {{"category": "event", "key": "tire_service", "value": "Peter has a tire service appointment tomorrow", "confidence": 0.9, "core": false, "ttl_hours": 36}}]
 
 Conversation:
 {conversation}
