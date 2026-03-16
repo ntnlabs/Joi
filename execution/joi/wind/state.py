@@ -69,7 +69,7 @@ class WindStateManager:
     """
 
     # Seconds after last typing indicator before the "user is typing" window expires
-    TYPING_SUPPRESSION_WINDOW = 30.0
+    TYPING_SUPPRESSION_WINDOW = 60.0
 
     def __init__(self, db_connection_factory):
         """
