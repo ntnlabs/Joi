@@ -1267,13 +1267,12 @@ def _check_ingest_rate_limit(scope: str) -> bool:
 
 
 @app.post("/api/v1/typing/inbound")
-def typing_inbound(req: TypingInboundRequest, request: Request):
+def typing_inbound(req: TypingInboundRequest):
     """
     Receive typing indicator from mesh. Updates Wind's per-conversation typing state
     so proactive messages are suppressed while the user is actively composing.
     Best-effort — always returns 200.
     """
-    _require_hmac(request)
     if wind_orchestrator:
         wind_orchestrator.state_manager.record_typing(req.conversation_id)
     return {"status": "ok"}
