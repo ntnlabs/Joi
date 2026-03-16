@@ -40,11 +40,15 @@ class WindState:
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO format datetime string."""
+    """Parse ISO format datetime string, always returning a naive local datetime."""
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is not None:
+            # Convert aware datetime (e.g. old UTC-stored values) to naive local
+            dt = dt.astimezone().replace(tzinfo=None)
+        return dt
     except (ValueError, TypeError):
         return None
 
