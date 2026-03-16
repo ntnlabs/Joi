@@ -92,6 +92,13 @@ class WindStateManager:
         ts = self._typing_timestamps.get(conversation_id)
         return ts is not None and time.time() - ts < self.TYPING_SUPPRESSION_WINDOW
 
+    def prune_typing_timestamps(self) -> None:
+        """Remove expired typing timestamps to prevent unbounded growth."""
+        cutoff = time.time() - self.TYPING_SUPPRESSION_WINDOW
+        stale = [cid for cid, ts in self._typing_timestamps.items() if ts < cutoff]
+        for cid in stale:
+            del self._typing_timestamps[cid]
+
     def get_state(self, conversation_id: str) -> Optional[WindState]:
         """
         Get Wind state for a conversation.

@@ -6,9 +6,11 @@ See memory-store-schema.md for full schema documentation.
 
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -21,6 +23,15 @@ except ImportError:
     SQLCIPHER_AVAILABLE = False
 
 logger = logging.getLogger("joi.memory")
+
+# Common English stopwords filtered out from FTS queries
+_STOPWORDS = {
+    "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "it",
+    "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+    "of", "with", "by", "from", "is", "was", "are", "were", "be", "been",
+    "have", "has", "had", "do", "does", "did", "will", "would", "could",
+    "should", "may", "might", "that", "this", "what", "which", "who",
+}
 
 # Default path for encryption key file
 DEFAULT_KEY_FILE = "/etc/joi/memory.key"
@@ -1434,15 +1445,6 @@ class MemoryStore:
 
         # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
         # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
-        import re
-        _STOPWORDS = {
-            "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "it",
-            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-            "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
-            "have", "has", "had", "do", "does", "did", "will", "would", "could",
-            "should", "may", "might", "this", "that", "what", "how", "about",
-            "not", "no", "so", "if", "as", "up", "out", "can", "just", "than",
-        }
         all_words = re.findall(r'\w+', query)
         words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 2]
         if not words:
@@ -1818,6 +1820,31 @@ class MemoryStore:
             for row in cursor.fetchall()
         ]
 
+    def count_facts(self, min_confidence: float = 0.0) -> int:
+        """Return count of active facts without loading them."""
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        cursor = conn.execute(
+            """
+            SELECT COUNT(*) FROM user_facts
+            WHERE active = 1 AND confidence >= ?
+              AND learned_at <= ? AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            (min_confidence, now_ms, now_ms)
+        )
+        return cursor.fetchone()[0] or 0
+
+    def count_summaries(self, days: int = 30) -> int:
+        """Return count of recent summaries without loading them."""
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        cutoff_ms = now_ms - (days * 24 * 60 * 60 * 1000)
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM context_summaries WHERE period_end > ?",
+            (cutoff_ms,)
+        )
+        return cursor.fetchone()[0] or 0
+
     def get_summaries_as_text(self, days: int = 7, conversation_id: Optional[str] = None,
                               max_chars: int = 6000) -> str:
         """Get summaries formatted as text for LLM context."""
@@ -1829,7 +1856,6 @@ class MemoryStore:
         total_chars = 0
         for summary in reversed(summaries):  # Oldest first
             # Format timestamp as date
-            from datetime import datetime
             date_str = datetime.fromtimestamp(summary.period_end / 1000).strftime("%Y-%m-%d")
             block = f"\n[{date_str}]\n{summary.summary_text}"
             if total_chars + len(block) > max_chars:
@@ -1862,15 +1888,6 @@ class MemoryStore:
 
         # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
         # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
-        import re
-        _STOPWORDS = {
-            "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "it",
-            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-            "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
-            "have", "has", "had", "do", "does", "did", "will", "would", "could",
-            "should", "may", "might", "this", "that", "what", "how", "about",
-            "not", "no", "so", "if", "as", "up", "out", "can", "just", "than",
-        }
         all_words = re.findall(r'\w+', query)
         words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 2]
         if not words:
@@ -1956,9 +1973,6 @@ class MemoryStore:
         )
         if not summaries:
             return ""
-
-        # Import here to avoid circular dependency
-        from datetime import datetime
 
         lines = ["Relevant conversation history:"]
         total_chars = 0
@@ -2271,15 +2285,6 @@ class MemoryStore:
 
         # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
         # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
-        import re
-        _STOPWORDS = {
-            "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "it",
-            "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
-            "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
-            "have", "has", "had", "do", "does", "did", "will", "would", "could",
-            "should", "may", "might", "this", "that", "what", "how", "about",
-            "not", "no", "so", "if", "as", "up", "out", "can", "just", "than",
-        }
         all_words = re.findall(r'\w+', query)
         words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 2]
         if not words:
