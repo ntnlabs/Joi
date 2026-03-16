@@ -162,8 +162,8 @@ FACTS EXAMPLES:
     joi-admin facts list --conversation +123    # Facts for one conversation
     joi-admin facts list --category personal    # Facts in a category
     joi-admin facts show 42                     # Show full detail for fact #42
-    joi-admin facts add --conversation +123 --category personal --key birthday --value "February 28"
-    joi-admin facts add --conversation +123 --category personal --key birthday --value "February 28" --confidence 1.0
+    joi-admin facts add --conversation +123 --category personal --key birthday --value "January 1"
+    joi-admin facts add --conversation +123 --category personal --key job --value "engineer" --confidence 1.0
     joi-admin facts reschedule 42 --expires-in 168          # Reschedule to 1 week from now
     joi-admin facts reschedule 42 --expires-in 48 --value "Meeting moved to Monday 10am"
     joi-admin facts delete 42                   # Delete fact #42
