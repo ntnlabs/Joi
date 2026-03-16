@@ -1,8 +1,8 @@
 # Joi Memory Store Schema
 
 > SQLCipher database schema for Joi's memory and context.
-> Version: 1.0 (Draft)
-> Last updated: 2026-02-04
+> Schema version: 11
+> Last updated: 2026-03-16
 
 ## Overview
 
@@ -238,24 +238,28 @@ CREATE INDEX idx_pending_expires ON pending_topics(expires_at) WHERE status = 'p
 
 ### 5. user_facts (Known Facts About User)
 
-Long-term memory of things Joi has learned about the user.
+Long-term memory of things Joi has learned about the user. Supports both permanent
+facts (name, preferences) and time-limited ephemeral facts (appointments, temporary
+states) via `expires_at` + `detected_at` columns added in schema v11.
 
 ```sql
 CREATE TABLE user_facts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL DEFAULT '',  -- Per-conversation scope
 
     -- Fact
-    category TEXT NOT NULL,                -- 'personal', 'work', 'preference', 'routine', 'relationship'
-    key TEXT NOT NULL,                     -- Identifier (e.g., 'favorite_food', 'partner_name')
-    value TEXT NOT NULL,                   -- The fact
+    category TEXT NOT NULL,                -- 'personal', 'work', 'preference', 'event', etc.
+    key TEXT NOT NULL,                     -- Identifier (e.g., 'favorite_food', 'tire_service')
+    value TEXT NOT NULL,                   -- The fact as a complete sentence
     confidence REAL NOT NULL DEFAULT 0.8,  -- 0.0-1.0 confidence
 
     -- Source
     source TEXT NOT NULL,                  -- 'stated' (user said), 'inferred', 'configured'
-    source_message_id TEXT,                -- FK to message if from conversation
+    source_message_id TEXT,                -- Signal message ID if from conversation
 
     -- State
     active INTEGER NOT NULL DEFAULT 1,     -- 0 if superseded/deleted
+    important INTEGER NOT NULL DEFAULT 0,  -- 1 = always include in context (core facts)
 
     -- Timestamps
     learned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
@@ -263,15 +267,73 @@ CREATE TABLE user_facts (
     last_verified_at INTEGER,              -- When fact was last confirmed/re-stated
     updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
 
-    UNIQUE(category, key, active)          -- One active fact per category+key
+    -- Temporal lifetime (schema v11)
+    expires_at INTEGER,                    -- ms epoch when fact expires; NULL = permanent
+    detected_at INTEGER,                   -- ms epoch of the source message; NULL = unknown
+
+    UNIQUE(conversation_id, category, key, active)
 );
 
 CREATE INDEX idx_facts_category ON user_facts(category, active);
 CREATE INDEX idx_facts_active ON user_facts(active, confidence DESC);
-CREATE INDEX idx_facts_stale ON user_facts(source, last_verified_at) WHERE active = 1;
+CREATE INDEX idx_facts_conversation ON user_facts(conversation_id, active);
+CREATE INDEX idx_facts_important ON user_facts(important, active);
+CREATE INDEX idx_facts_expires ON user_facts(expires_at) WHERE expires_at IS NOT NULL;
 ```
 
-**Staleness Policy:**
+#### Temporal Facts (TTL)
+
+Facts extracted from time-sensitive messages carry an optional TTL. The LLM sets
+`ttl_hours` in its JSON output; `store_fact()` converts it to `expires_at`:
+
+```python
+expires_at = now_ms + ttl_hours * 3_600_000  if ttl_hours else None
+```
+
+**Typical TTLs:**
+
+| Scenario | `ttl_hours` |
+|----------|-------------|
+| Appointment today / tomorrow | 36 |
+| Event this week | 168 |
+| "Currently sick / on vacation" | 72 |
+| Name, job, preference | omit (permanent) |
+
+All fact-reading queries apply an expiry filter by default:
+```sql
+AND (expires_at IS NULL OR expires_at > :now_ms)
+```
+
+Pass `include_expired=True` to `get_facts()` / `get_important_facts()` to bypass the
+filter (used by `joi-admin facts list --include-expired` and the reschedule flow).
+
+#### `detected_at`
+
+`detected_at` records the timestamp of the source message that triggered extraction.
+Distinct from `learned_at` (DB write time) — useful for:
+
+- Temporal context in LLM prompt: "tire service — mentioned 2 days ago, expires in 8h"
+- Answering "what did I tell you last week?" queries
+- "Past events" block in system prompt for recently-expired facts
+
+Existing rows have `NULL` — safe, no behavior change.
+
+#### Rescheduling
+
+`reschedule_fact(fact_id, ttl_hours, new_value?)` extends a fact's `expires_at`
+(or creates it if the fact was permanent). Works on expired facts. Also callable via:
+
+```bash
+joi-admin facts reschedule <id> --expires-in 168
+joi-admin facts reschedule <id> --expires-in 48 --value "Meeting moved to Monday 10am"
+```
+
+Natural-language rescheduling is also supported in chat ("push the dentist appointment
+to next week"). `_handle_reschedule_intent()` in `server.py` uses a focused LLM
+extraction call to detect intent and call `reschedule_fact()` before the main response.
+
+#### Staleness Policy
+
 ```python
 # Run weekly as part of memory maintenance
 def decay_stale_facts():
@@ -296,15 +358,6 @@ def decay_stale_facts():
         SET active = 0, updated_at = ?
         WHERE active = 1 AND confidence < 0.3
     """, [now])
-
-# When user re-states a fact, refresh verification
-def verify_fact(category: str, key: str):
-    """Mark fact as recently verified (user re-stated it)."""
-    db.execute("""
-        UPDATE user_facts
-        SET last_verified_at = ?, confidence = MIN(1.0, confidence + 0.1)
-        WHERE category = ? AND key = ? AND active = 1
-    """, [current_time_ms(), category, key])
 ```
 
 **Staleness rules by source:**
@@ -315,9 +368,9 @@ def verify_fact(category: str, key: str):
 | `inferred` | Fast (90 days) | Joi guessed, may be wrong |
 
 **Examples**:
-- `('personal', 'name', 'Peter', 0.99, 'configured')` - never decays
-- `('preference', 'wake_time_weekday', '07:00', 0.7, 'inferred')` - decays if not verified
-- `('relationship', 'partner_name', 'Anna', 0.9, 'stated')` - slow decay
+- `('personal', 'name', 'Peter', 0.99, 'configured')` — never decays, no `expires_at`
+- `('event', 'tire_service', 'Peter has tire service tomorrow', 0.9, 'inferred')` — `expires_at` = +36h
+- `('preference', 'coffee', 'Peter prefers black coffee', 0.8, 'inferred')` — no TTL, decays by confidence
 
 ---
 
@@ -633,15 +686,28 @@ ORDER BY occurred_at DESC;
 ### Get User Facts (for LLM context)
 
 ```sql
+-- Active, non-expired facts only (default behavior)
 SELECT
     category,
     key,
     value,
-    confidence
+    confidence,
+    expires_at,
+    detected_at
 FROM user_facts
 WHERE active = 1
   AND confidence >= 0.5
-ORDER BY category, confidence DESC;
+  AND (expires_at IS NULL OR expires_at > strftime('%s','now') * 1000)
+ORDER BY important DESC, category, confidence DESC;
+
+-- Recently expired facts (last 7 days) for temporal context
+SELECT category, key, value, expires_at, detected_at
+FROM user_facts
+WHERE active = 1
+  AND expires_at IS NOT NULL
+  AND expires_at <= strftime('%s','now') * 1000
+  AND expires_at > strftime('%s','now') * 1000 - 604800000  -- 7 days
+ORDER BY expires_at DESC;
 ```
 
 ### Count Messages This Hour (rate limiting)
