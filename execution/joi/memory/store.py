@@ -1645,6 +1645,7 @@ class MemoryStore:
     def reschedule_fact(
         self,
         fact_id: int,
+        conversation_id: str,
         ttl_hours: float,
         new_value: Optional[str] = None,
     ) -> bool:
@@ -1662,13 +1663,13 @@ class MemoryStore:
 
         if new_value is not None:
             cursor = conn.execute(
-                "UPDATE user_facts SET expires_at = ?, value = ?, updated_at = ? WHERE id = ?",
-                (new_expires_at, new_value, now_ms, fact_id),
+                "UPDATE user_facts SET expires_at = ?, value = ?, updated_at = ? WHERE id = ? AND conversation_id = ?",
+                (new_expires_at, new_value, now_ms, fact_id, conversation_id),
             )
         else:
             cursor = conn.execute(
-                "UPDATE user_facts SET expires_at = ?, updated_at = ? WHERE id = ?",
-                (new_expires_at, now_ms, fact_id),
+                "UPDATE user_facts SET expires_at = ?, updated_at = ? WHERE id = ? AND conversation_id = ?",
+                (new_expires_at, now_ms, fact_id, conversation_id),
             )
         conn.commit()
         return cursor.rowcount > 0

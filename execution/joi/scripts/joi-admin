@@ -1827,10 +1827,10 @@ SQL
             fi
 
             db_exec "INSERT INTO wind_state (conversation_id, wind_snooze_until, updated_at)
-                     VALUES ('$conversation_escaped', datetime('now', '+${seconds} seconds'), datetime('now'))
+                     VALUES ('$conversation_escaped', datetime('now', 'localtime', '+${seconds} seconds'), datetime('now', 'localtime'))
                      ON CONFLICT(conversation_id) DO UPDATE SET
-                         wind_snooze_until = datetime('now', '+${seconds} seconds'),
-                         updated_at = datetime('now');"
+                         wind_snooze_until = datetime('now', 'localtime', '+${seconds} seconds'),
+                         updated_at = datetime('now', 'localtime');"
 
             local until_time
             until_time=$(db_scalar "SELECT wind_snooze_until FROM wind_state WHERE conversation_id = '$conversation_escaped';")
@@ -2265,6 +2265,7 @@ SQL
 
             local expires_in=""
             local new_value=""
+            local conversation_id=""
 
             while [[ $# -gt 0 ]]; do
                 case "$1" in
@@ -2278,8 +2279,13 @@ SQL
                         new_value="$2"
                         shift 2
                         ;;
+                    --conversation)
+                        [[ -z "${2:-}" ]] && error "--conversation requires a value"
+                        conversation_id="$2"
+                        shift 2
+                        ;;
                     --help|-h)
-                        echo "Usage: joi-admin facts reschedule <id> --expires-in HOURS [--value \"new text\"]"
+                        echo "Usage: joi-admin facts reschedule <id> --expires-in HOURS [--value \"new text\"] [--conversation ID]"
                         exit 0
                         ;;
                     *)
@@ -2295,8 +2301,15 @@ SQL
                 error "--expires-in must be a positive number (hours)"
             fi
 
+            local conv_where=""
+            if [[ -n "$conversation_id" ]]; then
+                local conv_esc
+                conv_esc=$(sql_escape_literal "$conversation_id")
+                conv_where=" AND conversation_id = '$conv_esc'"
+            fi
+
             local exists
-            exists=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE id = $fact_id;")
+            exists=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE id = $fact_id${conv_where};")
             if [[ "${exists:-0}" == "0" ]]; then
                 echo "Fact #$fact_id not found."
                 exit 1
@@ -2315,10 +2328,10 @@ SQL
             if [[ -n "$new_value" ]]; then
                 local val_esc
                 val_esc=$(sql_escape_literal "$new_value")
-                db_exec "UPDATE user_facts SET expires_at = $new_expires_ms, value = '$val_esc', updated_at = $now_ms WHERE id = $fact_id;" > /dev/null
+                db_exec "UPDATE user_facts SET expires_at = $new_expires_ms, value = '$val_esc', updated_at = $now_ms WHERE id = $fact_id${conv_where};" > /dev/null
                 info "Rescheduled fact #$fact_id ($old_key) — value updated, expires in ${expires_in}h"
             else
-                db_exec "UPDATE user_facts SET expires_at = $new_expires_ms, updated_at = $now_ms WHERE id = $fact_id;" > /dev/null
+                db_exec "UPDATE user_facts SET expires_at = $new_expires_ms, updated_at = $now_ms WHERE id = $fact_id${conv_where};" > /dev/null
                 info "Rescheduled fact #$fact_id ($old_key) — expires in ${expires_in}h"
             fi
             ;;

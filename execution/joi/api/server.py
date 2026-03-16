@@ -1546,11 +1546,6 @@ def receive_message(msg: InboundMessage):
             )
             return InboundResponse(status="ok", message_id=msg.message_id)
 
-    # Reschedule intent: owner can reschedule temporal facts via natural language.
-    # Does not return early — Joi's normal LLM response confirms the action.
-    if msg.is_owner and msg.conversation.type == "direct" and user_text:
-        _handle_reschedule_intent(user_text, msg.conversation.id)
-
     # All facts (explicit and inferred) use conversation_id as key
     # - DMs: phone number (per-user scope)
     # - Groups: group_id (group scope, facts include person names in key)
@@ -1626,6 +1621,12 @@ def receive_message(msg: InboundMessage):
             )
             # Note: _detect_and_extract_fact already stores the fact, so for true deferred commit
             # we'd need to refactor it. For now, heartbeat extends timeout to reduce partial state.
+
+        # Reschedule intent: owner can reschedule temporal facts via natural language.
+        # Does not return early — Joi's normal LLM response confirms the action.
+        # Runs inside the queue so the LLM extraction call is serialized with other LLM work.
+        if msg.is_owner and msg.conversation.type == "direct" and user_text:
+            _handle_reschedule_intent(user_text, msg.conversation.id)
 
         # Get per-conversation context size (or use global default)
         custom_context = get_context_for_conversation(
@@ -2315,7 +2316,7 @@ Only valid JSON or null. No explanation."""
         if ttl_hours <= 0 or ttl_hours > 8760:  # cap at 1 year
             return False
 
-        rescheduled = memory.reschedule_fact(fact_id=fact_id, ttl_hours=ttl_hours)
+        rescheduled = memory.reschedule_fact(fact_id=fact_id, conversation_id=conversation_id, ttl_hours=ttl_hours)
         if rescheduled:
             logger.info("Rescheduled fact via NLU", extra={
                 "fact_id": fact_id,
