@@ -2140,8 +2140,7 @@ def _handle_wind_snooze_command(text: str, conversation_id: str) -> Optional[str
     now = datetime.now()  # naive local, consistent with Wind's internal datetime convention
 
     if _DURATION_TONIGHT.search(text):
-        import zoneinfo
-        tz = zoneinfo.ZoneInfo(wind_orchestrator.config.timezone)
+        tz = ZoneInfo(wind_orchestrator.config.timezone)
         end_hour = wind_orchestrator.config.quiet_hours_end
         now_aware = datetime.now(tz)
         candidate = now_aware.replace(hour=end_hour, minute=0, second=0, microsecond=0)
@@ -2190,8 +2189,7 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
     time_end = -1
 
     if m := _DURATION_TONIGHT.search(text):
-        import zoneinfo
-        tz = zoneinfo.ZoneInfo(TIME_AWARENESS_TIMEZONE)
+        tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
         now_local = now.astimezone(tz)
         # "Tonight" = 9pm local time
         candidate = now_local.replace(hour=21, minute=0, second=0, microsecond=0)

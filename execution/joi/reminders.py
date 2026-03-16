@@ -126,7 +126,7 @@ class ReminderManager:
         Returns:
             Reminder ID
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
         cursor = conn.execute(
             """
@@ -180,7 +180,7 @@ class ReminderManager:
 
     def mark_fired(self, reminder_id: int) -> None:
         """Mark a one-time reminder as fired. Sets status='fired', fired_at=now."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
         conn.execute(
             "UPDATE reminders SET status = 'fired', fired_at = ? WHERE id = ?",

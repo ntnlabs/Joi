@@ -227,8 +227,9 @@ class WindOrchestrator:
                 results.append((conversation_id, should_send, skip_reason, topic, score))
             except Exception as e:
                 logger.error(
-                    "Error checking impulse for %s: %s",
-                    conversation_id, e
+                    "Error checking impulse",
+                    extra={"conversation_id": conversation_id, "error": str(e)},
+                    exc_info=True,
                 )
                 results.append((conversation_id, False, f"error: {e}", None, 0.0))
 

@@ -435,8 +435,12 @@ class Scheduler:
             from reminders import parse_recurrence_interval
 
             due_reminders = self._reminder_manager.get_due()
+        except Exception as e:
+            logger.error("Scheduler: failed to fetch due reminders", extra={"error": str(e)}, exc_info=True)
+            return
 
-            for reminder in due_reminders:
+        for reminder in due_reminders:
+            try:
                 # Determine recurrence context for prompt
                 is_recurring = bool(reminder.recurrence)
 
@@ -512,8 +516,11 @@ class Scheduler:
                         "action": "reminder_send_fail",
                     })
 
-        except Exception as e:
-            logger.warning("Scheduler: reminder check failed", extra={"error": str(e)})
+            except Exception as e:
+                logger.error("Scheduler: reminder processing failed", extra={
+                    "reminder_id": reminder.id,
+                    "error": str(e),
+                }, exc_info=True)
 
     def _compact_before_wind(self, conversation_id: str) -> None:
         """Compact ALL context before Wind send for a fresh start."""

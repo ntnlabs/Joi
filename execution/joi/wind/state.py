@@ -144,6 +144,16 @@ class WindStateManager:
         # Now fetch the state (guaranteed to exist)
         return self.get_state(conversation_id)
 
+    _VALID_STATE_COLUMNS = frozenset({
+        "last_user_interaction_at", "last_outbound_at", "last_proactive_sent_at",
+        "last_impulse_check_at", "proactive_sent_today", "proactive_day_bucket",
+        "unanswered_proactive_count", "wind_snooze_until", "updated_at",
+        "threshold_offset", "accumulated_impulse",
+        "engagement_score", "total_proactives_sent", "total_engaged",
+        "total_ignored", "total_deflected", "last_engaged_at", "last_deflected_at",
+        "convo_gap_ema_seconds",
+    })
+
     def update_state(self, conversation_id: str, **updates) -> None:
         """
         Update Wind state fields for a conversation.
@@ -166,6 +176,8 @@ class WindStateManager:
         params = []
 
         for key, value in updates.items():
+            if key not in self._VALID_STATE_COLUMNS:
+                raise ValueError(f"Invalid wind_state column: {key!r}")
             set_clauses.append(f"{key} = ?")
             if isinstance(value, datetime):
                 params.append(_format_datetime(value))
@@ -444,12 +456,13 @@ class WindStateManager:
 
         # Build dynamic SQL for the update
         # EMA formula: new_score = (1 - alpha) * old_score + alpha * new_value
+        # counter_col and timestamp_col are validated by the if/elif block above.
         set_parts = [
             f"{counter_col} = COALESCE({counter_col}, 0) + 1",
-            f"engagement_score = (1.0 - {ema_alpha}) * COALESCE(engagement_score, 0.5) + {ema_alpha} * {ema_input}",
+            "engagement_score = ? * COALESCE(engagement_score, 0.5) + ? * ?",
             "updated_at = ?",
         ]
-        params = [_format_datetime(now)]
+        params = [1.0 - ema_alpha, ema_alpha, ema_input, _format_datetime(now)]
 
         if timestamp_col:
             set_parts.append(f"{timestamp_col} = ?")
