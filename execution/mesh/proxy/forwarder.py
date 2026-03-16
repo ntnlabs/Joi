@@ -289,6 +289,33 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
         })
 
 
+def forward_typing(sender: str, conversation_id: str) -> None:
+    """
+    Forward a typing indicator to Joi. Best-effort, fire-and-forget.
+
+    Called when Signal delivers a typingMessage with action=STARTED.
+    Joi uses this to suppress Wind proactive messages while the user is composing.
+    """
+    if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
+        return
+
+    url = f"{MESH_JOI_URL}/api/v1/typing/inbound"
+    payload = {"sender": sender, "conversation_id": conversation_id}
+    body = json.dumps(payload).encode("utf-8")
+
+    headers = {"Content-Type": "application/json"}
+    secret = _get_hmac_secret()
+    if secret:
+        hmac_headers = create_request_headers(body, secret)
+        headers.update(hmac_headers)
+
+    try:
+        client = _get_client()
+        client.post(url, content=body, headers=headers, timeout=3.0)
+    except Exception as e:
+        logger.debug("Typing forward failed (non-critical)", extra={"error": str(e)})
+
+
 def _forward_document_sync(
     url: str,
     filename: str,

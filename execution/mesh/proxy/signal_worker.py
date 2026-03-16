@@ -15,7 +15,7 @@ from logging_config import configure_logging
 
 # Configure structured logging early
 configure_logging()
-from forwarder import forward_to_joi, forward_document_to_joi, set_config_state, set_routing_state
+from forwarder import forward_to_joi, forward_document_to_joi, forward_typing, set_config_state, set_routing_state
 from hmac_auth import (
     InMemoryNonceStore,
     get_shared_secret,
@@ -1478,6 +1478,17 @@ def main() -> None:
                     # Check for delivery/read receipts first
                     if _handle_receipt_message(msg):
                         continue  # Receipt handled, no further processing needed
+
+                    # Forward typing indicators to Joi for Wind suppression (best-effort)
+                    envelope = msg.get("envelope", {})
+                    typing_msg = envelope.get("typingMessage")
+                    if isinstance(typing_msg, dict) and typing_msg.get("action") == "STARTED":
+                        sender = envelope.get("sourceNumber") or envelope.get("source") or ""
+                        if sender:
+                            group_id = typing_msg.get("groupId")
+                            convo_id = group_id if group_id else sender
+                            forward_typing(sender=sender, conversation_id=convo_id)
+                        continue
 
                     payload = _normalize_signal_message(msg, bot_account=_account, bot_uuid=_account_uuid)
                     if payload is None:
