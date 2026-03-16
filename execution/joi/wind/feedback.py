@@ -421,6 +421,25 @@ class TopicFeedbackManager:
 
         return count
 
+    def set_cooldown(
+        self,
+        conversation_id: str,
+        topic_family: str,
+        cooldown_until: datetime,
+    ) -> None:
+        """Set an explicit cooldown_until on a topic family."""
+        now = datetime.now()
+        conn = self._connect()
+        conn.execute(
+            """
+            UPDATE topic_feedback
+            SET cooldown_until = ?, updated_at = ?
+            WHERE conversation_id = ? AND topic_family = ?
+            """,
+            (_format_datetime(cooldown_until), _format_datetime(now), conversation_id, topic_family)
+        )
+        conn.commit()
+
     def clear_cooldown(
         self,
         conversation_id: str,

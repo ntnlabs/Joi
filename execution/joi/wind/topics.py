@@ -352,6 +352,22 @@ class TopicManager:
         )
         return cursor.fetchone()[0]
 
+    def count_pending_by_type(self, conversation_id: str, topic_type: str) -> int:
+        """Count pending topics of a specific type for a conversation."""
+        conn = self._connect()
+        now = datetime.now().isoformat()
+        cursor = conn.execute(
+            """
+            SELECT COUNT(*) FROM pending_topics
+            WHERE conversation_id = ?
+              AND topic_type = ?
+              AND status = ?
+              AND (expires_at IS NULL OR expires_at > ?)
+            """,
+            (conversation_id, topic_type, self.STATUS_PENDING, now)
+        )
+        return cursor.fetchone()[0]
+
     def delete_topic(self, topic_id: int) -> bool:
         """Delete a topic by ID. Returns True if deleted."""
         conn = self._connect()
@@ -479,6 +495,31 @@ class TopicManager:
             "due_after": due_after.isoformat() if due_after else None,
         })
         return True
+
+    def defer_topic(self, topic_id: int, due_at: datetime) -> bool:
+        """
+        Defer a topic to a new due_at time, preserving outcome data.
+
+        Unlike requeue_for_retry, this does not increment retry_count and
+        does not wipe outcome/outcome_at/sent_message_id.
+        Returns True if topic was found and updated.
+        """
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            UPDATE pending_topics
+            SET due_at = ?, status = ?
+            WHERE id = ?
+            """,
+            (_format_datetime(due_at), self.STATUS_PENDING, topic_id)
+        )
+        conn.commit()
+        if cursor.rowcount > 0:
+            logger.info("Deferred topic", extra={
+                "topic_id": topic_id,
+                "new_due": due_at.isoformat(),
+            })
+        return cursor.rowcount > 0
 
     def get_topics_awaiting_response(
         self,
