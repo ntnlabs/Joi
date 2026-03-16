@@ -259,6 +259,9 @@ class WindOrchestrator:
 
         logger.debug("Wind tick", extra={"timestamp": now.isoformat()})
 
+        # Prune expired typing timestamps to prevent unbounded growth
+        self.state_manager.prune_typing_timestamps()
+
         # Phase 4b: Generate ghost probes for deeply rejected families
         # Phase 4c: Generate special date reminders and spontaneous sharing topics
         for conversation_id in self.config.allowlist:

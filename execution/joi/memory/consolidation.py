@@ -17,7 +17,7 @@ import logging
 import re
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .store import MemoryStore, Message
 
@@ -173,8 +173,6 @@ def validate_summary(summary: str) -> tuple[bool, str]:
 
     return True, summary.strip()
 
-
-from typing import Callable
 
 ModelLookupFunc = Callable[[str], Optional[str]]
 
@@ -362,8 +360,7 @@ Corrected JSON:"""
                             fact_key = f"{first_word}_{fact['key']}"
 
                     # Check if fact is marked as core (important)
-                    # Must be strictly True (not string "true" or "false")
-                    is_important = fact.get("core") is True
+                    is_important = bool(fact.get("core"))
                     if is_important:
                         important_count += 1
 
