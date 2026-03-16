@@ -151,6 +151,7 @@ FACTS USAGE:
 FACTS SUBCOMMANDS:
     list [--conversation ID] [--category CAT] [--order-by id|date|category|key] [--include-expired]  List stored facts
     show <id>                                   Show full detail for one fact
+    add --conversation ID --category CAT --key KEY --value VALUE [--confidence 0.9]  Add a fact manually
     reschedule <id> --expires-in HOURS [--value "new text"]  Reschedule a temporal fact
     delete <id>                                 Delete a single fact by ID
     delete-all [--conversation ID]              Delete all facts (with confirmation)
@@ -161,6 +162,8 @@ FACTS EXAMPLES:
     joi-admin facts list --conversation +123    # Facts for one conversation
     joi-admin facts list --category personal    # Facts in a category
     joi-admin facts show 42                     # Show full detail for fact #42
+    joi-admin facts add --conversation +123 --category personal --key birthday --value "February 28"
+    joi-admin facts add --conversation +123 --category personal --key birthday --value "February 28" --confidence 1.0
     joi-admin facts reschedule 42 --expires-in 168          # Reschedule to 1 week from now
     joi-admin facts reschedule 42 --expires-in 48 --value "Meeting moved to Monday 10am"
     joi-admin facts delete 42                   # Delete fact #42
@@ -459,6 +462,50 @@ PY
     ); then
         error "Failed to delete facts via Python: ${py_err}"
     fi
+}
+
+# Add a fact via Python (uses store_fact() so FTS5 index stays in sync)
+# Env vars: JOI_FACT_CONV, JOI_FACT_CAT, JOI_FACT_KEY, JOI_FACT_VAL, JOI_FACT_CONF
+add_fact_with_python() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        error "python3 not available; cannot add facts."
+    fi
+
+    local py_err py_out
+    if ! py_out=$(PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+        JOI_MEMORY_DB="$MEMORY_DB" \
+        JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+        JOI_FACT_CONV="$JOI_FACT_CONV" \
+        JOI_FACT_CAT="$JOI_FACT_CAT" \
+        JOI_FACT_KEY="$JOI_FACT_KEY" \
+        JOI_FACT_VAL="$JOI_FACT_VAL" \
+        JOI_FACT_CONF="$JOI_FACT_CONF" \
+        python3 <<'PY' 2>&1
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr)
+    sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    fact_id = store.store_fact(
+        conversation_id=os.environ["JOI_FACT_CONV"],
+        category=os.environ["JOI_FACT_CAT"],
+        key=os.environ["JOI_FACT_KEY"],
+        value=os.environ["JOI_FACT_VAL"],
+        confidence=float(os.environ.get("JOI_FACT_CONF", "0.9")),
+        source="admin",
+    )
+    print(fact_id)
+except Exception as e:
+    print(f"add_failed: {e}", file=sys.stderr)
+    sys.exit(1)
+PY
+    ); then
+        error "Failed to add fact: ${py_out}"
+    fi
+    echo "$py_out"
 }
 
 # Purge user facts
@@ -2039,7 +2086,7 @@ cmd_facts() {
     fi
 
     local subcommand="${1:-}"
-    [[ -z "$subcommand" ]] && error "Usage: joi-admin facts <list|show|delete|delete-all> [OPTIONS]"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin facts <list|show|add|reschedule|delete|delete-all> [OPTIONS]"
     shift || true
 
     case "$subcommand" in
@@ -2353,8 +2400,41 @@ SQL
             info "Deleted $count fact(s)"
             ;;
 
+        add)
+            local conversation="" category="" key="" value="" confidence="0.9"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation) conversation="$2"; shift 2 ;;
+                    --category)     category="$2";     shift 2 ;;
+                    --key)          key="$2";           shift 2 ;;
+                    --value)        value="$2";         shift 2 ;;
+                    --confidence)   confidence="$2";   shift 2 ;;
+                    --help|-h)
+                        echo "Usage: joi-admin facts add --conversation ID --category CAT --key KEY --value VALUE [--confidence 0.9]"
+                        exit 0
+                        ;;
+                    *) error "Unknown option for 'facts add': $1" ;;
+                esac
+            done
+
+            [[ -z "$conversation" ]] && error "facts add requires --conversation"
+            [[ -z "$category" ]]     && error "facts add requires --category"
+            [[ -z "$key" ]]          && error "facts add requires --key"
+            [[ -z "$value" ]]        && error "facts add requires --value"
+
+            local new_id
+            new_id=$(JOI_FACT_CONV="$conversation" \
+                     JOI_FACT_CAT="$category" \
+                     JOI_FACT_KEY="$key" \
+                     JOI_FACT_VAL="$value" \
+                     JOI_FACT_CONF="$confidence" \
+                     add_fact_with_python)
+
+            info "Fact stored (id=$new_id): [$category] $key = $value (confidence=$confidence)"
+            ;;
+
         --help|-h)
-            echo "Usage: joi-admin facts <list|show|reschedule|delete|delete-all> [OPTIONS]"
+            echo "Usage: joi-admin facts <list|show|add|reschedule|delete|delete-all> [OPTIONS]"
             exit 0
             ;;
         *)
