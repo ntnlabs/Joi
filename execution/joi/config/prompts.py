@@ -478,15 +478,14 @@ def get_consolidation_model_for_conversation(conversation_id: str) -> Optional[s
 
 DEFAULT_FACT_EXTRACTION_PROMPT = """Extract facts worth remembering from this conversation.
 
-Look for ANY of these:
-- Personal info (name, age, location, profession, family)
-- Preferences (likes, dislikes, favorites)
-- Plans, goals, or intentions mentioned
-- Skills, hobbies, or interests
-- Health, routines, or habits
-- Opinions or beliefs expressed
-- Events or experiences shared
-- Technical setups or configurations discussed
+Extract facts about the PERSON (the human user), not about Joi or the AI.
+
+EXTRACT: persistent traits, preferences, routines, skills, relationships, upcoming plans/appointments.
+DO NOT EXTRACT:
+- Actions performed during this conversation ("NTN is speaking", "NTN sent a message", "NTN asked about X")
+- One-time things said in passing that reveal nothing lasting ("NTN invited someone to join them in a bath")
+- Information about Joi/the AI itself
+- Things that are obvious from context (the fact that someone is chatting is not a fact worth storing)
 
 IMPORTANT: Return ONLY a valid JSON array. No explanations, no markdown.
 
@@ -495,13 +494,20 @@ Each fact needs these fields:
 - "key": short identifier
 - "value": a short, direct factual statement. State what IS true, not what was said or revealed.
   Good: "NTN's birthday is February 28th"
+  Good: "NTN wakes up at 6:45 every morning"
   Bad:  "Joi reveals that NTN's birthday is February 28th"
-  Bad:  "user's impression of Joi's performance"
+  Bad:  "NTN is speaking" (conversational act, not a fact)
+  Bad:  "NTN invites someone to join them in bath" (one-time event, not a persistent fact)
 - "confidence": 0.0-1.0
 - "core": true/false - set true for permanent facts that should always be remembered:
   name, profession, family members, key medical conditions, birthdays, anniversaries.
   Transient states (tired, sick, mood) are never core.
-- "ttl_hours": (optional) hours until this fact becomes invalid. Set for temporary facts: appointments/plans for today → 36, this week → 168, "currently sick/on vacation" → 72, temporary mood/physical state → 48. Omit for permanent facts (name, job, birthday, preferences). Temporary emotional or physical states (tired, sad, sick, excited) always need a short TTL (24-48h) and should NOT be marked important.
+- "ttl_hours": (optional) hours until this fact becomes invalid.
+  Upcoming appointments/plans for today → 36, this week → 168.
+  "Currently sick/on vacation" → 72. Temporary mood/physical state → 48.
+  Omit for permanent facts (name, job, birthday, preferences, routines).
+  The "event" category ALWAYS requires ttl_hours unless it is a recurring routine.
+  Temporary emotional or physical states (tired, sad, sick, excited) always need ttl_hours and should NOT be marked important.
 
 Include the person's name in value (never "User" or "the user").
 If truly no facts, return: []
@@ -510,9 +516,10 @@ Examples:
 [
   {{"category": "personal", "key": "name", "value": "Peter is the user's name", "confidence": 1.0, "core": true}},
   {{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0, "core": true}},
+  {{"category": "routine", "key": "wake_up_time", "value": "NTN wakes up at 6:45 every morning", "confidence": 0.9, "core": false}},
   {{"category": "event", "key": "tire_service", "value": "Peter has a tire service appointment tomorrow", "confidence": 0.9, "core": false, "ttl_hours": 36}},
   {{"category": "personal", "key": "birthday", "value": "NTN's birthday is February 28th", "confidence": 1.0, "core": true}},
-  {{"category": "personal", "key": "current_mood", "value": "NTN is feeling exhausted", "confidence": 0.9, "core": false, "ttl_hours": 48}}
+  {{"category": "health", "key": "current_mood", "value": "NTN is feeling exhausted", "confidence": 0.9, "core": false, "ttl_hours": 48}}
 ]
 
 Conversation:
