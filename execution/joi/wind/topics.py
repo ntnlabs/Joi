@@ -187,21 +187,50 @@ class TopicManager:
         now = datetime.now()
         conn = self._connect()
 
-        # Check for duplicate by novelty_key
+        # Check for existing topic by novelty_key (any status)
         if novelty_key:
             cursor = conn.execute(
                 """
-                SELECT id FROM pending_topics
-                WHERE conversation_id = ? AND novelty_key = ? AND status = ?
+                SELECT id, status, priority FROM pending_topics
+                WHERE conversation_id = ? AND novelty_key = ?
+                ORDER BY created_at DESC LIMIT 1
                 """,
-                (conversation_id, novelty_key, self.STATUS_PENDING)
+                (conversation_id, novelty_key)
             )
-            if cursor.fetchone():
-                logger.debug(
-                    "Skipping duplicate topic: %s (novelty_key=%s)",
-                    title, novelty_key
-                )
-                return 0
+            row = cursor.fetchone()
+            if row:
+                existing_id, existing_status, existing_priority = row[0], row[1], row[2]
+                if existing_status in (self.STATUS_PENDING, self.STATUS_AWAITING_RESPONSE):
+                    # Already active — boost priority as re-trigger is an engagement signal
+                    new_priority = min(existing_priority + priority, 75)
+                    conn.execute(
+                        "UPDATE pending_topics SET priority = ? WHERE id = ?",
+                        (new_priority, existing_id)
+                    )
+                    conn.commit()
+                    logger.debug("Boosted active topic priority", extra={
+                        "topic_id": existing_id, "old_priority": existing_priority,
+                        "new_priority": new_priority, "novelty_key": novelty_key
+                    })
+                    return existing_id
+                elif existing_status == self.STATUS_DISMISSED:
+                    # Dismissed before — re-trigger is an engagement signal, revive with boost
+                    new_priority = min(existing_priority + priority, 75)
+                    conn.execute(
+                        """
+                        UPDATE pending_topics
+                        SET status = ?, priority = ?, outcome = NULL, outcome_at = NULL
+                        WHERE id = ?
+                        """,
+                        (self.STATUS_PENDING, new_priority, existing_id)
+                    )
+                    conn.commit()
+                    logger.info("Revived dismissed topic with priority boost", extra={
+                        "topic_id": existing_id, "old_priority": existing_priority,
+                        "new_priority": new_priority, "novelty_key": novelty_key
+                    })
+                    return existing_id
+                # STATUS_MENTIONED (engaged outcome) — topic already served, fall through to insert fresh
 
         cursor = conn.execute(
             """
