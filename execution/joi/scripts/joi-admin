@@ -55,6 +55,7 @@ COMMANDS:
     summaries   Read-only context summary inspection
     fts         Check and rebuild FTS (full-text search) indexes
     wind        Inspect and manage Wind proactive messaging state
+    nuke        Drop ALL tables in the memory database (irreversible)
 
 PURGE USAGE:
     joi-admin purge [FLAGS]
@@ -2087,6 +2088,89 @@ SQL
             info "  Deleted $count topics for '$conversation'"
             ;;
 
+        decision-log)
+            local conversation="" decision_filter="" limit="50"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation)
+                        [[ -z "${2:-}" ]] && error "--conversation requires a value"
+                        conversation="$2"; shift 2 ;;
+                    --decision)
+                        [[ -z "${2:-}" ]] && error "--decision requires a value"
+                        case "$2" in
+                            send|skip|shadow_logged) ;;
+                            *) error "--decision must be one of: send, skip, shadow_logged" ;;
+                        esac
+                        decision_filter="$2"; shift 2 ;;
+                    --limit)
+                        [[ -z "${2:-}" ]] && error "--limit requires a number"
+                        # Regex is the security gate for $limit interpolation into SQL
+                        [[ ! "$2" =~ ^[0-9]+$ ]] && error "--limit must be a positive integer"
+                        [[ "$2" -lt 1 || "$2" -gt 10000 ]] && error "--limit must be between 1 and 10000"
+                        limit="$2"; shift 2 ;;
+                    --help|-h)
+                        cat <<'HELP'
+Usage: joi-admin wind decision-log [--conversation ID] [--decision DECISION] [--limit N]
+Show recent Wind tick decisions.
+  --conversation ID   Filter by conversation
+  --decision VALUE    Filter by decision (send|skip|shadow_logged)
+  --limit N           Max rows (default: 50)
+HELP
+                        exit 0 ;;
+                    *) error "Unknown option for 'wind decision-log': $1" ;;
+                esac
+            done
+
+            local where_parts=()
+            if [[ -n "$conversation" ]]; then
+                local conversation_escaped
+                conversation_escaped=$(sql_escape_literal "$conversation")
+                where_parts+=("conversation_id = '$conversation_escaped'")
+            fi
+            if [[ -n "$decision_filter" ]]; then
+                local decision_escaped
+                decision_escaped=$(sql_escape_literal "$decision_filter")
+                where_parts+=("decision = '$decision_escaped'")
+            fi
+
+            local where_clause=""
+            if [[ ${#where_parts[@]} -gt 0 ]]; then
+                where_clause="WHERE $(IFS=' AND '; echo "${where_parts[*]}")"
+            fi
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT
+    timestamp,
+    conversation_id,
+    decision,
+    COALESCE(impulse_score, 0.0),
+    COALESCE(threshold, 0.0),
+    COALESCE(skip_reason, '-'),
+    COALESCE(selected_topic_id, '-')
+FROM wind_decision_log
+$where_clause
+ORDER BY timestamp DESC
+LIMIT $limit;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No decision log entries found."
+                exit 0
+            fi
+
+            printf "%-19s  %-28s  %-12s  %7s  %9s  %-22s  %s\n" \
+                "timestamp" "conversation_id" "decision" "score" "threshold" "skip_reason" "topic_id"
+            printf "%-19s  %-28s  %-12s  %7s  %9s  %-22s  %s\n" \
+                "---------" "---------------" "--------" "-----" "---------" "-----------" "--------"
+            while IFS='|' read -r ts conv_id decision score threshold skip_reason topic_id; do
+                [[ -z "${ts}" ]] && continue
+                printf "%-19s  %-28s  %-12s  %7.3f  %9.3f  %-22s  %s\n" \
+                    "$ts" "$conv_id" "$decision" "$score" "$threshold" "$skip_reason" "$topic_id"
+            done <<< "$rows"
+            ;;
+
         --help|-h)
             cat <<'HELP'
 Usage: joi-admin wind <subcommand> [OPTIONS]
@@ -2103,6 +2187,9 @@ Wind state subcommands:
   snooze            <conversation_id> <duration>     Pause Wind (e.g. 2h, 30m, 1d)
   snooze-clear      <conversation_id>                Clear Wind snooze
 
+Decision log:
+  decision-log  [--conversation ID] [--decision D] [--limit N]  Show recent tick decisions
+
 Topic subcommands:
   topic-list    [--conversation ID] [--status S] [--type T] [--limit N]
   topic-show    <id>
@@ -2111,6 +2198,9 @@ Topic subcommands:
   revive-topic  <id>                                 Reset topic back to pending
 
 Examples:
+  joi-admin wind decision-log
+  joi-admin wind decision-log --conversation +1234567890
+  joi-admin wind decision-log --decision skip --limit 20
   joi-admin wind topic-list --conversation +1234567890
   joi-admin wind topic-list --status pending --type discovery
   joi-admin wind topic-show 8
@@ -2954,7 +3044,101 @@ HELP
     esac
 }
 
-# Main entry point
+# Nuke command - drop all tables
+cmd_nuke() {
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+        cat <<'HELP'
+Usage: joi-admin nuke
+
+Drop ALL tables in the memory database. Cannot be undone.
+joi-api will recreate a fresh empty schema on next start.
+
+Tables dropped:
+  messages              Chat history (inbound + outbound)
+  user_facts            Long-term memory about the user
+  context_summaries     Compressed conversation history
+  knowledge_chunks      RAG knowledge base (ingested documents)
+  wind_state            Wind proactive messaging state per conversation
+  pending_topics        Wind topic queue
+  topic_feedback        Topic family preferences, cooldowns, undertaker
+  wind_decision_log     Wind tick decision audit log
+  reminders             User reminders
+  system_state          Internal operational key-value state
+  knowledge_fts         FTS index for knowledge_chunks
+  user_facts_fts        FTS index for user_facts
+  summaries_fts         FTS index for context_summaries
+  (and all associated FTS triggers)
+HELP
+        exit 0
+    fi
+
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    # Warn if joi-api is actively running — dropping tables under a live service
+    # can cause SQLite lock errors or application crashes.
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet joi 2>/dev/null; then
+        warn "joi service is currently running. Stop it before nuking to avoid lock errors."
+        warn "  sudo systemctl stop joi"
+        echo ""
+    fi
+
+    echo ""
+    echo "=== NUKE ==="
+    echo "This will DROP ALL TABLES in: $MEMORY_DB"
+    echo "All messages, facts, summaries, knowledge, Wind state and topics will be"
+    echo "permanently deleted. joi-api will recreate a fresh schema on next start."
+    echo ""
+
+    read -p "Delete ALL data? [y/N] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Aborted."
+        exit 1
+    fi
+
+    echo "Type \"nuke\" to confirm (anything else aborts):"
+    read -r NUKE_CONFIRM
+    if [[ "$NUKE_CONFIRM" != "nuke" ]]; then
+        echo "Aborted."
+        exit 1
+    fi
+
+    db_exec "$(cat <<'SQL'
+DROP TABLE IF EXISTS knowledge_fts;
+DROP TABLE IF EXISTS user_facts_fts;
+DROP TABLE IF EXISTS summaries_fts;
+DROP TRIGGER IF EXISTS knowledge_ai;
+DROP TRIGGER IF EXISTS knowledge_ad;
+DROP TRIGGER IF EXISTS knowledge_au;
+DROP TRIGGER IF EXISTS facts_ai;
+DROP TRIGGER IF EXISTS facts_ad;
+DROP TRIGGER IF EXISTS facts_au;
+DROP TRIGGER IF EXISTS summaries_ai;
+DROP TRIGGER IF EXISTS summaries_ad;
+DROP TRIGGER IF EXISTS summaries_au;
+DROP TABLE IF EXISTS messages;
+DROP TABLE IF EXISTS user_facts;
+DROP TABLE IF EXISTS context_summaries;
+DROP TABLE IF EXISTS knowledge_chunks;
+DROP TABLE IF EXISTS wind_state;
+DROP TABLE IF EXISTS pending_topics;
+DROP TABLE IF EXISTS topic_feedback;
+DROP TABLE IF EXISTS wind_decision_log;
+DROP TABLE IF EXISTS reminders;
+DROP TABLE IF EXISTS system_state;
+DELETE FROM sqlite_sequence;
+SQL
+)"
+
+    info "  Dropped all tables."
+
+    db_exec "VACUUM;"
+    info "  Vacuumed database."
+    info "  Done. Restart joi-api to recreate a fresh schema."
+}
+
 main() {
     if [[ $# -lt 1 ]]; then
         usage
@@ -2991,6 +3175,10 @@ main() {
         wind)
             check_root
             cmd_wind "$@"
+            ;;
+        nuke)
+            check_root
+            cmd_nuke "$@"
             ;;
         --help|-h)
             usage
