@@ -1311,7 +1311,7 @@ def ingest_document(req: DocumentIngestRequest):
     # Log with privacy mode redaction
     privacy_mode = policy_manager.is_privacy_mode()
     logger.info("Received document", extra={
-        "filename": "[redacted]" if privacy_mode else req.filename,
+        "doc_filename": "[redacted]" if privacy_mode else req.filename,
         "content_type": req.content_type,
         "scope": _redact_filename_pii(req.scope) if privacy_mode else req.scope,
         "sender_id": _redact_filename_pii(req.sender_id) if privacy_mode else req.sender_id,
@@ -1321,7 +1321,7 @@ def ingest_document(req: DocumentIngestRequest):
 
     # Validate filename (basic security check)
     if "/" in req.filename or "\\" in req.filename or ".." in req.filename:
-        logger.warning("Invalid filename rejected", extra={"filename": req.filename})
+        logger.warning("Invalid filename rejected", extra={"doc_filename": req.filename})
         return DocumentIngestResponse(
             status="error",
             error="invalid_filename",

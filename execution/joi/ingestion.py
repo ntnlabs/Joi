@@ -175,7 +175,7 @@ def ingest_file(
             scope=scope,
         )
 
-    logger.info("Ingested file", extra={"filename": filepath.name, "chunks": len(chunks), "scope": scope})
+    logger.info("Ingested file", extra={"doc_filename": filepath.name, "chunks": len(chunks), "scope": scope})
     return len(chunks)
 
 
@@ -210,7 +210,7 @@ def mark_done(filepath: Path, scope: str, done_dir: Path) -> None:
         # Touch marker, delete original
         dest.touch()
         filepath.unlink()
-        logger.debug("Marked file as done, deleted original", extra={"filename": filepath.name})
+        logger.debug("Marked file as done, deleted original", extra={"doc_filename": filepath.name})
 
 
 def process_pending(memory: MemoryStore) -> Tuple[int, int]:
