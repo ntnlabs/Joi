@@ -751,7 +751,7 @@ cmd_rag() {
     fi
 
     local subcommand="${1:-}"
-    [[ -z "$subcommand" ]] && usage
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin rag <list|show|scopes|stats|delete|rescope|orphans> [OPTIONS]"
     shift || true
 
     case "$subcommand" in
@@ -803,6 +803,47 @@ SQL
                 [[ -z "$scope" ]] && scope="(no scope)"
                 printf "%-40s  %-60s  %8s  %s\n" "$scope" "$source" "$chunks" "$last_updated"
             done <<< "$rows"
+            ;;
+
+        show)
+            local chunk_id=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --id)
+                        [[ -z "${2:-}" ]] && error "--id requires a value"
+                        [[ ! "$2" =~ ^[0-9]+$ ]] && error "--id must be a positive integer"
+                        chunk_id="$2"; shift 2 ;;
+                    --help|-h)
+                        echo "Usage: joi-admin rag show --id ID"
+                        echo ""
+                        echo "Show all fields for a single knowledge chunk."
+                        exit 0 ;;
+                    *) error "Unknown option for 'rag show': $1" ;;
+                esac
+            done
+            [[ -z "$chunk_id" ]] && error "rag show requires --id ID"
+
+            local exists
+            exists=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks WHERE id = $chunk_id;")
+            [[ "${exists:-0}" == "0" ]] && error "No knowledge chunk found with id $chunk_id"
+
+            echo ""
+            echo "=== KNOWLEDGE CHUNK #$chunk_id ==="
+            printf "  %-18s %s\n" "id:" "$(db_scalar "SELECT id FROM knowledge_chunks WHERE id = $chunk_id;")"
+            printf "  %-18s %s\n" "scope:" "$(db_scalar "SELECT COALESCE(scope,'(none)') FROM knowledge_chunks WHERE id = $chunk_id;")"
+            printf "  %-18s %s\n" "source:" "$(db_scalar "SELECT COALESCE(source,'') FROM knowledge_chunks WHERE id = $chunk_id;")"
+            printf "  %-18s %s\n" "title:" "$(db_scalar "SELECT COALESCE(title,'') FROM knowledge_chunks WHERE id = $chunk_id;")"
+            printf "  %-18s %s\n" "chunk_index:" "$(db_scalar "SELECT COALESCE(chunk_index,0) FROM knowledge_chunks WHERE id = $chunk_id;")"
+            printf "  %-18s %s\n" "created_at:" "$(db_scalar "SELECT datetime(created_at/1000,'unixepoch') FROM knowledge_chunks WHERE id = $chunk_id;")"
+            printf "  %-18s %s\n" "metadata_json:" "$(db_scalar "SELECT COALESCE(metadata_json,'-') FROM knowledge_chunks WHERE id = $chunk_id;")"
+            local content
+            content=$(db_scalar "SELECT COALESCE(content,'') FROM knowledge_chunks WHERE id = $chunk_id;")
+            if [[ -n "$content" ]]; then
+                echo ""
+                echo "  --- content ---"
+                echo "$content" | fold -s -w 72 | sed 's/^/  /'
+            fi
+            echo ""
             ;;
 
         scopes)
@@ -1027,7 +1068,24 @@ SQL
             ;;
 
         --help|-h)
-            usage
+            cat <<'HELP'
+Usage: joi-admin rag <subcommand> [OPTIONS]
+
+Subcommands:
+  list     [--scope SCOPE]                    List knowledge sources (grouped)
+  show     --id ID                            Show full content of a single chunk
+  scopes                                      List all scopes with chunk counts
+  stats                                       Overall RAG statistics
+  delete   --source SOURCE [--scope SCOPE]    Delete all chunks for a source
+  rescope  --from OLD_SCOPE --to NEW_SCOPE    Move chunks to a different scope
+  orphans                                     Find/fix chunks with no scope
+
+Examples:
+  joi-admin rag list
+  joi-admin rag show --id 42
+  joi-admin rag delete --source 'diary.txt' --scope +1234567890
+HELP
+            exit 0
             ;;
 
         *)
@@ -1042,7 +1100,7 @@ cmd_summaries() {
     fi
 
     local subcommand="${1:-}"
-    [[ -z "$subcommand" ]] && error "Usage: joi-admin summaries list [--conversation ID] [--limit N]"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin summaries <list|show|delete> [OPTIONS]"
     shift || true
 
     case "$subcommand" in
@@ -1400,11 +1458,12 @@ cmd_wind() {
     fi
 
     local subcommand="${1:-}"
-    [[ -z "$subcommand" ]] && error "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood> [OPTIONS]"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin wind <subcommand> [OPTIONS] -- use 'joi-admin wind --help' for subcommands"
     shift || true
 
     case "$subcommand" in
         show-windmood)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind show-windmood [conversation_id]"; exit 0; }
             local conversation="${1:-}"
 
             local where_clause=""
@@ -1441,6 +1500,7 @@ SQL
             ;;
 
         reset-windmood)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind reset-windmood [conversation_id]"; exit 0; }
             local conversation="${1:-}"
 
             local count
@@ -1564,6 +1624,7 @@ SQL
             ;;
 
         show-engagement)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind show-engagement [conversation_id]"; exit 0; }
             local conversation="${1:-}"
 
             local where_clause=""
@@ -1607,6 +1668,7 @@ SQL
             ;;
 
         show-feedback)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind show-feedback <conversation_id>"; exit 0; }
             local conversation="${1:-}"
             [[ -z "$conversation" ]] && error "show-feedback requires a conversation_id"
 
@@ -1658,6 +1720,7 @@ SQL
             ;;
 
         undertaker-clear)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind undertaker-clear <conversation_id> <family>"; exit 0; }
             local conversation="${1:-}"
             local family="${2:-}"
             [[ -z "$conversation" ]] && error "undertaker-clear requires a conversation_id"
@@ -1671,70 +1734,8 @@ SQL
             echo "Cleared undertaker flag for family '$family' in conversation '$conversation'."
             ;;
 
-        topic-history)
-            local conversation="${1:-}"
-            [[ -z "$conversation" ]] && error "topic-history requires a conversation_id"
-            shift || true
-
-            local limit="20"
-            while [[ $# -gt 0 ]]; do
-                case "$1" in
-                    --limit)
-                        [[ -z "${2:-}" ]] && error "--limit requires a number"
-                        [[ ! "$2" =~ ^[0-9]+$ ]] && error "--limit must be a positive integer"
-                        limit="$2"
-                        shift 2
-                        ;;
-                    --help|-h)
-                        echo "Usage: joi-admin wind topic-history <conversation_id> [--limit N]"
-                        exit 0
-                        ;;
-                    *)
-                        error "Unknown option for 'wind topic-history': $1"
-                        ;;
-                esac
-            done
-
-            local conversation_escaped
-            conversation_escaped=$(sql_escape_literal "$conversation")
-
-            local rows
-            rows=$(db_exec "$(cat <<SQL
-SELECT
-    id,
-    topic_type,
-    substr(title, 1, 30),
-    status,
-    COALESCE(outcome, '-'),
-    COALESCE(retry_count, 0),
-    COALESCE(created_at, ''),
-    COALESCE(mentioned_at, '')
-FROM pending_topics
-WHERE conversation_id = '$conversation_escaped'
-ORDER BY created_at DESC
-LIMIT $limit;
-SQL
-)" | awk 'NF && $0 != "ok"')
-
-            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
-                echo "No topics found for conversation '$conversation'."
-                exit 0
-            fi
-
-            echo "Topic history for: $conversation (limit $limit)"
-            echo ""
-            printf "%6s  %-12s  %-30s  %-12s  %-10s  %5s  %s\n" \
-                "id" "type" "title" "status" "outcome" "retry" "mentioned_at"
-            printf "%6s  %-12s  %-30s  %-12s  %-10s  %5s  %s\n" \
-                "--" "----" "-----" "------" "-------" "-----" "------------"
-            while IFS='|' read -r tid ttype title status outcome retry created mentioned; do
-                [[ -z "${tid}" ]] && continue
-                printf "%6d  %-12s  %-30s  %-12s  %-10s  %5d  %s\n" \
-                    "$tid" "$ttype" "$title" "$status" "$outcome" "$retry" "$mentioned"
-            done <<< "$rows"
-            ;;
-
         clear-cooldowns)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind clear-cooldowns <conversation_id>"; exit 0; }
             local conversation="${1:-}"
             [[ -z "$conversation" ]] && error "clear-cooldowns requires a conversation_id"
 
@@ -1770,6 +1771,7 @@ SQL
             ;;
 
         reset-engagement)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind reset-engagement [conversation_id]"; exit 0; }
             local conversation="${1:-}"
 
             local now
@@ -1793,9 +1795,10 @@ SQL
             ;;
 
         snooze)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind snooze <conversation_id> <duration>  (e.g. 2h, 30m, 1d)"; exit 0; }
             local conversation="${1:-}"
             local duration="${2:-}"
-            [[ -z "$conversation" ]] && error "snooze requires a conversation_id and duration (e.g. joi-admin wind snooze +123456789 2h)"
+            [[ -z "$conversation" ]] && error "snooze requires a conversation_id and duration (e.g. joi-admin wind snooze +1234567890 2h)"
             [[ -z "$duration" ]] && error "snooze requires a duration (e.g. 2h, 30m, 1d)"
 
             local conversation_escaped
@@ -1825,6 +1828,7 @@ SQL
             ;;
 
         snooze-clear)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind snooze-clear <conversation_id>"; exit 0; }
             local conversation="${1:-}"
             [[ -z "$conversation" ]] && error "snooze-clear requires a conversation_id"
 
@@ -1836,6 +1840,7 @@ SQL
             ;;
 
         revive-topic)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind revive-topic <id>"; exit 0; }
             local topic_id="${1:-}"
             [[ -z "$topic_id" ]] && error "revive-topic requires a topic id (e.g. joi-admin wind revive-topic 7)"
             [[ ! "$topic_id" =~ ^[0-9]+$ ]] && error "Topic id must be a number"
@@ -2103,7 +2108,6 @@ Topic subcommands:
   topic-show    <id>
   topic-delete  <id>
   topic-purge   --conversation ID
-  topic-history <conversation_id> [--limit N]        (legacy alias for topic-list)
   revive-topic  <id>                                 Reset topic back to pending
 
 Examples:
@@ -2587,10 +2591,22 @@ SQL
             local row
             row=$(db_exec "SELECT category, key, value FROM user_facts WHERE id = $fact_id;" \
                 | awk 'NF && $0 != "ok"' | head -1)
-            echo "Deleting fact #$fact_id: $row"
+
+            echo ""
+            echo "=== DELETE FACT ==="
+            printf "  ID:   %s\n" "$fact_id"
+            printf "  Fact: %s\n" "$row"
+            echo ""
+
+            read -p "Delete this fact? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
 
             delete_facts_with_python "id" "$fact_id"
-            info "Deleted fact #$fact_id"
+            info "  Deleted fact #$fact_id"
             ;;
 
         delete-all)
@@ -2698,7 +2714,7 @@ cmd_reminders() {
     fi
 
     local subcommand="${1:-}"
-    [[ -z "$subcommand" ]] && error "Usage: joi-admin reminders <list|clear> [OPTIONS]"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin reminders <list|show|delete|clear> [OPTIONS]"
     shift || true
 
     case "$subcommand" in
@@ -2789,6 +2805,73 @@ SQL
             done <<< "$rows"
             ;;
 
+        show)
+            local reminder_id="${1:-}"
+            if [[ -z "$reminder_id" || "$reminder_id" == "--help" || "$reminder_id" == "-h" ]]; then
+                echo "Usage: joi-admin reminders show <id>"
+                echo ""
+                echo "Show all fields for a single reminder."
+                exit 0
+            fi
+            [[ ! "$reminder_id" =~ ^[0-9]+$ ]] && error "Reminder id must be a number"
+
+            local exists
+            exists=$(db_scalar "SELECT COUNT(*) FROM reminders WHERE id = $reminder_id;")
+            [[ "${exists:-0}" == "0" ]] && error "No reminder found with id $reminder_id"
+
+            echo ""
+            echo "=== REMINDER #$reminder_id ==="
+            printf "  %-18s %s\n" "id:" "$(db_scalar "SELECT id FROM reminders WHERE id = $reminder_id;")"
+            printf "  %-18s %s\n" "conversation_id:" "$(db_scalar "SELECT COALESCE(conversation_id,'') FROM reminders WHERE id = $reminder_id;")"
+            printf "  %-18s %s\n" "title:" "$(db_scalar "SELECT COALESCE(title,'') FROM reminders WHERE id = $reminder_id;")"
+            printf "  %-18s %s\n" "due_at:" "$(db_scalar "SELECT COALESCE(due_at,'-') FROM reminders WHERE id = $reminder_id;")"
+            printf "  %-18s %s\n" "status:" "$(db_scalar "SELECT COALESCE(status,'-') FROM reminders WHERE id = $reminder_id;")"
+            printf "  %-18s %s\n" "recurrence:" "$(db_scalar "SELECT COALESCE(recurrence,'-') FROM reminders WHERE id = $reminder_id;")"
+            printf "  %-18s %s\n" "created_at:" "$(db_scalar "SELECT COALESCE(created_at,'-') FROM reminders WHERE id = $reminder_id;")"
+            printf "  %-18s %s\n" "fired_at:" "$(db_scalar "SELECT COALESCE(fired_at,'-') FROM reminders WHERE id = $reminder_id;")"
+            printf "  %-18s %s\n" "expires_at:" "$(db_scalar "SELECT COALESCE(expires_at,'-') FROM reminders WHERE id = $reminder_id;")"
+            printf "  %-18s %s\n" "snooze_count:" "$(db_scalar "SELECT COALESCE(snooze_count,0) FROM reminders WHERE id = $reminder_id;")"
+            echo ""
+            ;;
+
+        delete)
+            local reminder_id="${1:-}"
+            if [[ -z "$reminder_id" || "$reminder_id" == "--help" || "$reminder_id" == "-h" ]]; then
+                echo "Usage: joi-admin reminders delete <id>"
+                echo ""
+                echo "Delete a single reminder by ID (with confirmation)."
+                exit 0
+            fi
+            [[ ! "$reminder_id" =~ ^[0-9]+$ ]] && error "Reminder id must be a number"
+
+            local exists
+            exists=$(db_scalar "SELECT COUNT(*) FROM reminders WHERE id = $reminder_id;")
+            [[ "${exists:-0}" == "0" ]] && error "No reminder found with id $reminder_id"
+
+            local title due status
+            title=$(db_scalar "SELECT COALESCE(title,'') FROM reminders WHERE id = $reminder_id;")
+            due=$(db_scalar "SELECT COALESCE(due_at,'-') FROM reminders WHERE id = $reminder_id;")
+            status=$(db_scalar "SELECT COALESCE(status,'-') FROM reminders WHERE id = $reminder_id;")
+
+            echo ""
+            echo "=== DELETE REMINDER ==="
+            printf "  ID:     %s\n" "$reminder_id"
+            printf "  Title:  %s\n" "$title"
+            printf "  Due:    %s\n" "$due"
+            printf "  Status: %s\n" "$status"
+            echo ""
+
+            read -p "Delete this reminder? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            db_exec "DELETE FROM reminders WHERE id = $reminder_id;"
+            info "  Deleted reminder #$reminder_id"
+            ;;
+
         clear)
             local conversation=""
 
@@ -2848,7 +2931,21 @@ SQL
             ;;
 
         --help|-h)
-            echo "Usage: joi-admin reminders <list|clear> [OPTIONS]"
+            cat <<'HELP'
+Usage: joi-admin reminders <subcommand> [OPTIONS]
+
+Subcommands:
+  list    [--conversation ID] [--status STATUS] [--order-by id|date]
+  show    <id>
+  delete  <id>
+  clear   [--conversation ID]
+
+Examples:
+  joi-admin reminders list
+  joi-admin reminders show 3
+  joi-admin reminders delete 3
+  joi-admin reminders clear --conversation +1234567890
+HELP
             exit 0
             ;;
         *)
