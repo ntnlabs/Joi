@@ -195,15 +195,21 @@ WIND SUBCOMMANDS:
     show-engagement [conversation_id] Show engagement stats (score, sent/engaged/ignored/deflected)
     reset-engagement [conversation_id] Reset engagement score to 0.5 and clear counters
     show-feedback [conversation_id]   Show per-topic-family feedback (interest/rejection weights, undertaker status)
-    topic-history [conversation_id]   Show recent topics with outcomes
     clear-cooldowns <conversation_id> Clear all topic family cooldowns
     undertaker-clear <conv_id> <fam>  Remove undertaker flag from a topic family
+    snooze <conversation_id> <dur>    Pause Wind for a duration (e.g. 2h, 30m, 1d)
+    snooze-clear <conversation_id>    Clear Wind snooze
     revive-topic <id>                 Revive an expired/ignored topic back to pending
+    decision-log                      Show recent Wind tick decisions
+    topic-list                        List pending topics
+    topic-show <id>                   Show full detail for a topic
+    topic-delete <id>                 Delete a topic
+    topic-purge --conversation ID     Delete all topics for a conversation
 
 WIND OPTIONS:
     --offset VALUE        Set threshold_offset (-0.1 to 0.1)
     --accumulated VALUE   Set accumulated_impulse (>= 0)
-    --limit N             Limit results (for topic-history, default: 20)
+    --limit N             Limit results (default varies by subcommand)
 
 WIND EXAMPLES:
     joi-admin wind show-windmood                        # Show all conversations
@@ -217,11 +223,17 @@ WIND EXAMPLES:
     joi-admin wind reset-engagement                     # Reset all engagement to neutral
     joi-admin wind reset-engagement +123456789          # Reset specific conversation
     joi-admin wind show-feedback +123456789             # Show topic family feedback (incl. undertaker)
-    joi-admin wind topic-history +123456789             # Show recent topics
-    joi-admin wind topic-history +123456789 --limit 50  # Show more topics
     joi-admin wind clear-cooldowns +123456789           # Clear all cooldowns
     joi-admin wind undertaker-clear +123456789 health   # Remove undertaker block from 'health' family
+    joi-admin wind snooze +123456789 2h                 # Pause Wind for 2 hours
+    joi-admin wind snooze-clear +123456789              # Clear snooze
     joi-admin wind revive-topic 7                       # Revive topic #7 back to pending
+    joi-admin wind decision-log                         # Show recent tick decisions
+    joi-admin wind decision-log --conversation +123456789 --decision skip
+    joi-admin wind topic-list --conversation +123456789 # List topics
+    joi-admin wind topic-show 8                         # Show topic #8
+    joi-admin wind topic-delete 9                       # Delete topic #9
+    joi-admin wind topic-purge --conversation +123456789
 
 EOF
     exit 0
