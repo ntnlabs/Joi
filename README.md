@@ -39,7 +39,9 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Per-user and per-group system prompts
 - ✅ Reaction responses (contextual acknowledgments)
 - ✅ Response cooldown (5s DMs, 2s groups - configurable)
-- ✅ Wind proactive messaging (impulse loop with topic management)
+- ✅ Wind proactive messaging (phases 4a+4b+4c partial: impulse, engagement feedback, affinity/decay, special dates, spontaneous sharing)
+- ⏳ Wind phase 4c (remaining): emotional follow-up, unfinished threads, outcome curiosity, tension extraction, adaptive quiet hours
+- ⏳ Wind phase 4d: daily mood momentum, day-of-week personality, 30-day cycle
 
 ### Memory
 - ✅ Conversation context (configurable window)
