@@ -1866,8 +1866,253 @@ SQL
             info "Topic #$topic_id revived to pending"
             ;;
 
+        topic-list)
+            local conversation="" status_filter="" type_filter="" limit="20"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation)
+                        [[ -z "${2:-}" ]] && error "--conversation requires a value"
+                        conversation="$2"; shift 2 ;;
+                    --status)
+                        [[ -z "${2:-}" ]] && error "--status requires a value"
+                        status_filter="$2"; shift 2 ;;
+                    --type)
+                        [[ -z "${2:-}" ]] && error "--type requires a value"
+                        type_filter="$2"; shift 2 ;;
+                    --limit)
+                        [[ -z "${2:-}" ]] && error "--limit requires a number"
+                        [[ ! "$2" =~ ^[0-9]+$ ]] && error "--limit must be a positive integer"
+                        limit="$2"; shift 2 ;;
+                    --help|-h)
+                        echo "Usage: joi-admin wind topic-list [--conversation ID] [--status STATUS] [--type TYPE] [--limit N]"
+                        echo ""
+                        echo "List pending topics with optional filters."
+                        echo ""
+                        echo "Options:"
+                        echo "  --conversation ID   Filter by conversation id"
+                        echo "  --status STATUS     Filter by status (pending|mentioned|dismissed|awaiting_response)"
+                        echo "  --type TYPE         Filter by topic type (discovery|reminder|ghost|...)"
+                        echo "  --limit N           Max rows to return (default: 20)"
+                        exit 0 ;;
+                    *) error "Unknown option for 'wind topic-list': $1" ;;
+                esac
+            done
+
+            local where_parts=()
+            if [[ -n "$conversation" ]]; then
+                local conversation_escaped
+                conversation_escaped=$(sql_escape_literal "$conversation")
+                where_parts+=("conversation_id = '$conversation_escaped'")
+            fi
+            if [[ -n "$status_filter" ]]; then
+                local status_escaped
+                status_escaped=$(sql_escape_literal "$status_filter")
+                where_parts+=("status = '$status_escaped'")
+            fi
+            if [[ -n "$type_filter" ]]; then
+                local type_escaped
+                type_escaped=$(sql_escape_literal "$type_filter")
+                where_parts+=("topic_type = '$type_escaped'")
+            fi
+
+            local where_clause=""
+            if [[ ${#where_parts[@]} -gt 0 ]]; then
+                where_clause="WHERE $(IFS=' AND '; echo "${where_parts[*]}")"
+            fi
+
+            local rows
+            rows=$(db_exec "$(cat <<SQL
+SELECT
+    id,
+    topic_type,
+    substr(title, 1, 32),
+    status,
+    COALESCE(outcome, '-'),
+    COALESCE(retry_count, 0),
+    COALESCE(created_at, ''),
+    COALESCE(mentioned_at, '-')
+FROM pending_topics
+$where_clause
+ORDER BY created_at DESC
+LIMIT $limit;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No topics found."
+                exit 0
+            fi
+
+            printf "%6s  %-12s  %-32s  %-18s  %-10s  %5s  %s\n" \
+                "id" "type" "title" "status" "outcome" "retry" "mentioned_at"
+            printf "%6s  %-12s  %-32s  %-18s  %-10s  %5s  %s\n" \
+                "--" "----" "-----" "------" "-------" "-----" "------------"
+            while IFS='|' read -r tid ttype title status outcome retry created mentioned; do
+                [[ -z "${tid}" ]] && continue
+                printf "%6d  %-12s  %-32s  %-18s  %-10s  %5d  %s\n" \
+                    "$tid" "$ttype" "$title" "$status" "$outcome" "$retry" "$mentioned"
+            done <<< "$rows"
+            ;;
+
+        topic-show)
+            local topic_id="${1:-}"
+            if [[ -z "$topic_id" || "$topic_id" == "--help" || "$topic_id" == "-h" ]]; then
+                echo "Usage: joi-admin wind topic-show <id>"
+                echo ""
+                echo "Show all fields for a single topic."
+                exit 0
+            fi
+            [[ ! "$topic_id" =~ ^[0-9]+$ ]] && error "Topic id must be a number"
+
+            local exists
+            exists=$(db_scalar "SELECT COUNT(*) FROM pending_topics WHERE id = $topic_id;")
+            [[ "${exists:-0}" == "0" ]] && error "No topic found with id $topic_id"
+
+            echo ""
+            echo "=== TOPIC #$topic_id ==="
+            printf "  %-18s %s\n" "id:" "$(db_scalar "SELECT id FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "conversation_id:" "$(db_scalar "SELECT COALESCE(conversation_id,'') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "type:" "$(db_scalar "SELECT COALESCE(topic_type,'') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "title:" "$(db_scalar "SELECT COALESCE(title,'') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "status:" "$(db_scalar "SELECT COALESCE(status,'') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "outcome:" "$(db_scalar "SELECT COALESCE(outcome,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "priority:" "$(db_scalar "SELECT COALESCE(priority,0) FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "retry_count:" "$(db_scalar "SELECT COALESCE(retry_count,0) FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "created_at:" "$(db_scalar "SELECT COALESCE(created_at,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "expires_at:" "$(db_scalar "SELECT COALESCE(expires_at,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "due_at:" "$(db_scalar "SELECT COALESCE(due_at,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "mentioned_at:" "$(db_scalar "SELECT COALESCE(mentioned_at,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "outcome_at:" "$(db_scalar "SELECT COALESCE(outcome_at,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "novelty_key:" "$(db_scalar "SELECT COALESCE(novelty_key,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "source_event_id:" "$(db_scalar "SELECT COALESCE(source_event_id,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "message_id:" "$(db_scalar "SELECT COALESCE(message_id,'-') FROM pending_topics WHERE id = $topic_id;")"
+            local content
+            content=$(db_scalar "SELECT COALESCE(content,'') FROM pending_topics WHERE id = $topic_id;")
+            if [[ -n "$content" ]]; then
+                echo ""
+                echo "  --- content ---"
+                echo "$content" | fold -s -w 72 | sed 's/^/  /'
+            fi
+            echo ""
+            ;;
+
+        topic-delete)
+            local topic_id="${1:-}"
+            if [[ -z "$topic_id" || "$topic_id" == "--help" || "$topic_id" == "-h" ]]; then
+                echo "Usage: joi-admin wind topic-delete <id>"
+                echo ""
+                echo "Delete a single topic by ID (with confirmation)."
+                exit 0
+            fi
+            [[ ! "$topic_id" =~ ^[0-9]+$ ]] && error "Topic id must be a number"
+
+            local row
+            row=$(db_scalar "SELECT id || '|' || topic_type || '|' || status || '|' || COALESCE(title,'') FROM pending_topics WHERE id = $topic_id;")
+            [[ -z "$row" ]] && error "No topic found with id $topic_id"
+
+            local ttype cur_status title
+            ttype=$(echo "$row" | cut -d'|' -f2)
+            cur_status=$(echo "$row" | cut -d'|' -f3)
+            title=$(echo "$row" | cut -d'|' -f4)
+
+            echo ""
+            echo "=== DELETE TOPIC ==="
+            printf "  ID:     %s\n" "$topic_id"
+            printf "  Type:   %s\n" "$ttype"
+            printf "  Status: %s\n" "$cur_status"
+            printf "  Title:  %s\n" "$title"
+            echo ""
+
+            read -p "Delete this topic? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            db_exec "DELETE FROM pending_topics WHERE id = $topic_id;"
+            info "  Deleted topic #$topic_id"
+            ;;
+
+        topic-purge)
+            local conversation=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation)
+                        [[ -z "${2:-}" ]] && error "--conversation requires a value"
+                        conversation="$2"; shift 2 ;;
+                    --help|-h)
+                        echo "Usage: joi-admin wind topic-purge --conversation ID"
+                        echo ""
+                        echo "Delete all topics for a conversation (with confirmation)."
+                        echo ""
+                        echo "Options:"
+                        echo "  --conversation ID   Conversation id to purge topics for (required)"
+                        exit 0 ;;
+                    *) error "Unknown option for 'wind topic-purge': $1" ;;
+                esac
+            done
+            [[ -z "$conversation" ]] && error "topic-purge requires --conversation ID"
+
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+
+            local count
+            count=$(db_scalar "SELECT COUNT(*) FROM pending_topics WHERE conversation_id = '$conversation_escaped';")
+
+            if [[ "${count:-0}" == "0" ]]; then
+                echo "No topics found for conversation '$conversation'."
+                exit 0
+            fi
+
+            echo ""
+            echo "=== PURGE TOPICS ==="
+            printf "  Conversation: %s\n" "$conversation"
+            printf "  Topics:       %s\n" "$count"
+            echo ""
+
+            read -p "Delete all $count topics for this conversation? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            db_exec "DELETE FROM pending_topics WHERE conversation_id = '$conversation_escaped';"
+            info "  Deleted $count topics for '$conversation'"
+            ;;
+
         --help|-h)
-            echo "Usage: joi-admin wind <show-windmood|reset-windmood|set-windmood|show-engagement|reset-engagement|show-feedback|topic-history|clear-cooldowns|undertaker-clear|revive-topic> [OPTIONS]"
+            cat <<'HELP'
+Usage: joi-admin wind <subcommand> [OPTIONS]
+
+Wind state subcommands:
+  show-windmood     [conversation_id]                Show WindMood state
+  reset-windmood    <conversation_id>                Reset WindMood to defaults
+  set-windmood      <conversation_id> [--offset N] [--impulse N]  Set WindMood values
+  show-engagement   [conversation_id]                Show engagement metrics
+  reset-engagement  [conversation_id]                Reset engagement counters
+  show-feedback     <conversation_id>                Show topic family feedback
+  undertaker-clear  <conversation_id> <family>       Remove undertaker flag
+  clear-cooldowns   <conversation_id>                Clear all cooldown timers
+  snooze            <conversation_id> <duration>     Pause Wind (e.g. 2h, 30m, 1d)
+  snooze-clear      <conversation_id>                Clear Wind snooze
+
+Topic subcommands:
+  topic-list    [--conversation ID] [--status S] [--type T] [--limit N]
+  topic-show    <id>
+  topic-delete  <id>
+  topic-purge   --conversation ID
+  topic-history <conversation_id> [--limit N]        (legacy alias for topic-list)
+  revive-topic  <id>                                 Reset topic back to pending
+
+Examples:
+  joi-admin wind topic-list --conversation +1234567890
+  joi-admin wind topic-list --status pending --type discovery
+  joi-admin wind topic-show 8
+  joi-admin wind topic-delete 9
+  joi-admin wind topic-purge --conversation +1234567890
+HELP
             exit 0
             ;;
 
