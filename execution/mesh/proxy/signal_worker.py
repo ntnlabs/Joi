@@ -1158,7 +1158,7 @@ def _process_attachments(
         scope = conversation_id  # group_id for groups, sender phone for DMs
 
         logger.info("Processing document", extra={
-            "filename": filename,
+            "doc_filename": filename,
             "size_bytes": len(content),
             "scope": _redact_pii(scope, "group" if conversation_type == "group" else "phone"),
             "action": "document_process"
@@ -1175,9 +1175,9 @@ def _process_attachments(
                 sender_id=sender_id,
             )
             if not success:
-                logger.warning("Document forward to Joi returned failure", extra={"filename": filename})
+                logger.warning("Document forward to Joi returned failure", extra={"doc_filename": filename})
                 continue
-            logger.info("Document forwarded to Joi", extra={"filename": filename, "action": "document_forward"})
+            logger.info("Document forwarded to Joi", extra={"doc_filename": filename, "action": "document_forward"})
         except Exception as e:
             logger.error("Failed to forward document to Joi", extra={"error": str(e)})
             attachment_path.unlink(missing_ok=True)
