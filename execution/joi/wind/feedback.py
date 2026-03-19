@@ -628,6 +628,42 @@ class TopicFeedbackManager:
             "action": "cooldown_break",
         })
 
+    def get_undertaker_families(self, conversation_id: str) -> List[str]:
+        """Return all topic families with undertaker=True for a conversation."""
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT topic_family FROM topic_feedback
+            WHERE conversation_id = ? AND undertaker = 1
+            ORDER BY topic_family
+            """,
+            (conversation_id,),
+        )
+        return [row["topic_family"] for row in cursor.fetchall()]
+
+    def restore_from_undertaker(self, conversation_id: str, topic_family: str) -> None:
+        """
+        Remove undertaker flag and reset rejection weight.
+
+        Called by lifecycle action 'restore_undertaker' when a poke topic is engaged.
+        """
+        now = datetime.now()
+        conn = self._connect()
+        conn.execute(
+            """
+            UPDATE topic_feedback
+            SET undertaker = 0, rejection_weight = 0.0, cooldown_until = NULL, updated_at = ?
+            WHERE conversation_id = ? AND topic_family = ?
+            """,
+            (_format_datetime(now), conversation_id, topic_family),
+        )
+        conn.commit()
+        logger.info("Topic family restored from undertaker", extra={
+            "conversation_id": conversation_id,
+            "topic_family": topic_family,
+            "action": "restore_undertaker",
+        })
+
     def get_deeply_rejected_families(
         self,
         conversation_id: str,

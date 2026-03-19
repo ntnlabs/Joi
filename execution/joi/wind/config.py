@@ -62,6 +62,9 @@ class WindConfig:
     ghost_probe_days: int = 60          # Days of silence before ghost probe fires
     ghost_probe_priority: int = 20      # Very low priority — surfaces only when nothing else pending
 
+    # Undertaker poke: autonomous challenge of blocked families (0 = disabled)
+    undertaker_poke_days: int = 30
+
     # Curiosity mining: max pending tension/discovery topics before mining is skipped
     max_pending_mined_topics: int = 1   # Raise to 3+ for faster testing
 
@@ -112,6 +115,7 @@ class WindConfig:
             undertaker_threshold=data.get("undertaker_threshold", 2.0),
             ghost_probe_days=data.get("ghost_probe_days", 60),
             ghost_probe_priority=data.get("ghost_probe_priority", 20),
+            undertaker_poke_days=data.get("undertaker_poke_days", 30),
             max_pending_mined_topics=data.get("max_pending_mined_topics", 1),
             threshold_drift_min=data.get("threshold_drift_min", -0.1),
             threshold_drift_max=data.get("threshold_drift_max", 0.1),
@@ -153,6 +157,7 @@ class WindConfig:
             "undertaker_threshold": self.undertaker_threshold,
             "ghost_probe_days": self.ghost_probe_days,
             "ghost_probe_priority": self.ghost_probe_priority,
+            "undertaker_poke_days": self.undertaker_poke_days,
             "max_pending_mined_topics": self.max_pending_mined_topics,
             "threshold_drift_min": self.threshold_drift_min,
             "threshold_drift_max": self.threshold_drift_max,
