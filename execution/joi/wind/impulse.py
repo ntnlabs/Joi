@@ -227,17 +227,12 @@ class ImpulseEngine:
         return elapsed >= self.config.min_cooldown_minutes * 60
 
     def _check_daily_cap(self, state: Optional[WindState], now: datetime) -> bool:
-        """Check if daily cap is not exceeded."""
+        """Check if rolling 24h fire count is below cap."""
         if not state:
             return True
-
-        today_bucket = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
-
-        # Reset count if different day
-        if state.proactive_day_bucket != today_bucket:
-            return True
-
-        return state.proactive_sent_today < self.config.daily_cap
+        cutoff = now - timedelta(hours=24)
+        recent = [t for t in state.proactive_fire_times if t > cutoff]
+        return len(recent) < self.config.daily_cap
 
     def _check_silence(self, state: Optional[WindState], now: datetime) -> bool:
         """Check if sufficient silence since last user interaction.
@@ -414,12 +409,14 @@ class ImpulseEngine:
         topic_pressure = self.topic_manager.get_topic_pressure(conversation_id)
         factors["topic_pressure"] = topic_pressure * self.config.topic_pressure_weight
 
-        # Fatigue damper (negative, based on recent proactives)
+        # Fatigue damper (negative, based on recent proactives in rolling 24h window)
         fatigue_damper = 0.0
-        if state and state.proactive_sent_today > 0:
-            # More proactives today = more fatigue
-            fatigue_ratio = state.proactive_sent_today / self.config.daily_cap
-            fatigue_damper = -fatigue_ratio * self.config.fatigue_weight
+        if state and state.proactive_fire_times:
+            cutoff = now - timedelta(hours=24)
+            recent_count = len([t for t in state.proactive_fire_times if t > cutoff])
+            if recent_count > 0:
+                fatigue_ratio = recent_count / self.config.daily_cap
+                fatigue_damper = -fatigue_ratio * self.config.fatigue_weight
         factors["fatigue"] = fatigue_damper
 
         # Phase 4a: Engagement factor (boost/dampen based on engagement score)
