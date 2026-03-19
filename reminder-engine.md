@@ -29,8 +29,9 @@ cooldowns, and impulse thresholds — making reminders unreliable and mode-restr
 ```
 pending ──fires──► fired          (one-time: status='fired', fired_at=now)
         ──fires──► pending        (recurring: due_at += interval, fired_at=now, status stays pending)
-        ──snooze─► pending        (user says "snooze 1h": due_at=now+1h, snooze_count++)
+        ──snooze─► pending        (user says "remind me again in 1h": due_at=now+1h, snooze_count++)
         ──cancel─► cancelled
+fired   ──purge──► (deleted)      (after JOI_REMINDER_RETENTION_DAYS, default 180d)
 ```
 
 One-time reminders expire after 24 hours if unfired (configurable via `expires_at`).
@@ -115,8 +116,34 @@ Time expressions recognised (reused from Wind snooze):
 |------|------|
 | `execution/joi/reminders.py` | `ReminderManager` class + `Reminder` dataclass |
 | `execution/joi/memory/store.py` | `reminders` table in `SCHEMA_SQL` (v10) |
-| `execution/joi/api/scheduler.py` | `_check_reminders()` — fires due reminders |
-| `execution/joi/api/server.py` | `_handle_reminder_command()`, `_generate_reminder_message()` |
+| `execution/joi/api/scheduler.py` | `_check_reminders()` — fires due reminders; `_purge_old_reminders()` — daily cleanup |
+| `execution/joi/api/server.py` | `_handle_reminder_command()`, `_handle_reminder_snooze_command()`, `_generate_reminder_message()` |
+
+## Post-Fire Snooze
+
+After a reminder fires, the user can snooze it by replying with natural language:
+
+```
+remind me again in 30 minutes
+remind me again in 2h
+snooze
+later
+```
+
+Handled by `_handle_reminder_snooze_command()` in `server.py`. Guard: only triggers if a
+reminder fired within the last 2 hours — prevents stealing new reminder creation requests
+like "remind me in 1h". Default snooze (no duration specified): 1 hour.
+
+Confirmation: `Reminder snoozed for 30m. I'll remind you about "check the oven" then.`
+
+## Cleanup
+
+Terminal reminders (`fired`, `expired`, `cancelled`) are pruned daily by the scheduler.
+
+Retention controlled by `JOI_REMINDER_RETENTION_DAYS` in `/etc/default/joi-api`:
+- Default: `180` days
+- Set to `0` to keep forever (audit mode)
+- Pending reminders are never deleted
 
 ## Future / Out of Scope
 
@@ -125,5 +152,3 @@ Time expressions recognised (reused from Wind snooze):
 - **Group support**: currently DM only
 - **Advanced recurrence**: "every Monday", "first of the month"
 - **`at` time expressions**: "remind me at 3pm" (not yet parsed)
-- **Post-fire snooze**: "remind me again in 1h" after a reminder fires
-  (`ReminderManager.get_last_fired()` + `.snooze()` are implemented but not yet wired to inbound)
