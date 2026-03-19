@@ -1,0 +1,28 @@
+# Joi Curiosity Model - for tension mining (conversation thread analysis)
+#
+# USAGE:
+#   1. Build: docker exec joi-brain ollama create joi-curiosity -f /opt/Joi/execution/joi/ollama/Modelfile_curiosity
+#   2. Test:  docker exec -it joi-brain ollama run joi-curiosity "User: I might try rock climbing soon\nJoi: That sounds fun!\n\n{\"title\": \"Rock climbing plans\", \"summary\": \"User mentioned interest in trying rock climbing\", \"confidence\": 0.7}"
+#   3. Use:   Set JOI_CURIOSITY_MODEL=joi-curiosity in /etc/default/joi-api
+#
+# UPDATING:
+#   If you change this file, re-run step 1 to "rebake" the model.
+#   Changes don't apply until you recreate the model.
+
+FROM mannix/llama3.1-8b-abliterated
+
+# --- Parameters ---
+
+PARAMETER temperature 0.2
+PARAMETER top_p 0.4
+PARAMETER num_ctx 2048
+PARAMETER num_predict 250
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "<|end_of_text|>"
+PARAMETER repeat_penalty 1.2
+
+# --- System Prompt ---
+
+SYSTEM """
+You are a conversation analyst. Given recent chat messages, identify the single most promising unfinished thread worth following up on. Output only valid JSON, nothing else.
+"""
