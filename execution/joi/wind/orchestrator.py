@@ -943,15 +943,22 @@ class WindOrchestrator:
         if not self._llm_client or not self._curiosity_model:
             return
 
-        # Guard: skip if a pending tension/discovery topic already exists
-        if self.topic_manager.count_pending_by_type(conversation_id, "tension") > 0:
-            logger.info("Curiosity mining skipped: pending tension topic exists", extra={
+        # Guard: skip if pending tension+discovery topics >= cap
+        cap = self.config.max_pending_mined_topics
+        pending_tension = self.topic_manager.count_pending_by_type(conversation_id, "tension")
+        pending_discovery = self.topic_manager.count_pending_by_type(conversation_id, "discovery")
+        if pending_tension >= cap:
+            logger.info("Curiosity mining skipped: pending tension topics at cap", extra={
                 "conversation_id": conversation_id,
+                "pending": pending_tension,
+                "cap": cap,
             })
             return
-        if self.topic_manager.count_pending_by_type(conversation_id, "discovery") > 0:
-            logger.info("Curiosity mining skipped: pending discovery topic exists", extra={
+        if pending_discovery >= cap:
+            logger.info("Curiosity mining skipped: pending discovery topics at cap", extra={
                 "conversation_id": conversation_id,
+                "pending": pending_discovery,
+                "cap": cap,
             })
             return
 
