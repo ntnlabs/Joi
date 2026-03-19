@@ -50,13 +50,13 @@ Hard gates run first. Any failure skips the tick entirely — no score computed,
 | `quiet_hours_start` | `23` | Start of quiet window (local hour, 0–23). Wind will not send from this hour onward. |
 | `quiet_hours_end` | `7` | End of quiet window (local hour, 0–23). Wind resumes at this hour. Supports overnight ranges (e.g., start=23, end=7). |
 | `min_cooldown_minutes` | `60` | Minimum minutes between proactive sends. Prevents bursts even if accumulator resets fast. |
-| `daily_cap` | `3` | Max proactive messages per calendar day. Hard stop regardless of score. |
+| `daily_cap` | `3` | Max proactive messages per rolling 24h window. Each fire expires 24h after it happened, freeing a slot. Hard stop regardless of score. |
 | `max_unanswered_streak` | `2` | Stop sending after N consecutive proactives with no user reply. Resets when user responds. |
 | `min_silence_minutes` | `30` | Minimum minutes since last user message before Wind is eligible. Prevents interrupting active conversations. |
 
 **Tuning notes:**
 - `min_silence_minutes` is the most impactful gate for responsiveness. Lower it (e.g., 10–15) for more aggressive behavior.
-- `daily_cap` interacts with `fatigue_weight` — cap provides a hard stop, fatigue provides gradual suppression before the cap.
+- `daily_cap` interacts with `fatigue_weight` — cap provides a hard stop (rolling 24h), fatigue provides gradual suppression before the cap. Because slots expire 24h after each fire, the cap distributes naturally across the user's active hours over several days.
 - `max_unanswered_streak=2` means after 2 ignored proactives, Wind goes quiet until the user engages.
 
 ---
@@ -79,7 +79,7 @@ This score is added to the accumulator each eligible tick. The accumulator reset
 | `silence_weight` | `0.3` | silence | `[0, weight]` | Max contribution from silence. Scales linearly from `min_silence_minutes` to `silence_cap_hours`. |
 | `silence_cap_hours` | `24.0` | silence | — | Silence stops contributing beyond this many hours. |
 | `topic_pressure_weight` | `0.2` | topic_pressure | `[0, weight]` | Boost when there are queued topics ready to send. Higher = more eager to send when topics exist. |
-| `fatigue_weight` | `0.3` | fatigue | `[-weight, 0]` | **Negative** damper. Scales with `proactive_sent_today / daily_cap`. At cap, full weight is subtracted. |
+| `fatigue_weight` | `0.3` | fatigue | `[-weight, 0]` | **Negative** damper. Scales with rolling 24h fire count / `daily_cap`. At cap, full weight is subtracted. |
 | `engagement_weight` | `0.2` | engagement | `[-weight, +weight]` | Boost/dampen based on engagement score (0.5 = neutral). Engaged users get more proactives; disengaged get fewer. |
 
 **Silence factor formula:**
@@ -90,9 +90,10 @@ Capped at `silence_weight`. Zero if elapsed < `min_silence_minutes`.
 
 **Fatigue factor formula:**
 ```
-fatigue_damper = -(proactive_sent_today / daily_cap) * fatigue_weight
+recent_count = fires in proactive_fire_times within last 24h
+fatigue_damper = -(recent_count / daily_cap) * fatigue_weight
 ```
-At `daily_cap` sends, the full `fatigue_weight` is subtracted from score each tick.
+At `daily_cap` fires in the rolling window, the full `fatigue_weight` is subtracted from score each tick.
 
 **Engagement factor formula:**
 ```
