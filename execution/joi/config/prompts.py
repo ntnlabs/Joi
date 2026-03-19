@@ -503,9 +503,18 @@ Each fact needs these fields:
   name, profession, family members, key medical conditions, birthdays, anniversaries.
   Transient states (tired, sick, mood) are never core.
 - "ttl_hours": (optional) hours until this fact becomes invalid.
-  Upcoming appointments/plans for today → 36, this week → 168.
-  "Currently sick/on vacation" → 72. Temporary mood/physical state → 48.
-  Omit for permanent facts (name, job, birthday, preferences, routines).
+  Use short TTLs for transient facts — when in doubt, set shorter rather than longer.
+  Guidelines:
+    Meal plans, food orders, today's agenda items → 12
+    Current mood, temporary physical state (tired, excited, sick today) → 12
+    "Currently sick" spanning multiple days → 48
+    "On vacation this week" → 72
+    Appointments/events today → 12, tomorrow → 24, this week → 72
+    Upcoming multi-day events (trip, project deadline) → 168
+    Opinions, views, current stance on something → 168
+    Technical setup, tools used, infrastructure → 720
+    Goals, long-term plans, aspirations → 720
+  Omit ttl_hours for permanent facts (name, job, birthday, preferences, recurring routines).
   The "event" category ALWAYS requires ttl_hours unless it is a recurring routine.
   Temporary emotional or physical states (tired, sad, sick, excited) always need ttl_hours and should NOT be marked important.
 
@@ -517,9 +526,13 @@ Examples:
   {{"category": "personal", "key": "name", "value": "Peter is the user's name", "confidence": 1.0, "core": true}},
   {{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0, "core": true}},
   {{"category": "routine", "key": "wake_up_time", "value": "NTN wakes up at 6:45 every morning", "confidence": 0.9, "core": false}},
-  {{"category": "event", "key": "tire_service", "value": "Peter has a tire service appointment tomorrow", "confidence": 0.9, "core": false, "ttl_hours": 36}},
+  {{"category": "event", "key": "tire_service", "value": "NTN has a tire service appointment tomorrow", "confidence": 0.9, "core": false, "ttl_hours": 24}},
+  {{"category": "event", "key": "lunch_plan", "value": "NTN will have lunch at Vapiano today", "confidence": 0.9, "core": false, "ttl_hours": 12}},
   {{"category": "personal", "key": "birthday", "value": "NTN's birthday is February 28th", "confidence": 1.0, "core": true}},
-  {{"category": "health", "key": "current_mood", "value": "NTN is feeling exhausted", "confidence": 0.9, "core": false, "ttl_hours": 48}}
+  {{"category": "health", "key": "current_mood", "value": "NTN is feeling exhausted", "confidence": 0.9, "core": false, "ttl_hours": 12}},
+  {{"category": "opinion", "key": "ai_view", "value": "NTN thinks most AI assistants are too generic", "confidence": 0.8, "core": false, "ttl_hours": 168}},
+  {{"category": "technical", "key": "homelab", "value": "NTN runs a Proxmox homelab", "confidence": 0.9, "core": false, "ttl_hours": 720}},
+  {{"category": "goal", "key": "fitness_goal", "value": "NTN wants to get back into regular exercise", "confidence": 0.8, "core": false, "ttl_hours": 720}}
 ]
 
 Conversation:
