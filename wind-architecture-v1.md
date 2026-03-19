@@ -1399,12 +1399,23 @@ the topic queue clean and Wind state coherent over time, especially across inact
   - v2+: embedding similarity as additional signal (never cross-conversation)
   - On merge: keep canonical (older/higher-priority), update content if new version is richer
 
-- **Long-pause reset** ❌ *Not implemented*
-  - Triggered when a conversation has been silent for a configurable period (e.g., 3+ days)
-  - Archives stale low-priority pending topics (tension, discovery) that are no longer contextually relevant
-  - Resets short-term Wind state: accumulated impulse, fatigue counter
-  - Preserves: user preferences, snooze, engagement history, affinity weights, undertaker blocks
-  - Without this, Wind may surface a "by the way, 3 weeks ago you mentioned..." topic that feels jarring
+- **Topic priority decay** ❌ *Not implemented*
+  - All non-expired pending topics lose 4 priority points per day of silence
+  - No hard archiving — topics fade below selection threshold naturally
+  - A priority-50 tension topic becomes irrelevant after ~12 days; priority-80 after ~20 days
+  - Expired topics (TTL-based) still get archived as before — decay only affects dynamic priority
+
+- **Wake-up procedure** ❌ *Not implemented*
+  - Triggered when `current_silence > max(72h, convo_gap_ema_seconds * multiplier)`
+  - 72h floor covers the natural Friday–Monday gap without false positives on daily users
+  - Threshold is self-calibrating: heavy users (EMA=2h) trigger at ~20h above floor; light users (EMA=24h) at ~10 days
+  - No config knob needed — driven entirely by observed conversation rhythm
+  - Procedure (in order):
+    1. **Compact context** — summarize pre-pause history so it's preserved but not raw noise
+    2. **Expire stale facts** — run TTL check; ephemeral facts die naturally, permanent facts survive
+    3. **Inject gap marker** — append `[JOI-PAUSE duration=Xd dates=YYYY-MM-DD→YYYY-MM-DD]` to context so Joi is aware of the gap during generation without hardcoded behavior
+    4. **Reset short-term Wind state** — zero accumulated impulse and fatigue so Wind doesn't fire the moment silence ends
+  - Preserves: engagement history, affinity weights, undertaker blocks, snooze, all permanent facts
 
 ## Integration Points (Current Codebase)
 
