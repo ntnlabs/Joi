@@ -2,7 +2,10 @@
 Wind orchestrator - main entry point for proactive messaging.
 """
 
+import hashlib
+import json
 import logging
+import os
 import random
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
@@ -51,6 +54,8 @@ class WindOrchestrator:
         config: Optional[WindConfig] = None,
         llm_client: Optional[Callable] = None,
         memory=None,
+        context_message_count: Optional[int] = None,
+        compact_batch_size: int = 20,
     ):
         """
         Initialize WindOrchestrator.
@@ -60,10 +65,17 @@ class WindOrchestrator:
             config: Wind configuration (defaults to disabled)
             llm_client: Optional LLM client for engagement classification
             memory: Optional MemoryStore instance for facts and knowledge access
+            context_message_count: Context window size (for pre-compaction trigger)
+            compact_batch_size: Batch size for tension mining chunks
         """
         self.config = config or WindConfig()
         self._db_connect = db_connection_factory
         self.memory = memory
+        self._llm_client = llm_client
+        self._curiosity_model = os.getenv("JOI_CURIOSITY_MODEL")
+        self._tension_silence_hours = int(os.getenv("JOI_TENSION_SILENCE_HOURS", "2"))
+        self._context_message_count = context_message_count
+        self._compact_batch_size = compact_batch_size
         self.state_manager = WindStateManager(db_connection_factory)
         self.topic_manager = TopicManager(db_connection_factory)
         self.decision_logger = WindDecisionLogger(db_connection_factory)
@@ -846,59 +858,168 @@ class WindOrchestrator:
 
     def _generate_spontaneous_topics(self, conversation_id: str, now: Optional[datetime] = None) -> None:
         """
-        Queue a low-priority discovery topic from a randomly selected knowledge chunk.
-        Novelty key limits sharing to one per source per month.
+        Mine open conversation threads for tension topics using the curiosity LLM.
+
+        Two triggers:
+        1. Pre-compaction: message count >= context threshold — mine the oldest batch
+           before it gets summarized and lost.
+        2. Silence: user quiet for >= tension_silence_hours — mine all unprocessed
+           messages in chunks until caught up.
         """
         if now is None:
             now = datetime.now()
 
-        if not self.memory:
+        if not self._llm_client or not self._curiosity_model:
             return
 
-        # Skip if a pending discovery topic already exists — avoid queue spam on every tick
+        # Guard: skip if a pending tension/discovery topic already exists
+        if self.topic_manager.count_pending_by_type(conversation_id, "tension") > 0:
+            return
         if self.topic_manager.count_pending_by_type(conversation_id, "discovery") > 0:
             return
 
-        from config.prompts import sanitize_scope
+        # Pre-compaction trigger: mine the batch about to be summarized
+        if self._context_message_count and self.memory:
+            msg_count = self.memory.get_message_count_for_conversation(conversation_id)
+            if msg_count >= self._context_message_count:
+                messages = self.memory.get_oldest_messages(
+                    limit=self._compact_batch_size,
+                    conversation_id=conversation_id,
+                )
+                self._mine_tension_from_messages(messages, conversation_id, now)
+                return
 
-        scope = sanitize_scope(conversation_id)
-
-        try:
-            chunks = self.memory.get_knowledge_chunks_for_scope(scope, limit=20)
-        except Exception as e:
-            logger.warning("Failed to load knowledge chunks for spontaneous topic", extra={
-                "conversation_id": conversation_id,
-                "error": str(e),
-            })
+        # Silence trigger: mine all unprocessed messages in chunks
+        state = self.state_manager.get_or_create_state(conversation_id)
+        last_interaction = state.last_user_interaction_at
+        silence_ok = (
+            last_interaction is not None and
+            (now - last_interaction) >= timedelta(hours=self._tension_silence_hours)
+        )
+        if not silence_ok:
             return
 
-        if not chunks:
+        if not self.memory:
             return
 
-        chunk = random.choice(chunks)
-        novelty_key = f"spontaneous_{chunk.source}_{now.strftime('%Y-%m')}"
-
-        try:
-            self.topic_manager.add_topic(
+        while True:
+            state = self.state_manager.get_or_create_state(conversation_id)
+            messages = self.memory.get_oldest_messages(
+                limit=self._compact_batch_size,
                 conversation_id=conversation_id,
-                topic_type="discovery",
-                title=f"Share: {chunk.title}",
-                content=chunk.content,
-                priority=15,
-                expires_at=now + timedelta(days=30),
-                novelty_key=novelty_key,
+                after_ts=state.last_tension_mined_message_ts,
             )
-            logger.debug("Generated spontaneous sharing topic", extra={
+            if not messages:
+                break
+            self._mine_tension_from_messages(messages, conversation_id, now)
+
+    def _mine_tension_from_messages(self, messages, conversation_id: str, now: datetime) -> None:
+        """
+        Run the curiosity LLM on a batch of messages and create a tension topic if warranted.
+
+        Updates last_tension_mined_message_ts regardless of whether a topic is created.
+        """
+        if not messages:
+            return
+
+        # Filter out Wind/reminder system messages
+        user_messages = [
+            m for m in messages
+            if m.content_text and
+            not m.content_text.startswith("[JOI-WIND]") and
+            not m.content_text.startswith("[JOI-REMINDER]")
+        ]
+
+        newest_ts = max(m.timestamp for m in messages)
+
+        # Need at least 5 user-facing messages to have something worth analyzing
+        if len(user_messages) < 5:
+            self.state_manager.update_state(
+                conversation_id,
+                last_tension_mined_message_ts=newest_ts,
+            )
+            return
+
+        # Build transcript (oldest first, truncated)
+        lines = []
+        for m in user_messages:
+            speaker = "User" if m.direction == "inbound" else "Joi"
+            text = (m.content_text or "").strip()
+            if len(text) > 150:
+                text = text[:147] + "..."
+            lines.append(f"{speaker}: {text}")
+        transcript = "\n".join(lines)
+
+        prompt = (
+            f"Recent conversation (oldest first):\n{transcript}\n\n"
+            "Identify the single most promising unfinished thread, open question, or "
+            "mentioned future event worth following up on. Only pick something with real "
+            "continuation potential — not something already resolved, trivial, or that "
+            "Joi already addressed.\n\n"
+            'Respond with JSON only:\n'
+            '{"title": "<short natural topic title>", '
+            '"summary": "<what to follow up on, 1-2 sentences>", '
+            '"confidence": <0.0-1.0>}'
+        )
+
+        try:
+            llm_response = self._llm_client.generate(prompt, model=self._curiosity_model)
+            raw = llm_response.text.strip()
+
+            # Strip markdown code fences if present
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+
+            data = json.loads(raw)
+            title = str(data.get("title", "")).strip()
+            summary = str(data.get("summary", "")).strip()
+            confidence = float(data.get("confidence", 0.0))
+
+            if confidence >= 0.5 and title:
+                novelty_key = (
+                    f"tension_{hashlib.md5(title.lower().encode()).hexdigest()[:12]}"
+                    f"_{now.strftime('%Y-%m')}"
+                )
+                self.topic_manager.add_topic(
+                    conversation_id=conversation_id,
+                    topic_type="tension",
+                    title=title,
+                    content=summary,
+                    priority=40,
+                    expires_at=now + timedelta(days=30),
+                    novelty_key=novelty_key,
+                )
+                logger.info("Tension topic created from conversation mining", extra={
+                    "conversation_id": conversation_id,
+                    "title": title,
+                    "confidence": confidence,
+                    "novelty_key": novelty_key,
+                })
+            else:
+                logger.debug("Tension mining: nothing worth following up", extra={
+                    "conversation_id": conversation_id,
+                    "confidence": confidence,
+                })
+
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            logger.debug("Tension mining: failed to parse LLM response", extra={
                 "conversation_id": conversation_id,
-                "source": chunk.source,
-                "novelty_key": novelty_key,
-            })
-        except Exception as e:
-            logger.warning("Failed to add spontaneous topic", extra={
-                "conversation_id": conversation_id,
-                "source": chunk.source,
                 "error": str(e),
             })
+        except Exception as e:
+            logger.debug("Tension mining: LLM call failed", extra={
+                "conversation_id": conversation_id,
+                "error": str(e),
+            })
+
+        # Always advance the mining pointer
+        self.state_manager.update_state(
+            conversation_id,
+            last_tension_mined_message_ts=newest_ts,
+        )
 
     def check_timeout_topics(self, now: Optional[datetime] = None) -> int:
         """

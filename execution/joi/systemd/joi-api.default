@@ -68,6 +68,11 @@ JOI_CONSOLIDATION_ARCHIVE=0
 # --- Wind Engagement ---
 # Model for classifying user responses to proactive messages
 #JOI_ENGAGEMENT_MODEL=joi-engagement
+# Model for mining open conversation threads (tension topics)
+#JOI_CURIOSITY_MODEL=joi-curiosity
+# Hours of user silence before mining unprocessed messages for tension topics
+# Keep shorter than Wind's send silence so mining happens before sending
+#JOI_TENSION_SILENCE_HOURS=1
 
 # --- RAG ---
 # Set to 0 to disable knowledge retrieval
