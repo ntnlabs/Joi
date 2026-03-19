@@ -4,10 +4,12 @@ Topic management for Wind proactive messaging.
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 logger = logging.getLogger("joi.wind.topics")
+
+REDISCOVERY_DAYS = 30  # Days before a mentioned discovery topic can be re-created
 
 
 @dataclass
@@ -191,7 +193,7 @@ class TopicManager:
         if novelty_key:
             cursor = conn.execute(
                 """
-                SELECT id, status, priority FROM pending_topics
+                SELECT id, status, priority, mentioned_at FROM pending_topics
                 WHERE conversation_id = ? AND novelty_key = ?
                 ORDER BY created_at DESC LIMIT 1
                 """,
@@ -230,7 +232,21 @@ class TopicManager:
                         "new_priority": new_priority, "novelty_key": novelty_key
                     })
                     return existing_id
-                # STATUS_MENTIONED (engaged outcome) — topic already served, fall through to insert fresh
+                elif existing_status == self.STATUS_MENTIONED:
+                    # Topic already served — suppress re-creation for REDISCOVERY_DAYS
+                    mentioned_at_str = row[3]  # mentioned_at from query
+                    if mentioned_at_str:
+                        try:
+                            mentioned_dt = datetime.fromisoformat(mentioned_at_str)
+                            if (now - mentioned_dt) < timedelta(days=REDISCOVERY_DAYS):
+                                logger.debug("Suppressed duplicate discovery: recently mentioned", extra={
+                                    "topic_id": existing_id, "novelty_key": novelty_key,
+                                    "mentioned_at": mentioned_at_str,
+                                })
+                                return existing_id
+                        except Exception:
+                            pass
+                    # Mentioned long ago — fall through to create fresh (re-share after cooldown)
 
         cursor = conn.execute(
             """
