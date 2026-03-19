@@ -987,11 +987,6 @@ class WindOrchestrator:
         if not silence_ok:
             return
 
-        logger.info("Curiosity mining triggered: silence", extra={
-            "conversation_id": conversation_id,
-            "silence_minutes": self._tension_silence_minutes,
-        })
-
         if not self.memory:
             return
 
@@ -1004,6 +999,10 @@ class WindOrchestrator:
             )
             if not messages:
                 break
+            logger.info("Curiosity mining triggered: silence", extra={
+                "conversation_id": conversation_id,
+                "silence_minutes": self._tension_silence_minutes,
+            })
             self._mine_tension_from_messages(messages, conversation_id, now)
 
     def _mine_tension_from_messages(self, messages, conversation_id: str, now: datetime) -> None:
