@@ -153,8 +153,9 @@ Wind must track state per conversation (DM/group target), not global `system_sta
 - `last_outbound_at`
 - `last_proactive_sent_at`
 - `last_impulse_check_at`
-- `proactive_sent_today`
-- `proactive_day_bucket` (date key / reset marker)
+- `proactive_sent_today` (legacy, kept for schema compatibility)
+- `proactive_day_bucket` (legacy, kept for schema compatibility)
+- `proactive_fire_times` (rolling 24h fire timestamps — see v12 sliding window cap)
 - `unanswered_proactive_count`
 - `last_positive_response_at` (optional but useful)
 - `wind_snooze_until` (optional user-controlled suppression)

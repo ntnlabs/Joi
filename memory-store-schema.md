@@ -1,8 +1,8 @@
 # Joi Memory Store Schema
 
 > SQLCipher database schema for Joi's memory and context.
-> Schema version: 11
-> Last updated: 2026-03-16
+> Schema version: 12
+> Last updated: 2026-03-19
 
 ## Overview
 
