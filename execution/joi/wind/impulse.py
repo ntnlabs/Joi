@@ -8,7 +8,7 @@ import logging
 import math
 import random
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -231,7 +231,7 @@ class ImpulseEngine:
         if not state:
             return True
 
-        today_bucket = now.strftime("%Y-%m-%d")
+        today_bucket = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
 
         # Reset count if different day
         if state.proactive_day_bucket != today_bucket:
