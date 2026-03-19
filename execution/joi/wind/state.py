@@ -38,6 +38,8 @@ class WindState:
     last_deflected_at: Optional[datetime] = None
     # Hot conversation suppression (Phase 5)
     convo_gap_ema_seconds: Optional[float] = None
+    # Tension mining pointer (epoch ms of newest mined message)
+    last_tension_mined_message_ts: Optional[int] = None
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -114,7 +116,7 @@ class WindStateManager:
                    updated_at, threshold_offset, accumulated_impulse,
                    engagement_score, total_proactives_sent, total_engaged,
                    total_ignored, total_deflected, last_engaged_at, last_deflected_at,
-                   convo_gap_ema_seconds
+                   convo_gap_ema_seconds, last_tension_mined_message_ts
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -145,6 +147,7 @@ class WindStateManager:
             last_engaged_at=_parse_datetime(row["last_engaged_at"]),
             last_deflected_at=_parse_datetime(row["last_deflected_at"]),
             convo_gap_ema_seconds=row["convo_gap_ema_seconds"],
+            last_tension_mined_message_ts=row["last_tension_mined_message_ts"],
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -177,7 +180,7 @@ class WindStateManager:
         "threshold_offset", "accumulated_impulse",
         "engagement_score", "total_proactives_sent", "total_engaged",
         "total_ignored", "total_deflected", "last_engaged_at", "last_deflected_at",
-        "convo_gap_ema_seconds",
+        "convo_gap_ema_seconds", "last_tension_mined_message_ts",
     })
 
     def update_state(self, conversation_id: str, **updates) -> None:

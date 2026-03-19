@@ -268,7 +268,9 @@ CREATE TABLE IF NOT EXISTS wind_state (
     last_engaged_at TEXT,
     last_deflected_at TEXT,
     -- Hot conversation suppression (Phase 5)
-    convo_gap_ema_seconds REAL DEFAULT NULL
+    convo_gap_ema_seconds REAL DEFAULT NULL,
+    -- Tension mining pointer (epoch ms of newest mined message)
+    last_tension_mined_message_ts INTEGER DEFAULT NULL
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -742,6 +744,11 @@ class MemoryStore:
                 logger.info("Migration: Adding 'convo_gap_ema_seconds' column to wind_state table")
                 conn.execute("ALTER TABLE wind_state ADD COLUMN convo_gap_ema_seconds REAL DEFAULT NULL")
                 conn.commit()
+            # Tension mining pointer
+            if "last_tension_mined_message_ts" not in wind_columns:
+                logger.info("Migration: Adding 'last_tension_mined_message_ts' column to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN last_tension_mined_message_ts INTEGER DEFAULT NULL")
+                conn.commit()
 
         # Check pending_topics table for engagement columns (v8)
         cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pending_topics'")
@@ -1102,14 +1109,16 @@ class MemoryStore:
         limit: int = 20,
         conversation_id: Optional[str] = None,
         content_type: str = "text",
+        after_ts: Optional[int] = None,
     ) -> List[Message]:
         """
-        Get oldest messages for compaction.
+        Get oldest messages for compaction or tension mining.
 
         Args:
             limit: Maximum number of messages to return
             conversation_id: Filter by conversation (required for compaction)
             content_type: Filter by content type (default: text)
+            after_ts: If set, only return messages with timestamp > after_ts (epoch ms)
 
         Returns:
             List of Message objects, oldest first
@@ -1117,18 +1126,33 @@ class MemoryStore:
         conn = self._connect()
 
         if conversation_id:
-            cursor = conn.execute(
-                """
-                SELECT id, message_id, direction, channel, content_type,
-                       content_text, conversation_id, reply_to_id, timestamp, created_at,
-                       archived, sender_id, sender_name
-                FROM messages
-                WHERE content_type = ? AND conversation_id = ? AND archived = 0
-                ORDER BY timestamp ASC
-                LIMIT ?
-                """,
-                (content_type, conversation_id, limit)
-            )
+            if after_ts is not None:
+                cursor = conn.execute(
+                    """
+                    SELECT id, message_id, direction, channel, content_type,
+                           content_text, conversation_id, reply_to_id, timestamp, created_at,
+                           archived, sender_id, sender_name
+                    FROM messages
+                    WHERE content_type = ? AND conversation_id = ? AND archived = 0
+                      AND timestamp > ?
+                    ORDER BY timestamp ASC
+                    LIMIT ?
+                    """,
+                    (content_type, conversation_id, after_ts, limit)
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT id, message_id, direction, channel, content_type,
+                           content_text, conversation_id, reply_to_id, timestamp, created_at,
+                           archived, sender_id, sender_name
+                    FROM messages
+                    WHERE content_type = ? AND conversation_id = ? AND archived = 0
+                    ORDER BY timestamp ASC
+                    LIMIT ?
+                    """,
+                    (content_type, conversation_id, limit)
+                )
         else:
             cursor = conn.execute(
                 """
