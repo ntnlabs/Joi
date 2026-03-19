@@ -274,8 +274,8 @@ docker exec joi-brain ollama create joi-curiosity \
 
 # Enable in /etc/default/joi-api
 echo 'JOI_CURIOSITY_MODEL=joi-curiosity' >> /etc/default/joi-api
-# Optionally tune the silence trigger (default: 2 hours)
-# echo 'JOI_TENSION_SILENCE_HOURS=1' >> /etc/default/joi-api
+# Optionally tune the silence trigger (default: 20 min, keep < min_silence_minutes)
+# echo 'JOI_TENSION_SILENCE_MINUTES=20' >> /etc/default/joi-api
 
 # Restart
 systemctl restart joi-api
