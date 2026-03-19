@@ -5,7 +5,7 @@ Wind state management for per-conversation proactive messaging state.
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, Optional
 
 logger = logging.getLogger("joi.wind.state")
@@ -242,7 +242,7 @@ class WindStateManager:
         record_user_interaction (which resets unanswered_proactive_count).
         """
         now = datetime.now()
-        today_bucket = now.strftime("%Y-%m-%d")
+        today_bucket = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
 
         # Ensure state exists (atomic)
         self.get_or_create_state(conversation_id)
@@ -345,7 +345,7 @@ class WindStateManager:
 
         Called when day bucket changes.
         """
-        today_bucket = datetime.now().strftime("%Y-%m-%d")
+        today_bucket = (datetime.now() - timedelta(hours=3)).strftime("%Y-%m-%d")
         self.update_state(
             conversation_id,
             proactive_sent_today=0,
