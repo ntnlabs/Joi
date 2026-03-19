@@ -1375,6 +1375,37 @@ Extends WindMood with higher-level personality features that shape engagement ov
 
 Together, Phase 4a-4d transform Wind from "queue-based reminders" to "genuine companion initiative."
 
+### Phase 5: Queue Health & Resilience
+*Depends on: Phase 2 (live mode, topic queue)*
+
+Collects orphaned features — implemented or planned but not assigned to any phase. Focuses on keeping
+the topic queue clean and Wind state coherent over time, especially across inactivity gaps.
+
+- **Hot conversation suppression** ✅ *Implemented*
+  - EMA of inter-message gap per conversation (`convo_gap_ema_seconds`)
+  - When EMA ≤ `active_convo_gap_minutes`, conversation is "hot" — Wind requires longer silence before firing
+  - Prevents Wind from interrupting active back-and-forth exchanges
+  - Config: `active_convo_gap_minutes`, `active_convo_silence_minutes`
+
+- **Rolling 24h daily cap** ✅ *Implemented*
+  - Fire timestamps stored as `proactive_fire_times_json`; each slot expires 24h after it happened
+  - Replaces the old `YYYY-MM-DD` day bucket which exhausted the cap by noon every day
+  - Fatigue factor also uses the rolling count instead of `proactive_sent_today`
+  - Old columns (`proactive_sent_today`, `proactive_day_bucket`) kept in schema for compatibility
+
+- **Similar Topic Merge** ❌ *Not implemented*
+  - Prevent queue pollution when the curiosity miner extracts near-duplicate tension topics across batches
+  - v1: lexical title similarity + `novelty_key` match — skip or merge into the existing topic
+  - v2+: embedding similarity as additional signal (never cross-conversation)
+  - On merge: keep canonical (older/higher-priority), update content if new version is richer
+
+- **Long-pause reset** ❌ *Not implemented*
+  - Triggered when a conversation has been silent for a configurable period (e.g., 3+ days)
+  - Archives stale low-priority pending topics (tension, discovery) that are no longer contextually relevant
+  - Resets short-term Wind state: accumulated impulse, fatigue counter
+  - Preserves: user preferences, snooze, engagement history, affinity weights, undertaker blocks
+  - Without this, Wind may surface a "by the way, 3 weeks ago you mentioned..." topic that feels jarring
+
 ## Integration Points (Current Codebase)
 
 ### Already Available
