@@ -197,6 +197,8 @@ WIND SUBCOMMANDS:
     show-feedback [conversation_id]   Show per-topic-family feedback (interest/rejection weights, undertaker status)
     clear-cooldowns <conversation_id> Clear all topic family cooldowns
     undertaker-clear <conv_id> <fam>  Remove undertaker flag from a topic family
+    undertaker-list <conv_id>         List all undertaker-blocked families
+    undertaker-poke <conv_id> [fam]   Queue a playful poke for a random (or named) undertaker family
     snooze <conversation_id> <dur>    Pause Wind for a duration (e.g. 2h, 30m, 1d)
     snooze-clear <conversation_id>    Clear Wind snooze
     revive-topic <id>                 Revive an expired/ignored topic back to pending
@@ -225,6 +227,9 @@ WIND EXAMPLES:
     joi-admin wind show-feedback +123456789             # Show topic family feedback (incl. undertaker)
     joi-admin wind clear-cooldowns +123456789           # Clear all cooldowns
     joi-admin wind undertaker-clear +123456789 health   # Remove undertaker block from 'health' family
+    joi-admin wind undertaker-list +123456789            # Show all undertaker-blocked families
+    joi-admin wind undertaker-poke +123456789            # Queue poke for a random undertaker family
+    joi-admin wind undertaker-poke +123456789 health     # Queue poke for the 'health' family
     joi-admin wind snooze +123456789 2h                 # Pause Wind for 2 hours
     joi-admin wind snooze-clear +123456789              # Clear snooze
     joi-admin wind revive-topic 7                       # Revive topic #7 back to pending
@@ -1747,6 +1752,65 @@ SQL
             echo "Cleared undertaker flag for family '$family' in conversation '$conversation'."
             ;;
 
+        undertaker-list)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind undertaker-list <conversation_id>"; exit 0; }
+            local conversation="${1:-}"
+            [[ -z "$conversation" ]] && error "undertaker-list requires a conversation_id"
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+            local rows
+            rows=$(db_exec "SELECT topic_family, rejection_weight, deflection_count, updated_at FROM topic_feedback WHERE conversation_id = '$conversation_escaped' AND undertaker = 1 ORDER BY topic_family;")
+            if [[ -z "${rows//[$'\t\r\n ']/}" ]]; then
+                echo "No undertaker families for '$conversation'."
+                exit 0
+            fi
+            echo "Undertaker families for: $conversation"
+            echo ""
+            printf "%-24s  %8s  %6s  %s\n" "topic_family" "reject" "deflct" "blocked_since"
+            printf "%-24s  %8s  %6s  %s\n" "------------" "------" "------" "-------------"
+            while IFS='|' read -r family reject deflected updated; do
+                [[ -z "$family" ]] && continue
+                printf "%-24s  %8.2f  %6d  %s\n" "$family" "$reject" "$deflected" "$updated"
+            done <<< "$rows"
+            ;;
+
+        undertaker-poke)
+            [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind undertaker-poke <conversation_id> [family]"; exit 0; }
+            local conversation="${1:-}"
+            local family="${2:-}"
+            [[ -z "$conversation" ]] && error "undertaker-poke requires a conversation_id"
+
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+
+            # If no family given, pick a random one from undertaker
+            if [[ -z "$family" ]]; then
+                family=$(db_scalar "SELECT topic_family FROM topic_feedback WHERE conversation_id = '$conversation_escaped' AND undertaker = 1 ORDER BY RANDOM() LIMIT 1;")
+                [[ -z "$family" ]] && { echo "No undertaker families found for '$conversation'."; exit 0; }
+            fi
+
+            local family_escaped
+            family_escaped=$(sql_escape_literal "$family")
+
+            # Check it is actually in undertaker
+            local in_undertaker
+            in_undertaker=$(db_scalar "SELECT undertaker FROM topic_feedback WHERE conversation_id = '$conversation_escaped' AND topic_family = '$family_escaped';")
+            [[ "$in_undertaker" != "1" ]] && error "Family '$family' is not in undertaker for '$conversation'"
+
+            local novelty_key="poke_manual_$(date +%Y-%m-%d_%H%M%S)"
+            local title="Undertaker challenge: $family"
+            local content="The user has strongly rejected '$family' topics in the past and you've stopped bringing them up. Now playfully challenge that. Invent your own opener — something joyful, curious, or lightly sarcastic that reflects your personality. You might express genuine enthusiasm, feign disbelief at their taste, or frame it as a personal affront. Keep it short, fun, and not pushy. If they engage, great. If not, drop it."
+            local now
+            now=$(date -u +"%Y-%m-%dT%H:%M:%S")
+
+            local title_escaped content_escaped
+            title_escaped=$(sql_escape_literal "$title")
+            content_escaped=$(sql_escape_literal "$content")
+
+            db_exec "INSERT OR IGNORE INTO pending_topics (conversation_id, topic_type, title, content, priority, status, novelty_key, created_at) VALUES ('$conversation_escaped', 'poke', '$title_escaped', '$content_escaped', 60, 'pending', '$novelty_key', '$now');"
+            echo "Queued undertaker poke for family '$family' in conversation '$conversation'."
+            ;;
+
         clear-cooldowns)
             [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]] && { echo "Usage: joi-admin wind clear-cooldowns <conversation_id>"; exit 0; }
             local conversation="${1:-}"
@@ -2195,6 +2259,8 @@ Wind state subcommands:
   reset-engagement  [conversation_id]                Reset engagement counters
   show-feedback     <conversation_id>                Show topic family feedback
   undertaker-clear  <conversation_id> <family>       Remove undertaker flag
+  undertaker-list   <conversation_id>                List all undertaker-blocked families
+  undertaker-poke   <conversation_id> [family]       Queue a playful poke for an undertaker family
   clear-cooldowns   <conversation_id>                Clear all cooldown timers
   snooze            <conversation_id> <duration>     Pause Wind (e.g. 2h, 30m, 1d)
   snooze-clear      <conversation_id>                Clear Wind snooze
