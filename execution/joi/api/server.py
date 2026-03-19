@@ -2559,6 +2559,24 @@ def _send_to_mesh(
 
 # --- Main ---
 
+def _validate_models():
+    configured = {"JOI_OLLAMA_MODEL": settings.ollama_model}
+    for var in ("JOI_CONSOLIDATION_MODEL", "JOI_ENGAGEMENT_MODEL",
+                "JOI_CURIOSITY_MODEL", "JOI_EMBEDDING_MODEL"):
+        val = os.getenv(var)
+        if val:
+            configured[var] = val
+
+    available = llm.list_models()  # raises RuntimeError if Ollama unreachable
+
+    missing = [f"{var}={name}" for var, name in configured.items() if name not in available]
+    if missing:
+        raise ValueError(
+            f"Ollama model(s) not found: {', '.join(missing)}. "
+            f"Available: {sorted(available)}"
+        )
+
+
 def main():
     import uvicorn
 
@@ -2595,6 +2613,8 @@ def main():
         logger.warning("  Writing full LLM payloads (unredacted) to: %s", BRAIN_DEBUG_DIR)
         logger.warning("  DISABLE THIS IN PRODUCTION")
         logger.warning("=" * 70)
+
+    _validate_models()
 
     uvicorn.run(
         app,
