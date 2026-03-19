@@ -1,6 +1,6 @@
 # Joi - Project Summary
 
-> Quick reference for understanding this project. Last updated: 2026-03-13
+> Quick reference for understanding this project. Last updated: 2026-03-19
 
 ## What is Joi?
 
@@ -8,12 +8,15 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 
 ## Project Status
 
-**Phase: Implementation** - Core system operational with defense-in-depth security. Wind proactive messaging live through Phase 4a (engagement tracking).
+**Phase: Implementation** - Core system operational with defense-in-depth security. Wind proactive messaging live through Phase 4b + partial 4c (tension extraction).
 
 ### Milestones
 
 | Date | Milestone |
 |------|-----------|
+| 2026-03-19 | **Ollama model presence check at startup** - `_validate_models()` checks all configured model env vars against Ollama on startup; fails fast with clear error if any are missing |
+| 2026-03-19 | **Wind Phase 4c: Tension extraction** - Curiosity LLM mines conversation history for unfinished threads; fires on silence (configurable) and pre-compaction; creates tension topics for Wind to follow up on |
+| 2026-03-15 | **Wind Phase 4b: Learning & Pursuit** - Symmetric affinity/decay model, pursuit back-off, undertaker (permanent block), ghost probes, cooldown anti-periodicity, novelty bonus |
 | 2026-03-13 | **Wind Phase 4a: Engagement Foundation** - Feedback loop for proactive messages: direct reply detection, LLM classification (joi-engagement model), 12h timeout, per-topic-family rejection/interest weights, lifecycle rules per topic type |
 | 2026-03-13 | **Wind Phase 3: Natural Variance** - Organic threshold drift via bounded random walk, accumulated impulse, soft probability — Wind no longer fires at predictable intervals |
 | 2026-03-10 | **Code review & refactoring** - server.py reduced ~36% by extracting MessageQueue, Scheduler, AdminRoutes, GroupCache modules; security fixes from code review |
