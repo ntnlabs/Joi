@@ -71,7 +71,8 @@ JOI_CONSOLIDATION_ARCHIVE=0
 # Model for mining open conversation threads (tension topics)
 #JOI_CURIOSITY_MODEL=joi-curiosity
 # Minutes of user silence before mining unprocessed messages for tension topics
-# Keep shorter than JOI_WIND_MIN_SILENCE_MINUTES (default: 30) so mining happens before sending
+# Must be less than both min_silence_minutes (default: 30) and min_cooldown_minutes (default: 60)
+# so mining happens before Wind's gates open
 #JOI_TENSION_SILENCE_MINUTES=20
 
 # --- RAG ---
