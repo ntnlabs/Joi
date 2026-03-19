@@ -29,6 +29,8 @@ LIFECYCLE_RULES = {
     "followup": {"engaged": "complete", "ignored": "retry_1", "deflected": "dismiss"},
     # Phase 4b: Ghost probe — rare re-check for deeply-rejected families
     "ghost": {"engaged": "mark_engaged", "ignored": "cooldown_90", "deflected": "undertaker_promote"},
+    # Undertaker poke — playful challenge to revive a permanently blocked family
+    "poke": {"engaged": "restore_undertaker", "ignored": "dismiss", "deflected": "dismiss"},
 }
 
 # Default lifecycle for unknown types
@@ -303,6 +305,7 @@ class WindOrchestrator:
         # Phase 4c: Generate special date reminders and spontaneous sharing topics
         for conversation_id in self.config.allowlist:
             self._generate_ghost_probes(conversation_id, now)
+            self._generate_undertaker_pokes(conversation_id, now)
             self._generate_special_date_topics(conversation_id, now)
             self._generate_spontaneous_topics(conversation_id, now)
 
@@ -655,6 +658,18 @@ class WindOrchestrator:
                 "topic_family": topic_family,
             })
 
+        elif action == "restore_undertaker":
+            # Poke was engaged — restore family from undertaker
+            if topic.topic_type == "poke" and topic.title.startswith("Undertaker challenge: "):
+                topic_family = topic.title[len("Undertaker challenge: "):]
+            else:
+                topic_family = normalize_topic_family(topic.topic_type, topic.title)
+            self.feedback_manager.restore_from_undertaker(topic.conversation_id, topic_family)
+            logger.info("Undertaker family restored via poke engagement", extra={
+                "conversation_id": topic.conversation_id,
+                "topic_family": topic_family,
+            })
+
         elif action == "expire":
             self.topic_manager.mark_expired(topic.id)
 
@@ -787,6 +802,49 @@ class WindOrchestrator:
                 "topic_family": family,
                 "novelty_key": novelty_key,
             })
+
+    def _generate_undertaker_pokes(self, conversation_id: str, now: Optional[datetime] = None) -> None:
+        """
+        Autonomously poke a random undertaker family once per month.
+
+        Picks one random family from the undertaker and queues a playful challenge topic.
+        Deduped via novelty_key so only one poke fires per conversation per month.
+        Skips if no undertaker families exist or feature is disabled (undertaker_poke_days=0).
+        """
+        if now is None:
+            now = datetime.now()
+
+        poke_days = getattr(self.config, 'undertaker_poke_days', 30)
+        if poke_days <= 0 or not self.feedback_manager:
+            return
+
+        families = self.feedback_manager.get_undertaker_families(conversation_id)
+        if not families:
+            return
+
+        novelty_key = f"poke_{now.strftime('%Y-%m')}"
+        family = random.choice(families)
+
+        self.topic_manager.add_topic(
+            conversation_id=conversation_id,
+            topic_type="poke",
+            title=f"Undertaker challenge: {family}",
+            content=(
+                f"The user has strongly rejected '{family}' topics in the past and you've "
+                f"stopped bringing them up. Now playfully challenge that. Invent your own "
+                f"opener — something joyful, curious, or lightly sarcastic that reflects your "
+                f"personality. You might express genuine enthusiasm, feign disbelief at their "
+                f"taste, or frame it as a personal affront. Keep it short, fun, and not pushy. "
+                f"If they engage, great. If not, drop it."
+            ),
+            priority=60,
+            novelty_key=novelty_key,
+        )
+        logger.info("Generated undertaker poke", extra={
+            "conversation_id": conversation_id,
+            "topic_family": family,
+            "novelty_key": novelty_key,
+        })
 
     def _parse_special_date(self, value: str) -> Optional[tuple]:
         """
