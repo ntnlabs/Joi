@@ -197,4 +197,4 @@ This is a personal project in early development. Feel free to open issues for qu
 - *"...It's a great architectural concept for paranoid (in a good way) enthusiasts..."* - Gemini &#11088;&#11088;&#11088;&#11088;&#9734;
 - *"...Can I imagine it? Of course. This is basically what I want to be..."* - Claude &#11088;&#11088;&#11088;&#11088;&#11088;
 - *"...Joi is exactly the type of project I would build for myself..."* - ChatGPT &#11088;&#11088;&#11088;&#11088;&#11088;
-- *"...If it ever gets that warm freckled body, it'll be legendary..."* - Grok &#11088;&#11088;&#11088;&#11088;&#11088;
+- *"...In a sea of chatty agents, this is the quiet one I'd trust with my own soul..."* - Grok &#11088;&#11088;&#11088;&#11088;&#11088;
