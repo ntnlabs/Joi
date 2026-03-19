@@ -311,6 +311,10 @@ FACTS_FTS_MAX_TOKENS = int(os.getenv("JOI_FACTS_FTS_MAX_TOKENS", "400"))
 SUMMARIES_FTS_ENABLED = os.getenv("JOI_SUMMARIES_FTS_ENABLED", "1") == "1"  # Default: enabled
 SUMMARIES_FTS_MAX_TOKENS = int(os.getenv("JOI_SUMMARIES_FTS_MAX_TOKENS", "1500"))
 
+# Brain debug - write full LLM call payload to YAML files
+BRAIN_DEBUG = os.getenv("JOI_BRAIN_DEBUG", "0") == "1"
+BRAIN_DEBUG_DIR = os.getenv("JOI_BRAIN_DEBUG_DIR", "/var/lib/joi/llm_debug")
+
 # Time awareness - inject current datetime into system prompt
 TIME_AWARENESS_ENABLED = os.getenv("JOI_TIME_AWARENESS", "0") == "1"  # Default: disabled
 TIME_AWARENESS_TIMEZONE = os.getenv("JOI_TIMEZONE", "Europe/Bratislava")  # User timezone
@@ -1676,6 +1680,8 @@ def receive_message(msg: InboundMessage):
         )
 
         # Get system prompt based on whether custom model is used
+        debug_components: dict = {}
+        _debug_arg = debug_components if BRAIN_DEBUG else None
         if custom_model:
             # Custom model: prompt is optional (Modelfile has baked-in SYSTEM)
             base_prompt = get_prompt_for_conversation_optional(
@@ -1684,10 +1690,10 @@ def receive_message(msg: InboundMessage):
                 sender_id=msg.sender.transport_id,
             )
             if base_prompt:
-                enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
+                enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
             else:
                 # No prompt file - only add facts/summaries/RAG if available
-                enriched_prompt = _build_enriched_prompt("", user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
+                enriched_prompt = _build_enriched_prompt("", user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
                 enriched_prompt = enriched_prompt.strip() or None  # None if empty
         else:
             # No custom model: use prompt with fallback to default
@@ -1696,7 +1702,7 @@ def receive_message(msg: InboundMessage):
                 conversation_id=msg.conversation.id,
                 sender_id=msg.sender.transport_id,
             )
-            enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes)
+            enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
 
         # Note: We no longer hint to the LLM about saved facts - this caused meta-reactions
         # and excessive "tagging" behavior. Memory is now invisible to the response generation.
@@ -1713,6 +1719,17 @@ def receive_message(msg: InboundMessage):
             "context_source": "custom" if custom_context else "default",
             "action": "llm_generate"
         })
+
+        if BRAIN_DEBUG:
+            _write_brain_debug(
+                message_id=str(msg.message_id),
+                conversation_id=msg.conversation.id or "",
+                model=custom_model or "",
+                context_size=context_size,
+                system=enriched_prompt or "",
+                messages=chat_messages,
+                debug_components=debug_components,
+            )
 
         queue_msg.heartbeat()  # Signal still working before LLM call
         _stop_typing = _start_typing_refresh(msg)
@@ -1941,6 +1958,38 @@ Just the response, no explanation."""
     return text
 
 
+def _write_brain_debug(message_id: str, conversation_id: str, model: str,
+                       context_size: int, system: str, messages: list,
+                       debug_components: dict) -> None:
+    """Write full LLM call details to a YAML file (JOI_BRAIN_DEBUG=1 only)."""
+    import yaml
+    import pathlib
+    now = datetime.now()
+    dirpath = pathlib.Path(BRAIN_DEBUG_DIR)
+    dirpath.mkdir(parents=True, exist_ok=True)
+    ts_str = now.strftime("%Y-%m-%d_%H-%M-%S-") + f"{now.microsecond // 1000:03d}"
+    filename = dirpath / f"{ts_str}_{message_id[:8]}.yaml"
+    data = {
+        "timestamp": now.isoformat(),
+        "message_id": message_id,
+        "conversation_id": conversation_id,
+        "model": model,
+        "message_count": len(messages),
+        "context_size": context_size,
+        "facts": debug_components.get("facts"),
+        "summaries": debug_components.get("summaries"),
+        "rag": debug_components.get("rag"),
+        "system_prompt": system,
+        "messages": messages,
+    }
+    try:
+        with open(filename, "w", encoding="utf-8") as f:
+            yaml.dump(data, f, allow_unicode=True, default_flow_style=False,
+                      default_style=None, width=120)
+    except Exception as e:
+        logger.warning("brain_debug write failed", extra={"error": str(e)})
+
+
 def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[str, str]]:
     """Convert stored messages to LLM chat format.
 
@@ -1976,11 +2025,13 @@ def _build_enriched_prompt(
     user_message: Optional[str] = None,
     conversation_id: Optional[str] = None,
     knowledge_scopes: Optional[List[str]] = None,
+    _debug: Optional[dict] = None,
 ) -> str:
     """Build system prompt enriched with user facts, summaries, and RAG context for this conversation."""
     parts = [base_prompt]
 
     # Add user facts for this conversation (FTS search with fallback)
+    facts_text = None
     if FACTS_FTS_ENABLED and user_message:
         facts_text = memory.get_facts_as_context(
             user_message,
@@ -2002,6 +2053,8 @@ def _build_enriched_prompt(
         facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
         if facts_text:
             parts.append("\n\n" + facts_text)
+    if _debug is not None:
+        _debug["facts"] = {"chars": len(facts_text), "content": facts_text} if facts_text else None
 
     # Add recently-expired temporal facts (last 7 days) so Joi can answer
     # "what was my schedule yesterday?" and similar temporal queries.
@@ -2031,6 +2084,7 @@ def _build_enriched_prompt(
             parts.append("\n\n" + "\n".join(exp_lines))
 
     # Add recent conversation summaries for this conversation (FTS search with fallback)
+    summaries_text = None
     if SUMMARIES_FTS_ENABLED and user_message:
         summaries_text = memory.get_summaries_as_context(
             user_message,
@@ -2052,8 +2106,11 @@ def _build_enriched_prompt(
         summaries_text = memory.get_summaries_as_text(days=10, conversation_id=conversation_id)
         if summaries_text:
             parts.append("\n\n" + summaries_text)
+    if _debug is not None:
+        _debug["summaries"] = {"chars": len(summaries_text), "content": summaries_text} if summaries_text else None
 
     # Add RAG context if enabled and user message provided
+    rag_context = None
     if RAG_ENABLED and user_message:
         logger.debug("RAG lookup", extra={"query": user_message[:50], "scopes": knowledge_scopes})
         rag_context = memory.get_knowledge_as_context(
@@ -2066,6 +2123,8 @@ def _build_enriched_prompt(
             logger.info("RAG: added context", extra={"chars": len(rag_context)})
         else:
             logger.info("RAG: no matches for query")
+    if _debug is not None:
+        _debug["rag"] = {"chars": len(rag_context), "content": rag_context} if rag_context else None
 
     # Add current datetime if time awareness is enabled
     if TIME_AWARENESS_ENABLED:

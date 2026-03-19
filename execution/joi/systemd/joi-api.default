@@ -12,6 +12,10 @@ JOI_BIND_PORT=8443
 # Set to 1 for JSON structured logs, 0 for human-readable text (default)
 #JOI_LOG_JSON=0
 #JOI_LOG_LEVEL=INFO
+# Set to 1 to write one YAML file per LLM call with full context (facts, summaries, RAG, messages)
+# WARNING: logs unredacted conversation content — disable when not debugging
+#JOI_BRAIN_DEBUG=0
+#JOI_BRAIN_DEBUG_DIR=/var/lib/joi/llm_debug
 
 # --- Message Limits ---
 # Max input length (chars) - messages exceeding this are rejected
