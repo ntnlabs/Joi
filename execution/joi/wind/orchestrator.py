@@ -76,6 +76,7 @@ class WindOrchestrator:
         self._tension_silence_minutes = int(os.getenv("JOI_TENSION_SILENCE_MINUTES", "20"))
         self._context_message_count = context_message_count
         self._compact_batch_size = compact_batch_size
+        self._validate_tension_settings()
         self.state_manager = WindStateManager(db_connection_factory)
         self.topic_manager = TopicManager(db_connection_factory)
         self.decision_logger = WindDecisionLogger(db_connection_factory)
@@ -98,6 +99,23 @@ class WindOrchestrator:
             llm_client=llm_client,
             timeout_hours=self.config.ignore_timeout_hours if hasattr(self.config, 'ignore_timeout_hours') else 12.0,
         )
+
+    def _validate_tension_settings(self) -> None:
+        """Validate tension silence against Wind's silence and cooldown gates."""
+        if not self._curiosity_model:
+            return  # Feature disabled — nothing to validate
+        silence_gate = self.config.min_silence_minutes
+        cooldown_gate = self.config.min_cooldown_minutes
+        if self._tension_silence_minutes >= silence_gate:
+            raise ValueError(
+                f"JOI_TENSION_SILENCE_MINUTES ({self._tension_silence_minutes}) must be "
+                f"less than min_silence_minutes ({silence_gate})"
+            )
+        if self._tension_silence_minutes >= cooldown_gate:
+            raise ValueError(
+                f"JOI_TENSION_SILENCE_MINUTES ({self._tension_silence_minutes}) must be "
+                f"less than min_cooldown_minutes ({cooldown_gate})"
+            )
 
     def update_config(self, config: WindConfig) -> None:
         """Update Wind configuration."""
