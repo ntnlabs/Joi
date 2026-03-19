@@ -188,9 +188,10 @@ class Scheduler:
             self._cleanup_send_cache()
             self._check_fts_integrity()
 
-        # HMAC rotation check once per day
+        # HMAC rotation check + reminder cleanup once per day
         if self._tick_count % _TICKS_DAILY == 0 and self._tick_count > 0:
             self._check_hmac_rotation()
+            self._purge_old_reminders()
 
         # Refresh membership cache (only runs if business mode + dm_group_knowledge)
         if self._tick_count % _TICKS_MEMBERSHIP == 0:
@@ -328,6 +329,16 @@ class Scheduler:
                     logger.warning("Scheduler: HMAC rotation failed", extra={"action": "hmac_rotation", "error": result})
         except Exception as e:
             logger.warning("Scheduler: HMAC rotation check failed", extra={"error": str(e)})
+
+    def _purge_old_reminders(self):
+        """Purge terminal reminders older than JOI_REMINDER_RETENTION_DAYS (default 180, 0=disabled)."""
+        if not self._reminder_manager:
+            return
+        retention = int(os.getenv("JOI_REMINDER_RETENTION_DAYS", "180"))
+        try:
+            self._reminder_manager.purge_old(retention)
+        except Exception as e:
+            logger.warning("Scheduler: reminder purge failed", extra={"error": str(e)})
 
     def _refresh_membership(self):
         """Refresh group membership cache (only if feature is active)."""

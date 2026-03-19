@@ -259,6 +259,31 @@ class ReminderManager:
         row = cursor.fetchone()
         return self._row_to_reminder(row) if row else None
 
+    def purge_old(self, retention_days: int) -> int:
+        """
+        Delete reminders in terminal states older than retention_days.
+
+        Only removes fired, expired, and cancelled reminders — never pending ones.
+        Returns count of deleted rows.
+        """
+        if retention_days <= 0:
+            return 0
+        cutoff = datetime.now() - timedelta(days=retention_days)
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            DELETE FROM reminders
+            WHERE status IN ('fired', 'expired', 'cancelled')
+              AND created_at < ?
+            """,
+            (_fmt_dt(cutoff),),
+        )
+        conn.commit()
+        count = cursor.rowcount
+        if count:
+            logger.info("Purged old reminders", extra={"count": count, "retention_days": retention_days})
+        return count
+
     def list_pending(self, conversation_id: str) -> List[Reminder]:
         """List pending reminders for a conversation, ordered by due_at."""
         conn = self._connect()

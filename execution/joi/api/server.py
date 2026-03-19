@@ -403,6 +403,11 @@ _DURATION_MINS    = re.compile(r"(\d+)\s*m(?:in(?:utes?)?)?", re.I)
 _DURATION_DAYS    = re.compile(r"(\d+)\s*d(?:ays?)?", re.I)
 _DURATION_TONIGHT = re.compile(r"\btonight\b", re.I)
 
+# --- Reminder Post-Fire Snooze Patterns ---
+_REMINDER_SNOOZE_TRIGGER = re.compile(
+    r"\b(remind\s+me\s+again|snooze|later|remind\s+me\s+in)\b", re.I
+)
+
 # --- Reminder Command Patterns ---
 _REMINDER_TRIGGER = re.compile(r"\bremind\s+me\b", re.I)
 _REMINDER_ABOUT   = re.compile(r"\b(?:to|about)\b", re.I)
@@ -1551,6 +1556,19 @@ def receive_message(msg: InboundMessage):
             )
             return InboundResponse(status="ok", message_id=msg.message_id)
 
+    # Reminder post-fire snooze: "remind me again in 1h"
+    if msg.is_owner and msg.conversation.type == "direct" and user_text:
+        snooze_reminder_reply = _handle_reminder_snooze_command(user_text, msg.conversation.id)
+        if snooze_reminder_reply:
+            _send_to_mesh(
+                recipient_id="owner",
+                recipient_transport_id=msg.conversation.id,
+                conversation=msg.conversation,
+                text=snooze_reminder_reply,
+                reply_to=msg.message_id,
+            )
+            return InboundResponse(status="ok", message_id=msg.message_id)
+
     # Reminder command: owner can set reminders
     if msg.is_owner and msg.conversation.type == "direct" and user_text:
         reminder_reply = _handle_reminder_command(user_text, msg.conversation.id)
@@ -2260,6 +2278,46 @@ def _handle_wind_snooze_command(text: str, conversation_id: str) -> Optional[str
         label = f"{total_minutes}m"
 
     return f"Wind snoozed for {label}."
+
+
+def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional[str]:
+    """
+    Return a confirmation string if text is a post-fire reminder snooze, else None.
+
+    Only matches if a reminder fired recently (within 2h) — avoids stealing
+    new reminder creation requests like "remind me in 1h".
+    """
+    if not _REMINDER_SNOOZE_TRIGGER.search(text):
+        return None
+
+    last = reminder_manager.get_last_fired(conversation_id)
+    if not last or last.fired_at is None:
+        return None
+    if (datetime.now() - last.fired_at).total_seconds() > 7200:
+        return None
+
+    now = datetime.now()
+    if m := _DURATION_HOURS.search(text):
+        new_due = now + timedelta(hours=min(int(m.group(1)), 168))
+    elif m := _DURATION_MINS.search(text):
+        new_due = now + timedelta(minutes=max(5, min(int(m.group(1)), 10080)))
+    elif m := _DURATION_DAYS.search(text):
+        new_due = now + timedelta(days=min(int(m.group(1)), 7))
+    else:
+        new_due = now + timedelta(hours=1)
+
+    reminder_manager.snooze(last.id, new_due)
+
+    delta = new_due - now
+    total_minutes = int(delta.total_seconds() / 60)
+    if total_minutes >= 1440:
+        label = f"{total_minutes // 1440}d"
+    elif total_minutes >= 60:
+        label = f"{total_minutes // 60}h"
+    else:
+        label = f"{total_minutes}m"
+
+    return f"Reminder snoozed for {label}. I'll remind you about \"{last.title}\" then."
 
 
 def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
