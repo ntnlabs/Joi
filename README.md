@@ -164,6 +164,9 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 | [policy-engine.md](policy-engine.md) | Security policy rules |
 | [memory-store-schema.md](memory-store-schema.md) | Database schema |
 | [agent-loop-design.md](agent-loop-design.md) | Agent behavior & modes |
+| [wind-architecture-v1.md](wind-architecture-v1.md) | Wind proactive messaging architecture & phases |
+| [reminder-engine.md](reminder-engine.md) | Reminder engine design |
+| [WIND-CONFIG.md](WIND-CONFIG.md) | Wind configuration reference & tuning guide |
 | [prompt-injection-defenses.md](prompt-injection-defenses.md) | Prompt injection mitigations |
 | [Plan.md](Plan.md) | Implementation plan |
 | [Alt-Plan.md](Alt-Plan.md) | Alternative implementation approach |
