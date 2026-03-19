@@ -480,7 +480,7 @@ class WindOrchestrator:
                         quality=0.8,
                         method="direct_reply",
                     )
-                    self._apply_engagement_outcome(matched, result)
+                    self._apply_engagement_outcome(matched, result, user_message)
             except (ValueError, TypeError):
                 pass  # reply_to_id not a valid Signal timestamp
 
@@ -507,7 +507,7 @@ class WindOrchestrator:
             )
 
             if result:
-                self._apply_engagement_outcome(topic, result)
+                self._apply_engagement_outcome(topic, result, user_message)
 
     def _get_wind_message_text(self, topic: PendingTopic) -> str:
         """Get the Wind message text for a topic (from content or title)."""
@@ -521,6 +521,7 @@ class WindOrchestrator:
         self,
         topic: PendingTopic,
         result: EngagementResult,
+        user_message: str = "",
     ) -> None:
         """
         Apply engagement outcome to topic and update feedback.
@@ -528,6 +529,7 @@ class WindOrchestrator:
         Args:
             topic: The topic that received a response
             result: Engagement classification result
+            user_message: The user's message text (used for outcome extraction)
         """
         # Record outcome on topic
         self.topic_manager.mark_outcome(topic.id, result.outcome)
@@ -564,6 +566,50 @@ class WindOrchestrator:
             "method": result.method,
             "topic_family": topic_family,
         })
+
+        # Extract and store what was resolved when a topic engaged
+        if result.outcome == "engaged" and user_message:
+            self._extract_topic_outcome(topic, user_message)
+
+    def _extract_topic_outcome(self, topic: PendingTopic, user_message: str) -> None:
+        """Extract and store a fact summarising what was resolved when a topic engaged."""
+        if not self._curiosity_model or not self.memory:
+            return
+
+        prompt = (
+            f"A conversation topic was followed up on.\n\n"
+            f"Topic: {topic.title}\n"
+            f"Context: {topic.content or '(none)'}\n"
+            f"User's response: {user_message}\n\n"
+            "In 1-2 sentences, summarise what was resolved, decided, or learned. "
+            "Be specific and factual. If nothing concrete was resolved, reply with exactly: SKIP"
+        )
+
+        try:
+            resp = self._llm_client.generate(prompt, model=self._curiosity_model)
+            text = resp.text.strip()
+            if not text or text.upper() == "SKIP":
+                return
+
+            key = topic.title.lower().replace(" ", "_")[:60]
+            self.memory.store_fact(
+                category="wind_outcome",
+                key=key,
+                value=text,
+                confidence=0.85,
+                source="wind",
+                conversation_id=topic.conversation_id,
+            )
+            logger.info("Stored topic outcome fact", extra={
+                "conversation_id": topic.conversation_id,
+                "topic_id": topic.id,
+                "key": key,
+            })
+        except Exception as exc:
+            logger.debug("Topic outcome extraction failed", extra={
+                "topic_id": topic.id,
+                "error": str(exc),
+            })
 
     def _apply_lifecycle_rules(
         self,
