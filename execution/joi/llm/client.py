@@ -32,6 +32,24 @@ class OllamaClient:
         self.num_ctx = num_ctx  # 0 = use model default
         self.keep_alive = keep_alive  # How long to keep model in VRAM after request
 
+    def list_models(self) -> set:
+        """Return set of available model names (without :latest tag)."""
+        url = f"{self.base_url}/api/tags"
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+                data = resp.json()
+            names = set()
+            for m in data.get("models", []):
+                name = m.get("name", "")
+                names.add(name)
+                if ":" in name:
+                    names.add(name.split(":")[0])
+            return names
+        except Exception as exc:
+            raise RuntimeError(f"Cannot reach Ollama at {self.base_url}: {exc}") from exc
+
     def generate(
         self,
         prompt: str,

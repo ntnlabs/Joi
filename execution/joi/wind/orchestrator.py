@@ -183,6 +183,13 @@ class WindOrchestrator:
 
         # Select topic
         topic = self.topic_manager.get_best_topic(conversation_id)
+        logger.debug("Wind topic selection", extra={
+            "conversation_id": conversation_id,
+            "topic_id": topic.id if topic else None,
+            "topic_title": topic.title if topic else None,
+            "topic_type": topic.topic_type if topic else None,
+            "found": topic is not None,
+        })
         if not topic:
             self.decision_logger.log_decision(
                 conversation_id=conversation_id,
@@ -892,14 +899,24 @@ class WindOrchestrator:
 
         # Guard: skip if a pending tension/discovery topic already exists
         if self.topic_manager.count_pending_by_type(conversation_id, "tension") > 0:
+            logger.info("Curiosity mining skipped: pending tension topic exists", extra={
+                "conversation_id": conversation_id,
+            })
             return
         if self.topic_manager.count_pending_by_type(conversation_id, "discovery") > 0:
+            logger.info("Curiosity mining skipped: pending discovery topic exists", extra={
+                "conversation_id": conversation_id,
+            })
             return
 
         # Pre-compaction trigger: mine the batch about to be summarized
         if self._context_message_count and self.memory:
             msg_count = self.memory.get_message_count_for_conversation(conversation_id)
             if msg_count >= self._context_message_count:
+                logger.info("Curiosity mining triggered: pre-compaction", extra={
+                    "conversation_id": conversation_id,
+                    "message_count": msg_count,
+                })
                 messages = self.memory.get_oldest_messages(
                     limit=self._compact_batch_size,
                     conversation_id=conversation_id,
@@ -916,6 +933,11 @@ class WindOrchestrator:
         )
         if not silence_ok:
             return
+
+        logger.info("Curiosity mining triggered: silence", extra={
+            "conversation_id": conversation_id,
+            "silence_minutes": self._tension_silence_minutes,
+        })
 
         if not self.memory:
             return
@@ -980,6 +1002,11 @@ class WindOrchestrator:
             '"confidence": <0.0-1.0>}'
         )
 
+        logger.info("Curiosity mining: calling LLM", extra={
+            "conversation_id": conversation_id,
+            "message_count": len(user_messages),
+            "model": self._curiosity_model,
+        })
         try:
             llm_response = self._llm_client.generate(prompt, model=self._curiosity_model)
             raw = llm_response.text.strip()
