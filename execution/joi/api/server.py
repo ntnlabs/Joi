@@ -2097,13 +2097,13 @@ def _build_enriched_prompt(
             logger.info("Summaries FTS: added context", extra={"chars": len(summaries_text)})
         else:
             # Fallback: load recent summaries if FTS returns nothing
-            summaries_text = memory.get_summaries_as_text(days=10, conversation_id=conversation_id)
+            summaries_text = memory.get_summaries_as_text(days=10, conversation_id=conversation_id, max_chars=SUMMARIES_FTS_MAX_TOKENS * 4)
             if summaries_text:
                 parts.append("\n\n" + summaries_text)
                 logger.debug("Summaries FTS: fallback to recent", extra={"chars": len(summaries_text)})
     else:
         # FTS disabled: original behavior
-        summaries_text = memory.get_summaries_as_text(days=10, conversation_id=conversation_id)
+        summaries_text = memory.get_summaries_as_text(days=10, conversation_id=conversation_id, max_chars=SUMMARIES_FTS_MAX_TOKENS * 4)
         if summaries_text:
             parts.append("\n\n" + summaries_text)
     if _debug is not None:
@@ -2586,6 +2586,13 @@ def main():
         "cooldown_dm": RESPONSE_COOLDOWN_DM_SECONDS,
         "cooldown_group": RESPONSE_COOLDOWN_GROUP_SECONDS
     })
+
+    if BRAIN_DEBUG:
+        logger.warning("=" * 70)
+        logger.warning("  *** JOI_BRAIN_DEBUG IS ENABLED ***")
+        logger.warning("  Writing full LLM payloads (unredacted) to: %s", BRAIN_DEBUG_DIR)
+        logger.warning("  DISABLE THIS IN PRODUCTION")
+        logger.warning("=" * 70)
 
     uvicorn.run(
         app,
