@@ -4,9 +4,9 @@ Wind state management for per-conversation proactive messaging state.
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 logger = logging.getLogger("joi.wind.state")
 
@@ -22,6 +22,7 @@ class WindState:
     last_impulse_check_at: Optional[datetime] = None
     proactive_sent_today: int = 0
     proactive_day_bucket: Optional[str] = None  # YYYY-MM-DD
+    proactive_fire_times: List[datetime] = field(default_factory=list)
     unanswered_proactive_count: int = 0
     wind_snooze_until: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -116,7 +117,8 @@ class WindStateManager:
                    updated_at, threshold_offset, accumulated_impulse,
                    engagement_score, total_proactives_sent, total_engaged,
                    total_ignored, total_deflected, last_engaged_at, last_deflected_at,
-                   convo_gap_ema_seconds, last_tension_mined_message_ts
+                   convo_gap_ema_seconds, last_tension_mined_message_ts,
+                   proactive_fire_times_json
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -125,6 +127,15 @@ class WindStateManager:
         row = cursor.fetchone()
         if not row:
             return None
+
+        import json as _json
+        raw_fire = row["proactive_fire_times_json"]
+        fire_times = []
+        if raw_fire:
+            for ts in _json.loads(raw_fire):
+                dt = _parse_datetime(ts)
+                if dt:
+                    fire_times.append(dt)
 
         return WindState(
             conversation_id=row["conversation_id"],
@@ -148,6 +159,7 @@ class WindStateManager:
             last_deflected_at=_parse_datetime(row["last_deflected_at"]),
             convo_gap_ema_seconds=row["convo_gap_ema_seconds"],
             last_tension_mined_message_ts=row["last_tension_mined_message_ts"],
+            proactive_fire_times=fire_times,
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -181,6 +193,7 @@ class WindStateManager:
         "engagement_score", "total_proactives_sent", "total_engaged",
         "total_ignored", "total_deflected", "last_engaged_at", "last_deflected_at",
         "convo_gap_ema_seconds", "last_tension_mined_message_ts",
+        "proactive_fire_times_json",
     })
 
     def update_state(self, conversation_id: str, **updates) -> None:
@@ -272,13 +285,27 @@ class WindStateManager:
         )
         conn.commit()
 
+        # Update rolling 24h fire timestamps
+        import json as _json
+        state = self.get_state(conversation_id)
+        cutoff = now - timedelta(hours=24)
+        fire_times = [t for t in state.proactive_fire_times if t > cutoff]
+        fire_times.append(now)
+        fire_times_json = _json.dumps([_format_datetime(t) for t in fire_times])
+        conn.execute(
+            "UPDATE wind_state SET proactive_fire_times_json = ? WHERE conversation_id = ?",
+            (fire_times_json, conversation_id),
+        )
+        conn.commit()
+
         # Log with fresh state
         state = self.get_state(conversation_id)
         logger.info("Recorded proactive sent", extra={
             "conversation_id": conversation_id,
             "today": state.proactive_sent_today,
             "unanswered": state.unanswered_proactive_count,
-            "total": state.total_proactives_sent
+            "total": state.total_proactives_sent,
+            "fire_times_24h": len(state.proactive_fire_times),
         })
 
     def record_user_interaction(self, conversation_id: str, ema_alpha: float = 0.3) -> None:

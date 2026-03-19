@@ -136,7 +136,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # SQL for creating tables
 SCHEMA_SQL = f"""
@@ -270,7 +270,9 @@ CREATE TABLE IF NOT EXISTS wind_state (
     -- Hot conversation suppression (Phase 5)
     convo_gap_ema_seconds REAL DEFAULT NULL,
     -- Tension mining pointer (epoch ms of newest mined message)
-    last_tension_mined_message_ts INTEGER DEFAULT NULL
+    last_tension_mined_message_ts INTEGER DEFAULT NULL,
+    -- Rolling 24h fire timestamps for sliding window cap (v12)
+    proactive_fire_times_json TEXT DEFAULT NULL
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -832,6 +834,15 @@ class MemoryStore:
                     " WHERE expires_at IS NOT NULL"
                 )
                 conn.commit()
+
+        # Migration v12: rolling 24h fire timestamps for sliding window cap
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+        if "proactive_fire_times_json" not in cols:
+            logger.info("Migration v12: Adding 'proactive_fire_times_json' column to wind_state table")
+            conn.execute(
+                "ALTER TABLE wind_state ADD COLUMN proactive_fire_times_json TEXT DEFAULT NULL"
+            )
+            conn.commit()
 
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
