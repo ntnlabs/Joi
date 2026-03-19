@@ -62,6 +62,9 @@ class WindConfig:
     ghost_probe_days: int = 60          # Days of silence before ghost probe fires
     ghost_probe_priority: int = 20      # Very low priority — surfaces only when nothing else pending
 
+    # Curiosity mining: max pending tension/discovery topics before mining is skipped
+    max_pending_mined_topics: int = 1   # Raise to 3+ for faster testing
+
     # WindMood: threshold drift bounds (random walk)
     threshold_drift_min: float = -0.1  # Can drift 0.1 below baseline
     threshold_drift_max: float = 0.1   # Can drift 0.1 above baseline
@@ -109,6 +112,7 @@ class WindConfig:
             undertaker_threshold=data.get("undertaker_threshold", 2.0),
             ghost_probe_days=data.get("ghost_probe_days", 60),
             ghost_probe_priority=data.get("ghost_probe_priority", 20),
+            max_pending_mined_topics=data.get("max_pending_mined_topics", 1),
             threshold_drift_min=data.get("threshold_drift_min", -0.1),
             threshold_drift_max=data.get("threshold_drift_max", 0.1),
             threshold_drift_step=data.get("threshold_drift_step", 0.01),
@@ -149,6 +153,7 @@ class WindConfig:
             "undertaker_threshold": self.undertaker_threshold,
             "ghost_probe_days": self.ghost_probe_days,
             "ghost_probe_priority": self.ghost_probe_priority,
+            "max_pending_mined_topics": self.max_pending_mined_topics,
             "threshold_drift_min": self.threshold_drift_min,
             "threshold_drift_max": self.threshold_drift_max,
             "threshold_drift_step": self.threshold_drift_step,
