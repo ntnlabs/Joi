@@ -2003,7 +2003,7 @@ SQL
             printf "  %-18s %s\n" "outcome_at:" "$(db_scalar "SELECT COALESCE(outcome_at,'-') FROM pending_topics WHERE id = $topic_id;")"
             printf "  %-18s %s\n" "novelty_key:" "$(db_scalar "SELECT COALESCE(novelty_key,'-') FROM pending_topics WHERE id = $topic_id;")"
             printf "  %-18s %s\n" "source_event_id:" "$(db_scalar "SELECT COALESCE(source_event_id,'-') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "message_id:" "$(db_scalar "SELECT COALESCE(message_id,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "sent_message_id:" "$(db_scalar "SELECT COALESCE(sent_message_id,'-') FROM pending_topics WHERE id = $topic_id;")"
             local content
             content=$(db_scalar "SELECT COALESCE(content,'') FROM pending_topics WHERE id = $topic_id;")
             if [[ -n "$content" ]]; then
