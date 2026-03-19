@@ -121,6 +121,10 @@ JOI_TIMEZONE=Europe/Bratislava
 # How often to refresh group membership cache (minutes)
 #JOI_MEMBERSHIP_REFRESH_MINUTES=15
 
+# --- Reminders ---
+# How long to retain fired/expired/cancelled reminders (days). 0 = keep forever.
+#JOI_REMINDER_RETENTION_DAYS=180
+
 # --- Scheduler (Wind/Tasks) ---
 # Background scheduler for proactive messaging and reminders
 JOI_SCHEDULER_ENABLED=1
