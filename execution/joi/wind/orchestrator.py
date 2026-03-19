@@ -73,7 +73,7 @@ class WindOrchestrator:
         self.memory = memory
         self._llm_client = llm_client
         self._curiosity_model = os.getenv("JOI_CURIOSITY_MODEL")
-        self._tension_silence_hours = int(os.getenv("JOI_TENSION_SILENCE_HOURS", "2"))
+        self._tension_silence_minutes = int(os.getenv("JOI_TENSION_SILENCE_MINUTES", "20"))
         self._context_message_count = context_message_count
         self._compact_batch_size = compact_batch_size
         self.state_manager = WindStateManager(db_connection_factory)
@@ -894,7 +894,7 @@ class WindOrchestrator:
         last_interaction = state.last_user_interaction_at
         silence_ok = (
             last_interaction is not None and
-            (now - last_interaction) >= timedelta(hours=self._tension_silence_hours)
+            (now - last_interaction) >= timedelta(minutes=self._tension_silence_minutes)
         )
         if not silence_ok:
             return
