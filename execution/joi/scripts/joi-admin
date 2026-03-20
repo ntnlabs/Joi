@@ -2630,7 +2630,7 @@ SELECT
     conversation_id || char(1) ||
     category || char(1) ||
     key || char(1) ||
-    substr(trim(replace(replace(value, char(10), ' '), char(13), '')), 1, 28) || char(1) ||
+    trim(replace(replace(value, char(10), ' '), char(13), '')) || char(1) ||
     COALESCE(source, '') || char(1) ||
     active || char(1) ||
     important || char(1) ||
@@ -2661,8 +2661,12 @@ SQL
                 "----------------------------" "--------" "---" "---" "-------------------" "-------------------"
             while IFS=$'\x01' read -r id conv cat key val src act imp exp det; do
                 [[ -z "$id" ]] && continue
+                # If value looks like JSON, extract the first string field value
+                if [[ "$val" == "{"* ]]; then
+                    val=$(printf '%s' "$val" | sed 's/.*":\s*"\([^"]*\)".*/\1/')
+                fi
                 printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %-19s  %s\n" \
-                    "$id" "${conv:0:20}" "${cat:0:12}" "${key:0:20}" "$val" \
+                    "$id" "${conv:0:20}" "${cat:0:12}" "${key:0:20}" "${val:0:28}" \
                     "${src:0:8}" "$act" "$imp" "${exp:0:19}" "${det:0:19}"
             done <<< "$rows"
             ;;
