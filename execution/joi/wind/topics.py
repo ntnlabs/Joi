@@ -398,7 +398,7 @@ class TopicManager:
         return cursor.fetchone()[0]
 
     def count_pending_by_type(self, conversation_id: str, topic_type: str) -> int:
-        """Count pending topics of a specific type for a conversation."""
+        """Count active (pending or awaiting_response) topics of a specific type for a conversation."""
         conn = self._connect()
         now = datetime.now().isoformat()
         cursor = conn.execute(
@@ -406,10 +406,10 @@ class TopicManager:
             SELECT COUNT(*) FROM pending_topics
             WHERE conversation_id = ?
               AND topic_type = ?
-              AND status = ?
+              AND status IN (?, ?)
               AND (expires_at IS NULL OR expires_at > ?)
             """,
-            (conversation_id, topic_type, self.STATUS_PENDING, now)
+            (conversation_id, topic_type, self.STATUS_PENDING, self.STATUS_AWAITING_RESPONSE, now)
         )
         return cursor.fetchone()[0]
 
