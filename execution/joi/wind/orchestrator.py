@@ -584,13 +584,33 @@ class WindOrchestrator:
             f"Topic: {topic.title}\n"
             f"Context: {topic.content or '(none)'}\n"
             f"User's response: {user_message}\n\n"
-            "In 1-2 sentences, summarise what was resolved, decided, or learned. "
-            "Be specific and factual. If nothing concrete was resolved, reply with exactly: SKIP"
+            "In 1-2 plain sentences, summarise what was resolved, decided, or learned. "
+            "Be specific and factual. Plain text only — no JSON, no markdown, no bullet points. "
+            "If nothing concrete was resolved, reply with exactly: SKIP"
         )
 
         try:
             resp = self._llm_client.generate(prompt, model=self._curiosity_model)
             text = resp.text.strip()
+            if not text or text.upper() == "SKIP":
+                return
+
+            # Guard against model returning JSON despite the prompt
+            if text.startswith("{"):
+                import json as _json
+                try:
+                    obj = _json.loads(text)
+                    # Try common keys the model might use
+                    for k in ("resolved", "summary", "result", "text", "value"):
+                        if k in obj and isinstance(obj[k], str):
+                            text = obj[k].strip()
+                            break
+                    else:
+                        # No known key — join all string values
+                        text = " ".join(v for v in obj.values() if isinstance(v, str)).strip()
+                except _json.JSONDecodeError:
+                    pass  # Not valid JSON, use as-is
+
             if not text or text.upper() == "SKIP":
                 return
 
