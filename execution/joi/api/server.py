@@ -1872,35 +1872,43 @@ def _generate_proactive_message(
     # Simple base personality for Wind messages
     base_prompt = "You are Joi, a warm and thoughtful AI companion."
 
-    # Get user facts for this conversation
-    facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
-
-    # Build system prompt with personality and facts
-    system_parts = [base_prompt]
-    if facts_text:
-        system_parts.append(f"\n\n{facts_text}")
-    system_prompt = "".join(system_parts)
-
-    # Build the user prompt (task)
     topic_info = topic_title
     if topic_content:
-        topic_info += f"\nDetails: {topic_content}"
+        topic_info += f" — {topic_content}"
 
-    user_prompt = f"""You are reaching out proactively to start a conversation.
+    # Pull relevant context via FTS (no extra LLM calls — pure SQL/BM25)
+    facts_ctx = memory.get_facts_as_context(
+        query=topic_title,
+        max_tokens=FACTS_FTS_MAX_TOKENS,
+        min_confidence=0.6,
+        conversation_id=conversation_id,
+    )
+    summaries_ctx = memory.get_summaries_as_context(
+        query=topic_title,
+        max_tokens=SUMMARIES_FTS_MAX_TOKENS,
+        days=30,
+        conversation_id=conversation_id,
+    )
 
-Topic to bring up: {topic_info}
+    # Build system prompt
+    system_parts = [base_prompt]
+    if facts_ctx:
+        system_parts.append(f"\n\n{facts_ctx}")
+    system_prompt = "".join(system_parts)
 
-Write a brief, natural message to start a conversation about this topic.
-Rules:
-- Stay in character as Joi
-- Be warm but not overly enthusiastic
-- Keep it short (1-3 sentences)
-- Don't be pushy or demanding
-- Sound natural, like you just thought of it
-- No greetings like "Hey!" or "Hi there!" - just get into it naturally
-- Use what you know about the user to make it personal
+    # Build context block for user prompt
+    context_parts = []
+    if summaries_ctx:
+        context_parts.append(f"Relevant context from our history:\n{summaries_ctx}")
+    context_block = "\n\n".join(context_parts) + "\n\n" if context_parts else ""
 
-Just the message, nothing else."""
+    user_prompt = (
+        f"{context_block}"
+        f"You want to bring something up: {topic_info}\n\n"
+        "Write one short message — the kind you'd fire off without overthinking it. "
+        "Could be a question, a passing observation, or something that crossed your mind. "
+        "No greeting. No philosophical warm-up. Get straight to the point. Just the message."
+    )
 
     try:
         # Use chat with system prompt for better personality consistency
