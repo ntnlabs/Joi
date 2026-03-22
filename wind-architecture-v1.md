@@ -1758,6 +1758,33 @@ END;
 
 **Why fun**: Gives Joi awareness of its own memory being externally modified - like a digital "someone's talking about me" sense.
 
+## TODO / Future Improvements
+
+### Emotional Register for Proactive Messages
+**Status:** Not started
+
+Currently `_generate_proactive_message()` uses a single LLM call that is expected to
+infer tone from RAG context (facts + summaries). In practice the generator tends toward
+one implicit register — casual, low-key — regardless of topic weight.
+
+**Idea:** Split into two LLM calls:
+1. **Tone call** — given topic title/content + relevant summaries, return a short
+   descriptor: `playful`, `melancholic`, `curious`, `dry`, `serious`, etc.
+2. **Generation call** — same as now, but with the tone descriptor injected into the
+   prompt as an explicit signal.
+
+The tone call is small and cheap. The input is the same summaries context already
+fetched for generation, so no extra DB queries. Output is one word or short phrase.
+
+**Why:** Two people could discuss "your dad's health" very differently depending on
+relationship history. The summaries carry that texture; a dedicated tone pass surfaces
+it explicitly rather than hoping the generator picks it up.
+
+**When to revisit:** After the current RAG-enriched prompt ships and produces enough
+real examples to judge whether tone variability is still lacking.
+
+---
+
 ## Known Bugs
 
 ### Direct Reply Timestamp Mismatch
