@@ -304,6 +304,8 @@ _validate_compaction_settings()
 # RAG settings
 RAG_ENABLED = os.getenv("JOI_RAG_ENABLED", "1") == "1"  # Default: enabled
 RAG_MAX_TOKENS = int(os.getenv("JOI_RAG_MAX_TOKENS", "1500"))  # Max tokens for RAG context
+RAG_MIN_SIMILARITY = float(os.getenv("JOI_RAG_MIN_SIMILARITY", "0.45"))  # cosine, 0.0 = off
+RAG_MIN_BM25 = float(os.getenv("JOI_RAG_MIN_BM25", "-0.5"))             # bm25, 0.0 = off
 
 # FTS search settings for facts and summaries
 FACTS_FTS_ENABLED = os.getenv("JOI_FACTS_FTS_ENABLED", "1") == "1"  # Default: enabled
@@ -2145,6 +2147,8 @@ def _build_enriched_prompt(
             user_message,
             max_tokens=RAG_MAX_TOKENS,
             scopes=knowledge_scopes,
+            min_similarity=RAG_MIN_SIMILARITY,
+            min_bm25=RAG_MIN_BM25,
         )
         if rag_context:
             parts.append("\n\n" + rag_context)

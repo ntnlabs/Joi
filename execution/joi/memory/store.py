@@ -2303,6 +2303,7 @@ class MemoryStore:
         query: str,
         limit: int = 5,
         scopes: Optional[List[str]] = None,
+        min_rank: float = 0.0,
     ) -> List[KnowledgeChunk]:
         """
         Search knowledge base using FTS5 full-text search.
@@ -2365,7 +2366,11 @@ class MemoryStore:
                 params
             )
             rows = cursor.fetchall()
-            logger.debug("FTS results", extra={"matches": len(rows)})
+            if min_rank < 0.0:
+                rows = [r for r in rows if r["rank"] <= min_rank]
+                logger.debug("FTS results", extra={"matches": len(rows), "min_rank": min_rank})
+            else:
+                logger.debug("FTS results", extra={"matches": len(rows)})
         except sqlite3.OperationalError as e:
             logger.warning("FTS5 search failed", extra={"error": str(e), "query": fts_query[:100]})
             return []
@@ -2388,6 +2393,7 @@ class MemoryStore:
         query: str,
         limit: int = 10,
         scopes: Optional[List[str]] = None,
+        min_score: float = 0.0,
     ) -> List[KnowledgeChunk]:
         """
         Search knowledge base using semantic (embedding) similarity.
@@ -2447,7 +2453,13 @@ class MemoryStore:
             scored.append((score, row))
 
         scored.sort(key=lambda x: x[0], reverse=True)
-        logger.debug("Knowledge semantic search", extra={"candidates": len(rows), "limit": limit})
+        if min_score > 0.0:
+            scored = [(s, r) for s, r in scored if s >= min_score]
+            logger.debug("Knowledge semantic search", extra={
+                "candidates": len(rows), "above_threshold": len(scored), "limit": limit
+            })
+        else:
+            logger.debug("Knowledge semantic search", extra={"candidates": len(rows), "limit": limit})
 
         return [
             KnowledgeChunk(
@@ -2598,6 +2610,8 @@ class MemoryStore:
         query: str,
         max_tokens: int = 1000,
         scopes: Optional[List[str]] = None,
+        min_similarity: float = 0.0,
+        min_bm25: float = 0.0,
     ) -> str:
         """
         Search knowledge and format as context for LLM.
@@ -2606,15 +2620,17 @@ class MemoryStore:
             query: Search query
             max_tokens: Approximate max tokens (chars / 4)
             scopes: Allowed knowledge scopes (None = all)
+            min_similarity: Minimum cosine similarity for semantic search (0.0 = no filter)
+            min_bm25: Minimum BM25 rank for FTS fallback (0.0 = no filter, more negative = stricter)
 
         Returns:
             Formatted context string
         """
-        chunks = self.search_knowledge_semantic(query, limit=10, scopes=scopes)
+        chunks = self.search_knowledge_semantic(query, limit=10, scopes=scopes, min_score=min_similarity)
         if chunks:
             logger.debug("Knowledge: semantic search returned results", extra={"count": len(chunks)})
         else:
-            chunks = self.search_knowledge(query, limit=10, scopes=scopes)
+            chunks = self.search_knowledge(query, limit=10, scopes=scopes, min_rank=min_bm25)
             if chunks:
                 logger.debug("Knowledge: FTS fallback returned results", extra={"count": len(chunks)})
         if not chunks:

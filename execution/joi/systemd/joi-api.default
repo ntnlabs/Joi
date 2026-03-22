@@ -83,6 +83,10 @@ JOI_RAG_ENABLED=1
 # Ollama embedding model for semantic search (leave empty to use BM25 FTS only)
 # Pull with: ollama pull nomic-embed-text
 #JOI_EMBEDDING_MODEL=
+# Minimum cosine similarity for semantic RAG (0.0 = no filter, 1.0 = exact match only)
+#JOI_RAG_MIN_SIMILARITY=0.45
+# Minimum BM25 score for FTS RAG fallback (0.0 = no filter, more negative = stricter)
+#JOI_RAG_MIN_BM25=-0.5
 
 # --- Facts & Summaries FTS ---
 # Full-text search context injection (facts and conversation summaries)
