@@ -68,6 +68,12 @@ class WindConfig:
     # Curiosity mining: max pending tension/discovery topics before mining is skipped
     max_pending_mined_topics: int = 1   # Raise to 3+ for faster testing
 
+    # End-of-day LLM dedup pass for near-duplicate pending topics
+    topic_dedup_enabled: bool = True
+
+    # Minimum silence before daily housekeeping tasks fire (separate from min_silence_minutes)
+    daily_tasks_silence_minutes: int = 30
+
     # WindMood: threshold drift bounds (random walk)
     threshold_drift_min: float = -0.1  # Can drift 0.1 below baseline
     threshold_drift_max: float = 0.1   # Can drift 0.1 above baseline
@@ -117,6 +123,8 @@ class WindConfig:
             ghost_probe_priority=data.get("ghost_probe_priority", 20),
             undertaker_poke_days=data.get("undertaker_poke_days", 30),
             max_pending_mined_topics=data.get("max_pending_mined_topics", 1),
+            topic_dedup_enabled=data.get("topic_dedup_enabled", True),
+            daily_tasks_silence_minutes=data.get("daily_tasks_silence_minutes", 30),
             threshold_drift_min=data.get("threshold_drift_min", -0.1),
             threshold_drift_max=data.get("threshold_drift_max", 0.1),
             threshold_drift_step=data.get("threshold_drift_step", 0.01),
@@ -159,6 +167,8 @@ class WindConfig:
             "ghost_probe_priority": self.ghost_probe_priority,
             "undertaker_poke_days": self.undertaker_poke_days,
             "max_pending_mined_topics": self.max_pending_mined_topics,
+            "topic_dedup_enabled": self.topic_dedup_enabled,
+            "daily_tasks_silence_minutes": self.daily_tasks_silence_minutes,
             "threshold_drift_min": self.threshold_drift_min,
             "threshold_drift_max": self.threshold_drift_max,
             "threshold_drift_step": self.threshold_drift_step,

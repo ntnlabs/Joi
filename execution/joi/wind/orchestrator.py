@@ -1100,6 +1100,23 @@ class WindOrchestrator:
             lines.append(f"{speaker}: {text}")
         transcript = "\n".join(lines)
 
+        # Undertaker families (permanently blocked)
+        undertaker_families = []
+        if self.feedback_manager:
+            undertaker_families = self.feedback_manager.get_undertaker_families(conversation_id)
+
+        # Already-resolved wind_outcome facts
+        resolved_facts = []
+        if self.memory:
+            try:
+                facts = self.memory.get_facts(conversation_id=conversation_id, category="wind_outcome")
+                resolved_facts = [(f.key, f.value) for f in facts]
+            except Exception:
+                pass
+
+        undertaker_block = "\n".join(f"- {f}" for f in undertaker_families) or "(none)"
+        resolved_block = "\n".join(f"- {k}: {v}" for k, v in resolved_facts) or "(none)"
+
         prompt = (
             f"Recent conversation (oldest first):\n{transcript}\n\n"
             "Identify the single most promising unfinished thread, open question, or "
@@ -1110,6 +1127,9 @@ class WindOrchestrator:
             '{"title": "<short natural topic title>", '
             '"summary": "<what to follow up on, 1-2 sentences>", '
             '"confidence": <0.0-1.0>}'
+            f"\n\nPERMANENTLY OFF-LIMITS topic areas (never surface these):\n{undertaker_block}"
+            f"\n\nALREADY RESOLVED topics — only surface again if there is a GENUINELY NEW ANGLE "
+            f"(e.g. user raised a new problem on the same subject, not just revisiting the same thread):\n{resolved_block}"
         )
 
         logger.info("Curiosity mining: calling LLM", extra={
@@ -1132,6 +1152,20 @@ class WindOrchestrator:
             title = str(data.get("title", "")).strip()
             summary = str(data.get("summary", "")).strip()
             confidence = float(data.get("confidence", 0.0))
+
+            # Hard undertaker guard (belt + suspenders — prompt is soft)
+            if confidence >= 0.5 and title and self.feedback_manager:
+                family = normalize_topic_family("tension", title)
+                if self.feedback_manager.is_in_cooldown(conversation_id, family):
+                    logger.debug("Mining: skipped — family in cooldown/undertaker", extra={
+                        "conversation_id": conversation_id,
+                        "topic_family": family,
+                    })
+                    self.state_manager.update_state(
+                        conversation_id,
+                        last_tension_mined_message_ts=newest_ts,
+                    )
+                    return
 
             if confidence >= 0.5 and title:
                 novelty_key = (
@@ -1213,3 +1247,102 @@ class WindOrchestrator:
             logger.info("Timed out topics", extra={"count": timed_out})
 
         return timed_out
+
+    def deduplicate_topics_all(self, now: Optional[datetime] = None) -> None:
+        """End-of-day LLM pass to collapse near-duplicate pending topics."""
+        if not getattr(self.config, 'topic_dedup_enabled', True):
+            return
+        if not self._llm_client or not self._curiosity_model:
+            return
+        for conversation_id in self.config.allowlist:
+            try:
+                self._deduplicate_topics(conversation_id)
+            except Exception as e:
+                logger.warning("Topic dedup failed", extra={
+                    "conversation_id": conversation_id, "error": str(e),
+                })
+
+    def _deduplicate_topics(self, conversation_id: str) -> None:
+        """LLM-based near-duplicate collapse for a single conversation."""
+        pending = self.topic_manager.get_pending_topics(conversation_id)
+        awaiting = self.topic_manager.get_topics_awaiting_response(conversation_id)
+        all_topics = pending + awaiting
+        if len(all_topics) < 2:
+            logger.debug("Topic dedup: not enough topics", extra={
+                "conversation_id": conversation_id, "count": len(all_topics),
+            })
+            return
+
+        pending_ids = {t.id for t in pending}
+        lines = []
+        for t in all_topics:
+            tag = "AWAITING" if t.status == "awaiting_response" else "pending"
+            snippet = (t.content or "")[:80].replace("\n", " ")
+            lines.append(f"[{t.id}:{tag}] {t.topic_type} | \"{t.title}\" | {snippet}")
+
+        prompt = (
+            "Review these pending conversation follow-up topics.\n"
+            "AWAITING = already sent, waiting for response. pending = not sent yet.\n\n"
+            "Identify duplicates or near-duplicates that cover the same subject.\n"
+            "For each group, synthesize the BEST merged title and content — combine the most "
+            "specific and valuable parts of all topics in the group. "
+            "Example: 'Proxmox Security' + 'Proxmox Node Hardening' → 'Proxmox Node Hardening and Security'.\n\n"
+            "Topics:\n" + "\n".join(lines) + "\n\n"
+            "Return JSON array of merge groups:\n"
+            "[{\"keep\": id, \"dismiss\": [id,...], "
+            "\"merged_title\": \"...\", \"merged_content\": \"...\", \"reason\": \"...\"}]\n"
+            "keep = id whose record will be updated with the merged content.\n"
+            "dismiss = pending ids only (never dismiss AWAITING).\n"
+            "merged_title and merged_content must be synthesized from all topics in the group.\n"
+            "Return [] if no merges needed. Plain JSON, no markdown."
+        )
+
+        resp = self._llm_client.generate(prompt, model=self._curiosity_model)
+        raw = resp.text.strip()
+        logger.debug("Topic dedup: LLM response", extra={
+            "conversation_id": conversation_id, "response": raw,
+        })
+
+        groups = json.loads(raw)
+        if not isinstance(groups, list) or not groups:
+            logger.debug("Topic dedup: no merges needed", extra={
+                "conversation_id": conversation_id,
+            })
+            return
+
+        dismissed_total = 0
+        for group in groups:
+            keep_id = group.get("keep")
+            dismiss_ids = group.get("dismiss", [])
+            merged_title = group.get("merged_title", "").strip()
+            merged_content = group.get("merged_content", "").strip()
+            reason = group.get("reason", "")
+            if not isinstance(dismiss_ids, list):
+                continue
+            safe_dismiss = [d for d in dismiss_ids if d in pending_ids and d != keep_id]
+            if not safe_dismiss:
+                continue
+            # Update the kept topic with synthesized title + content
+            if merged_title:
+                self.topic_manager.update_topic_content(keep_id, merged_title, merged_content or None)
+            # Boost only for pending-vs-pending merges (hot signal)
+            boost_applied = keep_id in pending_ids
+            if boost_applied:
+                self.topic_manager.boost_priority(keep_id, delta=10)
+            for did in safe_dismiss:
+                self.topic_manager.mark_dismissed(did)
+                dismissed_total += 1
+            logger.info("Merged topics", extra={
+                "conversation_id": conversation_id,
+                "kept_id": keep_id,
+                "dismissed_ids": safe_dismiss,
+                "merged_title": merged_title,
+                "reason": reason,
+                "boost_applied": boost_applied,
+            })
+
+        if dismissed_total > 0:
+            logger.info("Daily topic dedup complete", extra={
+                "conversation_id": conversation_id,
+                "dismissed": dismissed_total,
+            })

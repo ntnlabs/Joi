@@ -426,6 +426,24 @@ class TopicManager:
             logger.debug("Deleted topic", extra={"topic_id": topic_id})
         return deleted
 
+    def boost_priority(self, topic_id: int, delta: int = 10) -> None:
+        """Boost a topic's priority by delta, capped at 100."""
+        conn = self._connect()
+        conn.execute(
+            "UPDATE pending_topics SET priority = MIN(100, priority + ?) WHERE id = ?",
+            (delta, topic_id)
+        )
+        conn.commit()
+
+    def update_topic_content(self, topic_id: int, title: str, content: Optional[str] = None) -> None:
+        """Update a topic's title and content (used when merging near-duplicates)."""
+        conn = self._connect()
+        conn.execute(
+            "UPDATE pending_topics SET title = ?, content = ? WHERE id = ?",
+            (title, content, topic_id)
+        )
+        conn.commit()
+
     def clear_conversation_topics(self, conversation_id: str) -> int:
         """Delete all topics for a conversation. Returns count deleted."""
         conn = self._connect()
