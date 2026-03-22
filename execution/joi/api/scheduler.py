@@ -5,6 +5,7 @@ import os
 import time
 import threading
 import uuid
+from datetime import datetime
 from typing import Callable, Optional
 
 logger = logging.getLogger("joi.api.scheduler")
@@ -36,6 +37,7 @@ class Scheduler:
         self._last_tick: Optional[float] = None
         self._tick_count = 0
         self._error_count = 0
+        self._daily_tasks_pending: bool = False
 
         # Dependencies (set via set_dependencies)
         self._memory = None
@@ -188,10 +190,16 @@ class Scheduler:
             self._cleanup_send_cache()
             self._check_fts_integrity()
 
-        # HMAC rotation check + reminder cleanup once per day
+        # Mark daily tasks as due at the 24h boundary (unchanged schedule)
         if self._tick_count % _TICKS_DAILY == 0 and self._tick_count > 0:
+            self._daily_tasks_pending = True
+
+        # Fire on the first quiet tick after the boundary (may be same tick if already silent)
+        if self._daily_tasks_pending and self._is_system_quiet():
+            self._daily_tasks_pending = False
             self._check_hmac_rotation()
             self._purge_old_reminders()
+            self._dedup_wind_topics()
 
         # Refresh membership cache (only runs if business mode + dm_group_knowledge)
         if self._tick_count % _TICKS_MEMBERSHIP == 0:
@@ -562,6 +570,37 @@ class Scheduler:
                 "conversation_id": conversation_id,
                 "error": str(e)
             })
+
+    def _is_system_quiet(self) -> bool:
+        """Return True if no allowlisted conversation has been recently active."""
+        if not self._wind_orchestrator:
+            return True
+        config = self._wind_orchestrator.config
+        if not config.allowlist:
+            return True
+        threshold_s = config.daily_tasks_silence_minutes * 60
+        now = datetime.now()
+        for conv_id in config.allowlist:
+            state = self._wind_orchestrator.state_manager.get_state(conv_id)
+            if state and state.last_user_interaction_at:
+                elapsed = (now - state.last_user_interaction_at).total_seconds()
+                if elapsed < threshold_s:
+                    logger.debug("Daily tasks deferred: conversation recently active", extra={
+                        "conversation_id": conv_id,
+                        "elapsed_minutes": round(elapsed / 60, 1),
+                        "required_minutes": config.daily_tasks_silence_minutes,
+                    })
+                    return False
+        return True
+
+    def _dedup_wind_topics(self):
+        """End-of-day topic deduplication via LLM."""
+        if not self._wind_orchestrator:
+            return
+        try:
+            self._wind_orchestrator.deduplicate_topics_all()
+        except Exception as e:
+            logger.warning("Scheduler: topic dedup failed", extra={"error": str(e)})
 
     def _startup_config_push(self):
         """Push config to mesh on startup to ensure sync."""
