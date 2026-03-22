@@ -101,6 +101,8 @@ class WindOrchestrator:
             llm_client=llm_client,
             timeout_hours=self.config.ignore_timeout_hours if hasattr(self.config, 'ignore_timeout_hours') else 12.0,
         )
+        # Suppress identical "mining skipped at cap" repeats: {conv_id: (tension, discovery)}
+        self._mining_skip_last: dict[str, tuple[int, int]] = {}
 
     def _validate_tension_settings(self) -> None:
         """Validate tension silence against Wind's silence and cooldown gates."""
@@ -1006,19 +1008,28 @@ class WindOrchestrator:
         pending_tension = self.topic_manager.count_pending_by_type(conversation_id, "tension")
         pending_discovery = self.topic_manager.count_pending_by_type(conversation_id, "discovery")
         if pending_tension >= cap:
-            logger.info("Curiosity mining skipped: pending tension topics at cap", extra={
-                "conversation_id": conversation_id,
-                "pending": pending_tension,
-                "cap": cap,
-            })
+            _skip_state = (pending_tension, pending_discovery)
+            if self._mining_skip_last.get(conversation_id) != _skip_state:
+                logger.info("Curiosity mining skipped: pending tension topics at cap", extra={
+                    "conversation_id": conversation_id,
+                    "pending": pending_tension,
+                    "cap": cap,
+                })
+                self._mining_skip_last[conversation_id] = _skip_state
             return
         if pending_discovery >= cap:
-            logger.info("Curiosity mining skipped: pending discovery topics at cap", extra={
-                "conversation_id": conversation_id,
-                "pending": pending_discovery,
-                "cap": cap,
-            })
+            _skip_state = (pending_tension, pending_discovery)
+            if self._mining_skip_last.get(conversation_id) != _skip_state:
+                logger.info("Curiosity mining skipped: pending discovery topics at cap", extra={
+                    "conversation_id": conversation_id,
+                    "pending": pending_discovery,
+                    "cap": cap,
+                })
+                self._mining_skip_last[conversation_id] = _skip_state
             return
+
+        # Mining will run — clear skip cache so next skip logs again
+        self._mining_skip_last.pop(conversation_id, None)
 
         # Pre-compaction trigger: mine the batch about to be summarized
         if self._context_message_count and self.memory:

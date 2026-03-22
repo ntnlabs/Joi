@@ -197,9 +197,11 @@ class Scheduler:
         # Fire on the first quiet tick after the boundary (may be same tick if already silent)
         if self._daily_tasks_pending and self._is_system_quiet():
             self._daily_tasks_pending = False
+            logger.info("Scheduler: running end-of-day procedures", extra={"action": "daily_tasks_start"})
             self._check_hmac_rotation()
             self._purge_old_reminders()
             self._dedup_wind_topics()
+            logger.info("Scheduler: end-of-day procedures complete", extra={"action": "daily_tasks_done"})
 
         # Refresh membership cache (only runs if business mode + dm_group_knowledge)
         if self._tick_count % _TICKS_MEMBERSHIP == 0:
