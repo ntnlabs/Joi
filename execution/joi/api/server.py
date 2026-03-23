@@ -286,6 +286,7 @@ CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "50"))
 COMPACT_BATCH_SIZE = int(os.getenv("JOI_COMPACT_BATCH_SIZE", "20"))
 CONSOLIDATION_ARCHIVE = os.getenv("JOI_CONSOLIDATION_ARCHIVE", "0") == "1"  # Default: delete
 CONSOLIDATION_MODEL = os.getenv("JOI_CONSOLIDATION_MODEL")  # Optional: separate model for compaction
+CURIOSITY_MODEL = os.getenv("JOI_CURIOSITY_MODEL") or None  # Used for structured intent detection
 
 # Validate compaction constraints: 10 <= batch_size < context_size // 2
 def _validate_compaction_settings():
@@ -707,6 +708,36 @@ def _should_mark_important(text: str, category: str, key: str) -> bool:
     return False
 
 
+def _llm_detect(prompt: str, model: Optional[str] = None) -> Optional[dict]:
+    """
+    Call LLM with prompt, parse JSON response. Returns dict or None.
+
+    Handles LLM errors, code fences, brace extraction, null/SKIP responses,
+    and JSON parse failures. Callers handle their own trigger gate and prompt
+    construction.
+    """
+    try:
+        response = llm.generate(prompt=prompt, model=model)
+        if not response or response.error or not response.text:
+            return None
+        raw = response.text.strip()
+        if not raw or raw.lower() in ("null", "skip", "none"):
+            return None
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+        start = raw.find("{")
+        end = raw.rfind("}") + 1
+        if start < 0 or end <= start:
+            return None
+        return json.loads(raw[start:end])
+    except Exception as exc:
+        logger.debug("LLM intent detection failed", extra={"error": str(exc)})
+        return None
+
+
 def _detect_and_extract_fact(
     text: str,
     conversation_id: str = "",
@@ -755,67 +786,55 @@ If NO, return:
 
 Return ONLY valid JSON, nothing else:"""
 
+    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    if not result or not result.get("remember", False):
+        logger.debug("LLM: nothing to remember in message")
+        return None
+
+    if not all(k in result for k in ["category", "key", "value"]):
+        return None
+
     try:
-        response = llm.generate(prompt=prompt)
-        if response.error:
-            logger.debug("LLM error in remember detection", extra={"error": response.error})
-            return None
+        # For groups, prefix key with sender name to distinguish users
+        fact_key = result["key"]
+        fact_value = str(result["value"])
+        if is_group and sender_name:
+            # Use sender name in key: "peter_name" instead of "name"
+            safe_name = sender_name.lower().replace(" ", "_")[:20]
+            fact_key = f"{safe_name}_{result['key']}"
 
-        # Parse JSON
-        text_resp = response.text.strip()
-        start = text_resp.find("{")
-        end = text_resp.rfind("}") + 1
-        if start >= 0 and end > start:
-            result = json.loads(text_resp[start:end])
+        # Determine if fact is important (core identity)
+        is_important = _should_mark_important(text, result["category"], fact_key)
 
-            if not result.get("remember", False):
-                logger.debug("LLM: nothing to remember in message")
-                return None
-
-            if all(k in result for k in ["category", "key", "value"]):
-                # For groups, prefix key with sender name to distinguish users
-                fact_key = result["key"]
-                fact_value = str(result["value"])
-                if is_group and sender_name:
-                    # Use sender name in key: "peter_name" instead of "name"
-                    safe_name = sender_name.lower().replace(" ", "_")[:20]
-                    fact_key = f"{safe_name}_{result['key']}"
-
-                # Determine if fact is important (core identity)
-                is_important = _should_mark_important(text, result["category"], fact_key)
-
-                memory.store_fact(
-                    category=result["category"],
-                    key=fact_key,
-                    value=fact_value,
-                    confidence=0.95,  # High confidence - user explicitly stated
-                    source="stated",
-                    conversation_id=conversation_id,
-                    important=is_important,
-                )
-                important_marker = " [important]" if is_important else ""
-                if policy_manager.is_privacy_mode():
-                    logger.info("Saved stated fact [privacy mode]", extra={
-                        "conversation_id": conversation_id[:8] + "..." if conversation_id else "global",
-                        "category": result["category"],
-                        "key": fact_key,
-                        "important": is_important,
-                        "action": "fact_save"
-                    })
-                else:
-                    logger.info("Saved stated fact", extra={
-                        "conversation_id": conversation_id or "global",
-                        "category": result["category"],
-                        "key": fact_key,
-                        "value": fact_value,
-                        "important": is_important,
-                        "action": "fact_save"
-                    })
-                return fact_value
-    except json.JSONDecodeError as e:
-        logger.debug("Failed to parse remember response", extra={"error": str(e)})
+        memory.store_fact(
+            category=result["category"],
+            key=fact_key,
+            value=fact_value,
+            confidence=0.95,  # High confidence - user explicitly stated
+            source="stated",
+            conversation_id=conversation_id,
+            important=is_important,
+        )
+        if policy_manager.is_privacy_mode():
+            logger.info("Saved stated fact [privacy mode]", extra={
+                "conversation_id": conversation_id[:8] + "..." if conversation_id else "global",
+                "category": result["category"],
+                "key": fact_key,
+                "important": is_important,
+                "action": "fact_save"
+            })
+        else:
+            logger.info("Saved stated fact", extra={
+                "conversation_id": conversation_id or "global",
+                "category": result["category"],
+                "key": fact_key,
+                "value": fact_value,
+                "important": is_important,
+                "action": "fact_save"
+            })
+        return fact_value
     except Exception as e:
-        logger.warning("Failed to detect/extract fact", extra={"error": str(e)})
+        logger.warning("Failed to store fact", extra={"error": str(e)})
         # Rollback to clear failed transaction state (prevents blocking other connections)
         try:
             memory._connect().rollback()
@@ -2332,17 +2351,78 @@ def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional
     return f"Reminder snoozed for {label}. I'll remind you about \"{last.title}\" then."
 
 
+def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
+    """
+    Use LLM to extract reminder due_at and title from natural language.
+    Returns (due_at: datetime UTC-aware, title: str) or None.
+    """
+    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+    now_local = datetime.now(timezone.utc).astimezone(tz)
+    now_str = now_local.strftime("%Y-%m-%d %H:%M %Z")
+
+    prompt = (
+        f'Current date and time: {now_str}\n\n'
+        f'The user said: "{text}"\n\n'
+        "If this is a reminder request, extract when and what.\n"
+        'Respond with JSON only: {"due_at": "2026-03-24T17:45:00Z", "title": "Zoom call setup"}\n'
+        "- due_at must be UTC ISO 8601\n"
+        "- title: concise, what to remind about\n"
+        "If not a reminder or time cannot be determined, respond with exactly: SKIP"
+    )
+
+    data = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    if not data:
+        return None
+    try:
+        due_at = datetime.fromisoformat(data["due_at"].replace("Z", "+00:00"))
+        title = str(data.get("title", "")).strip()[:200]
+    except (KeyError, ValueError):
+        return None
+    if not title or due_at <= datetime.now(timezone.utc):
+        return None
+    return (due_at, title)
+
+
 def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
     """
     Return a confirmation string if text is a reminder command, else None.
 
-    Recognizes: "remind me in 5m to check the oven"
-                "remind me tonight to call mom"
-                "remind me in 2h about the meeting"
+    Recognizes natural language via LLM (primary path), with regex fallback
+    for simple duration expressions like "remind me in 5m to check the oven".
     """
     if not _REMINDER_TRIGGER.search(text):
         return None
 
+    # --- LLM path: handles complex time expressions, no word limit ---
+    llm_result = _parse_reminder_with_llm(text)
+    if llm_result:
+        due_at, title = llm_result
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=24)
+        reminder_manager.add(
+            conversation_id=conversation_id,
+            title=title,
+            due_at=due_at,
+            expires_at=expires_at,
+        )
+        delta = due_at - now
+        total_minutes = int(delta.total_seconds() / 60)
+        if total_minutes >= 1440:
+            label = f"{total_minutes // 1440}d"
+        elif total_minutes >= 60:
+            h, m = divmod(total_minutes, 60)
+            label = f"{h}h {m}m" if m else f"{h}h"
+        else:
+            label = f"{total_minutes}m"
+        logger.info("Reminder set via LLM", extra={
+            "conversation_id": conversation_id,
+            "due_at": due_at.isoformat(),
+            "title": title,
+            "action": "reminder_add",
+        })
+        return f"Reminder set for {label}."
+
+    # --- Regex fallback: simple duration expressions ---
     if len(text.split()) > 25:
         return None
 
@@ -2443,22 +2523,20 @@ If the new time is ambiguous or no fact matches, respond with: null
 
 Only valid JSON or null. No explanation."""
 
+    data = _llm_detect(extraction_prompt, model=CURIOSITY_MODEL)
+    if not data:
+        return False
+
     try:
-        response = llm.generate(prompt=extraction_prompt)
-        if response.error or not response.text:
-            return False
-
-        raw = response.text.strip()
-        if raw.lower() == "null" or not raw.startswith("{"):
-            return False
-
-        import json as _json
-        data = _json.loads(raw)
         fact_id = int(data["fact_id"])
         ttl_hours = float(data["ttl_hours"])
-        if ttl_hours <= 0 or ttl_hours > 8760:  # cap at 1 year
-            return False
+    except (KeyError, ValueError):
+        return False
 
+    if ttl_hours <= 0 or ttl_hours > 8760:  # cap at 1 year
+        return False
+
+    try:
         rescheduled = memory.reschedule_fact(fact_id=fact_id, conversation_id=conversation_id, ttl_hours=ttl_hours)
         if rescheduled:
             logger.info("Rescheduled fact via NLU", extra={
