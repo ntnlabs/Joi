@@ -523,6 +523,18 @@ class Scheduler:
                             new_due = reminder.due_at + interval
                             self._reminder_manager.reschedule(reminder.id, new_due)
 
+                    # If Wind fired recently, push cooldown so user has 30 min to reply
+                    if self._wind_orchestrator:
+                        state = self._wind_orchestrator.state_manager.get_state(reminder.conversation_id)
+                        if state and state.last_proactive_sent_at:
+                            elapsed_min = (datetime.now() - state.last_proactive_sent_at).total_seconds() / 60
+                            if elapsed_min < 30:
+                                cooldown_min = self._wind_orchestrator.config.min_cooldown_minutes
+                                self._wind_orchestrator.state_manager.update_state(
+                                    reminder.conversation_id,
+                                    last_proactive_sent_at=datetime.now() - timedelta(minutes=cooldown_min - 30),
+                                )
+
                     logger.info("Reminder sent", extra={
                         "reminder_id": reminder.id,
                         "title": reminder.title[:30],
