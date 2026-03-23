@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import random
+import time
 from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
@@ -76,6 +77,7 @@ class WindOrchestrator:
         self._llm_client = llm_client
         self._curiosity_model = os.getenv("JOI_CURIOSITY_MODEL")
         self._tension_silence_minutes = int(os.getenv("JOI_TENSION_SILENCE_MINUTES", "20"))
+        self._outcome_ttl_days = int(os.getenv("JOI_WIND_OUTCOME_TTL_DAYS", "90"))
         self._context_message_count = context_message_count
         self._compact_batch_size = compact_batch_size
         self._validate_tension_settings()
@@ -577,43 +579,114 @@ class WindOrchestrator:
             self._extract_topic_outcome(topic, user_message)
 
     def _extract_topic_outcome(self, topic: PendingTopic, user_message: str) -> None:
-        """Extract and store a fact summarising what was resolved when a topic engaged."""
+        """Extract and store an outcome summary + facts when a topic is engaged."""
         if not self._curiosity_model or not self.memory:
             return
 
+        # --- RAG: enrich with relevant conversation history for this topic ---
+        history_context = ""
+        try:
+            history_context = self.memory.get_summaries_as_context(
+                query=f"{topic.title} {topic.content or ''}".strip(),
+                max_tokens=500,
+                days=180,
+                conversation_id=topic.conversation_id,
+            )
+        except Exception:
+            pass
+
+        # --- Call 1: narrative outcome summary ---
         prompt = (
             f"A conversation topic was followed up on.\n\n"
             f"Topic: {topic.title}\n"
             f"Context: {topic.content or '(none)'}\n"
-            f"User's response: {user_message}\n\n"
-            "In 1-2 sentences, summarise what was resolved, decided, or learned. "
-            "Be specific and factual. If nothing concrete was resolved, reply with exactly: SKIP"
+            f"User's response: {user_message}\n"
+        )
+        if history_context:
+            prompt += f"\nRelevant history of this topic:\n{history_context}\n"
+        prompt += (
+            "\nSummarise what was resolved, decided, or learned. Be specific and factual. "
+            "Keep it concise — up to 7-10 sentences maximum. "
+            "If nothing concrete was resolved, reply with exactly: SKIP\n\n"
+            "End with one line starting with \"User's view:\" that captures the user's "
+            "attitude or stance toward this topic."
         )
 
         try:
             resp = self._llm_client.generate(prompt, model=self._curiosity_model)
-            text = resp.text.strip()
-            if not text or text.upper() == "SKIP":
+            summary_text = resp.text.strip()
+            if not summary_text or summary_text.upper() == "SKIP":
                 return
 
+            now_ms = int(time.time() * 1000)
+            period_start = int(topic.created_at.timestamp() * 1000) if topic.created_at else now_ms
             key = topic.title.lower().replace(" ", "_")[:60]
-            self.memory.store_fact(
-                category="wind_outcome",
-                key=key,
-                value=text,
-                confidence=0.85,
-                source="wind",
+
+            self.memory.store_summary(
+                summary_type="wind_outcome",
+                period_start=period_start,
+                period_end=now_ms,
+                summary_text=summary_text,
                 conversation_id=topic.conversation_id,
+                key_points_json=json.dumps({
+                    "topic_key": key,
+                    "topic_title": topic.title,
+                    "topic_id": topic.id,
+                }),
             )
-            logger.info("Stored topic outcome fact", extra={
+            logger.info("Stored topic outcome summary", extra={
                 "conversation_id": topic.conversation_id,
                 "topic_id": topic.id,
                 "key": key,
             })
         except Exception as exc:
-            logger.debug("Topic outcome extraction failed", extra={
-                "topic_id": topic.id,
-                "error": str(exc),
+            logger.debug("Topic outcome summary failed", extra={
+                "topic_id": topic.id, "error": str(exc),
+            })
+            return  # Don't attempt fact extraction if summary failed
+
+        # --- Call 2: structured fact extraction ---
+        fact_prompt = (
+            f"A conversation topic was just resolved.\n\n"
+            f"Topic: {topic.title}\n"
+            f"Outcome: {summary_text}\n"
+            f"User's response: {user_message}\n\n"
+            "Extract any concrete, reusable facts about the user that emerged. "
+            "Categories: personal, preference, technical, schedule, health, other.\n"
+            'Output JSON array: [{"category": "technical", "key": "proxmox_luks_status", "value": "implemented and working"}]\n'
+            "If no facts apply, output exactly: []"
+        )
+        try:
+            fact_resp = self._llm_client.generate(fact_prompt, model=self._curiosity_model)
+            raw = fact_resp.text.strip()
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+            facts = json.loads(raw)
+            count = 0
+            for f in facts:
+                if not isinstance(f, dict):
+                    continue
+                cat = str(f.get("category", "other"))[:50]
+                fkey = str(f.get("key", ""))[:100]
+                fval = str(f.get("value", ""))[:500]
+                if fkey and fval:
+                    self.memory.store_fact(
+                        category=cat,
+                        key=fkey,
+                        value=fval,
+                        confidence=0.75,
+                        source="wind",
+                        conversation_id=topic.conversation_id,
+                    )
+                    count += 1
+            logger.info("Extracted topic outcome facts", extra={
+                "topic_id": topic.id, "count": count,
+            })
+        except Exception as exc:
+            logger.debug("Topic outcome fact extraction failed", extra={
+                "topic_id": topic.id, "error": str(exc),
             })
 
     def _apply_lifecycle_rules(
@@ -1116,17 +1189,20 @@ class WindOrchestrator:
         if self.feedback_manager:
             undertaker_families = self.feedback_manager.get_undertaker_families(conversation_id)
 
-        # Already-resolved wind_outcome facts
-        resolved_facts = []
+        # Already-resolved wind_outcome summaries (age out after TTL)
+        resolved_summaries = []
         if self.memory:
             try:
-                facts = self.memory.get_facts(conversation_id=conversation_id, category="wind_outcome")
-                resolved_facts = [(f.key, f.value) for f in facts]
+                resolved_summaries = self.memory.get_recent_summaries(
+                    summary_type="wind_outcome",
+                    days=self._outcome_ttl_days,
+                    conversation_id=conversation_id,
+                )
             except Exception:
                 pass
 
         undertaker_block = "\n".join(f"- {f}" for f in undertaker_families) or "(none)"
-        resolved_block = "\n".join(f"- {k}: {v}" for k, v in resolved_facts) or "(none)"
+        resolved_block = "\n".join(f"- {s.summary_text}" for s in resolved_summaries) or "(none)"
 
         prompt = (
             f"Recent conversation (oldest first):\n{transcript}\n\n"
