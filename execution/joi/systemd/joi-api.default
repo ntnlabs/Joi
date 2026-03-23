@@ -74,6 +74,8 @@ JOI_CONSOLIDATION_ARCHIVE=0
 # Must be less than both min_silence_minutes (default: 30) and min_cooldown_minutes (default: 60)
 # so mining happens before Wind's gates open
 #JOI_TENSION_SILENCE_MINUTES=20
+# How long wind topic outcome summaries stay active for deduplication (days)
+#JOI_WIND_OUTCOME_TTL_DAYS=90
 
 # --- RAG ---
 # Set to 0 to disable knowledge retrieval
