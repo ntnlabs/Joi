@@ -2602,6 +2602,7 @@ Just the message, nothing else."""
         response = llm.chat(
             messages=[{"role": "user", "content": user_prompt}],
             system=system_prompt,
+            model=CURIOSITY_MODEL,
         )
         if response.error or not response.text:
             logger.warning("Reminder: LLM generation failed", extra={"error": response.error})
