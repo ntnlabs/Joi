@@ -2324,7 +2324,7 @@ def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional
     last = reminder_manager.get_last_fired(conversation_id)
     if not last or last.fired_at is None:
         return None
-    if (datetime.now() - last.fired_at).total_seconds() > 7200:
+    if (datetime.now(timezone.utc) - last.fired_at).total_seconds() > 7200:
         return None
 
     now = datetime.now()
