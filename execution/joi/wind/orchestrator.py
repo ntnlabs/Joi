@@ -615,8 +615,10 @@ class WindOrchestrator:
 
         try:
             resp = self._llm_client.generate(prompt, model=self._curiosity_model)
+            if not resp or resp.error or not resp.text:
+                return
             summary_text = resp.text.strip()
-            if not summary_text or summary_text.upper() == "SKIP":
+            if not summary_text or summary_text.upper().startswith("SKIP"):
                 return
 
             now_ms = int(time.time() * 1000)
@@ -659,6 +661,8 @@ class WindOrchestrator:
         )
         try:
             fact_resp = self._llm_client.generate(fact_prompt, model=self._curiosity_model)
+            if not fact_resp or fact_resp.error or not fact_resp.text:
+                return
             raw = fact_resp.text.strip()
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
@@ -1197,6 +1201,7 @@ class WindOrchestrator:
                 resolved_summaries = self.memory.get_recent_summaries(
                     summary_type="wind_outcome",
                     days=self._outcome_ttl_days,
+                    limit=50,
                     conversation_id=conversation_id,
                 )
             except Exception:

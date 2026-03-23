@@ -2361,6 +2361,7 @@ class MemoryStore:
                 WHERE knowledge_fts MATCH ?
                 {scope_filter}
                 ORDER BY rank
+                LIMIT 500
                 """,
                 params
             )
@@ -2643,9 +2644,9 @@ class MemoryStore:
         if not chunks:
             return ""
 
-        lines = ["Relevant knowledge:"]
-        total_chars = 0
         max_chars = max_tokens * 4  # Rough estimate
+        lines = []
+        total_chars = 0
 
         for chunk in chunks:
             chunk_text = f"\n[{chunk.title}]\n{chunk.content}"
@@ -2654,7 +2655,9 @@ class MemoryStore:
             lines.append(chunk_text)
             total_chars += len(chunk_text)
 
-        return "\n".join(lines)
+        if not lines:
+            return ""
+        return "Relevant knowledge:" + "\n".join(lines)
 
     # --- Cleanup Operations ---
 
