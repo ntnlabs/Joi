@@ -1590,19 +1590,6 @@ def receive_message(msg: InboundMessage):
             )
             return InboundResponse(status="ok", message_id=msg.message_id)
 
-    # Reminder command: owner can set reminders
-    if msg.is_owner and msg.conversation.type == "direct" and user_text:
-        reminder_reply = _handle_reminder_command(user_text, msg.conversation.id)
-        if reminder_reply:
-            _send_to_mesh(
-                recipient_id="owner",
-                recipient_transport_id=msg.conversation.id,
-                conversation=msg.conversation,
-                text=reminder_reply,
-                reply_to=msg.message_id,
-            )
-            return InboundResponse(status="ok", message_id=msg.message_id)
-
     # All facts (explicit and inferred) use conversation_id as key
     # - DMs: phone number (per-user scope)
     # - Groups: group_id (group scope, facts include person names in key)
@@ -1685,6 +1672,12 @@ def receive_message(msg: InboundMessage):
         if msg.is_owner and msg.conversation.type == "direct" and user_text:
             _handle_reschedule_intent(user_text, msg.conversation.id)
 
+        # Reminder command: runs inside the queue so the LLM parsing call is serialized.
+        # Does not return early — Joi's normal LLM response acknowledges the reminder.
+        reminder_result = None
+        if msg.is_owner and msg.conversation.type == "direct" and user_text:
+            reminder_result = _handle_reminder_command(user_text, msg.conversation.id)
+
         # Get per-conversation context size (or use global default)
         custom_context = get_context_for_conversation(
             conversation_type=msg.conversation.type,
@@ -1747,6 +1740,13 @@ def receive_message(msg: InboundMessage):
 
         # Note: We no longer hint to the LLM about saved facts - this caused meta-reactions
         # and excessive "tagging" behavior. Memory is now invisible to the response generation.
+
+        # Reminder acknowledgement: tell Joi a reminder was just set so she can react naturally.
+        if reminder_result:
+            r_title, r_label = reminder_result
+            enriched_prompt = (enriched_prompt or "") + (
+                f"\n\nNote: A reminder was just successfully set: \"{r_title}\" due in {r_label}."
+            )
 
         # Generate response from LLM with conversation context
         model_source = get_model_source(msg.conversation.type, msg.conversation.id, msg.sender.transport_id)
@@ -2385,9 +2385,9 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
     return (due_at, title)
 
 
-def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
+def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]:
     """
-    Return a confirmation string if text is a reminder command, else None.
+    Set a reminder if text is a reminder command. Returns (title, label) or None.
 
     Recognizes natural language via LLM (primary path), with regex fallback
     for simple duration expressions like "remind me in 5m to check the oven".
@@ -2422,7 +2422,7 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
             "title": title,
             "action": "reminder_add",
         })
-        return f"Reminder set for {label}."
+        return (title, label)
 
     # --- Regex fallback: simple duration expressions ---
     if len(text.split()) > 25:
@@ -2482,7 +2482,7 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
     else:
         label = f"{total_minutes}m"
 
-    return f"Reminder set for {label}."
+    return (title, label)
 
 
 def _handle_reschedule_intent(text: str, conversation_id: str) -> bool:
