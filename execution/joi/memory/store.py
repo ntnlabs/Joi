@@ -2341,14 +2341,14 @@ class MemoryStore:
             if scopes is None:
                 # No filter - access all (backwards compat / admin)
                 scope_filter = ""
-                params = [fts_query, limit]
+                params = [fts_query]
             else:
                 # Filter by allowed scopes only - no global/legacy access
                 # NOTE: All knowledge is created with proper scope, no legacy cleanup needed
                 allowed = list(scopes)
                 placeholders = ','.join('?' * len(allowed))
                 scope_filter = f"AND k.scope IN ({placeholders})"
-                params = [fts_query] + allowed + [limit]
+                params = [fts_query] + allowed
 
             # Use FTS5 MATCH for full-text search
             logger.debug("FTS query", extra={"query": fts_query[:100], "scopes": scopes})
@@ -2361,7 +2361,6 @@ class MemoryStore:
                 WHERE knowledge_fts MATCH ?
                 {scope_filter}
                 ORDER BY rank
-                LIMIT ?
                 """,
                 params
             )
@@ -2385,7 +2384,7 @@ class MemoryStore:
                 created_at=row["created_at"],
                 scope=row["scope"],
             )
-            for row in rows
+            for row in rows[:limit]
         ]
 
     def search_knowledge_semantic(
@@ -2442,12 +2441,12 @@ class MemoryStore:
             return []
 
         # Compute cosine similarity for each chunk
+        mag_q = math.sqrt(sum(x * x for x in query_vec))
         scored = []
         for row in rows:
             chunk_bytes = row["embedding"]
             chunk_vec = struct.unpack(f"{len(chunk_bytes) // 4}f", chunk_bytes)
             dot = sum(a * b for a, b in zip(query_vec, chunk_vec))
-            mag_q = math.sqrt(sum(x * x for x in query_vec))
             mag_c = math.sqrt(sum(x * x for x in chunk_vec))
             score = dot / (mag_q * mag_c) if mag_q and mag_c else 0.0
             scored.append((score, row))
@@ -2626,13 +2625,21 @@ class MemoryStore:
         Returns:
             Formatted context string
         """
-        chunks = self.search_knowledge_semantic(query, limit=10, scopes=scopes, min_score=min_similarity)
-        if chunks:
-            logger.debug("Knowledge: semantic search returned results", extra={"count": len(chunks)})
-        else:
-            chunks = self.search_knowledge(query, limit=10, scopes=scopes, min_rank=min_bm25)
-            if chunks:
-                logger.debug("Knowledge: FTS fallback returned results", extra={"count": len(chunks)})
+        semantic_chunks = self.search_knowledge_semantic(query, limit=10, scopes=scopes, min_score=min_similarity)
+        fts_chunks = self.search_knowledge(query, limit=10, scopes=scopes, min_rank=min_bm25)
+
+        # Merge: semantic first (higher quality), then FTS-only results not already included
+        seen_ids = {c.id for c in semantic_chunks}
+        chunks = list(semantic_chunks)
+        for c in fts_chunks:
+            if c.id not in seen_ids:
+                chunks.append(c)
+                seen_ids.add(c.id)
+
+        if semantic_chunks:
+            logger.debug("Knowledge: semantic results", extra={"count": len(semantic_chunks)})
+        if fts_chunks:
+            logger.debug("Knowledge: FTS results", extra={"count": len(fts_chunks)})
         if not chunks:
             return ""
 
