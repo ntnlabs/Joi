@@ -2361,7 +2361,7 @@ class MemoryStore:
                 WHERE knowledge_fts MATCH ?
                 {scope_filter}
                 ORDER BY rank
-                LIMIT 500
+                LIMIT 100
                 """,
                 params
             )

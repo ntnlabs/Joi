@@ -2474,7 +2474,7 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
     )
 
     delta = due_at - now
-    total_minutes = int(delta.total_seconds() / 60)
+    total_minutes = max(1, int(delta.total_seconds() / 60))
     if total_minutes >= 1440:
         label = f"{total_minutes // 1440}d"
     elif total_minutes >= 60:
