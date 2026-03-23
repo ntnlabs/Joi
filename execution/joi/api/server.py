@@ -2375,10 +2375,12 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         return None
     try:
         due_at = datetime.fromisoformat(data["due_at"].replace("Z", "+00:00"))
+        if not isinstance(due_at, datetime):
+            due_at = datetime(due_at.year, due_at.month, due_at.day, tzinfo=timezone.utc)
         title = str(data.get("title", "")).strip()[:200]
-    except (KeyError, ValueError):
+    except (KeyError, ValueError, TypeError):
         return None
-    if not title or due_at <= datetime.now(timezone.utc):
+    if not title or due_at <= datetime.now(timezone.utc) - timedelta(seconds=30):
         return None
     return (due_at, title)
 
@@ -2406,7 +2408,7 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[str]:
             expires_at=expires_at,
         )
         delta = due_at - now
-        total_minutes = int(delta.total_seconds() / 60)
+        total_minutes = max(1, int(delta.total_seconds() / 60))
         if total_minutes >= 1440:
             label = f"{total_minutes // 1440}d"
         elif total_minutes >= 60:
