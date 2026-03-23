@@ -2387,6 +2387,7 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         due_at = datetime.fromisoformat(data["due_at"].replace("Z", "+00:00"))
         if not isinstance(due_at, datetime):
             due_at = datetime(due_at.year, due_at.month, due_at.day, tzinfo=timezone.utc)
+        due_at = due_at - now_local.utcoffset()
         title = str(data.get("title", "")).strip()[:200]
     except (KeyError, ValueError, TypeError):
         return None
