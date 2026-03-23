@@ -78,6 +78,7 @@ class WindOrchestrator:
         self._curiosity_model = os.getenv("JOI_CURIOSITY_MODEL")
         self._tension_silence_minutes = int(os.getenv("JOI_TENSION_SILENCE_MINUTES", "20"))
         self._outcome_ttl_days = int(os.getenv("JOI_WIND_OUTCOME_TTL_DAYS", "90"))
+        self._outcome_history_days = int(os.getenv("JOI_WIND_OUTCOME_HISTORY_DAYS", "180"))
         self._context_message_count = context_message_count
         self._compact_batch_size = compact_batch_size
         self._validate_tension_settings()
@@ -589,7 +590,7 @@ class WindOrchestrator:
             history_context = self.memory.get_summaries_as_context(
                 query=f"{topic.title} {topic.content or ''}".strip(),
                 max_tokens=500,
-                days=180,
+                days=self._outcome_history_days,
                 conversation_id=topic.conversation_id,
             )
         except Exception:
