@@ -76,6 +76,8 @@ JOI_CONSOLIDATION_ARCHIVE=0
 #JOI_TENSION_SILENCE_MINUTES=20
 # How long wind topic outcome summaries stay active for deduplication (days)
 #JOI_WIND_OUTCOME_TTL_DAYS=90
+# How far back to search conversation history when generating topic outcome summaries (days)
+#JOI_WIND_OUTCOME_HISTORY_DAYS=180
 
 # --- RAG ---
 # Set to 0 to disable knowledge retrieval
