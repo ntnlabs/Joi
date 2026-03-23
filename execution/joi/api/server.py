@@ -2357,15 +2357,18 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
     Returns (due_at: datetime UTC-aware, title: str) or None.
     """
     tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
-    now_local = datetime.now(timezone.utc).astimezone(tz)
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(tz)
     now_str = now_local.strftime("%Y-%m-%d %H:%M %Z")
+    example_dt = (now_utc + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     prompt = (
         f'Current date and time: {now_str}\n\n'
         f'The user said: "{text}"\n\n'
         "If this is a reminder request, extract when and what.\n"
-        'Respond with JSON only: {"due_at": "2026-03-24T17:45:00Z", "title": "Zoom call setup"}\n'
+        f'Respond with JSON only: {{"due_at": "{example_dt}", "title": "example title"}}\n'
         "- due_at must be UTC ISO 8601\n"
+        "- For relative times (\"in 30 minutes\", \"in 2 hours\"), add exactly that amount to the current time above\n"
         "- title: concise, what to remind about\n"
         "If not a reminder or time cannot be determined, respond with exactly: SKIP"
     )
