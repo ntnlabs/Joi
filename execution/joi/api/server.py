@@ -2359,16 +2359,23 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
     tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
     now_utc = datetime.now(timezone.utc)
     now_local = now_utc.astimezone(tz)
-    now_str = now_local.strftime("%Y-%m-%d %H:%M %Z")
+    utc_str = now_utc.strftime("%Y-%m-%d %H:%M UTC")
+    local_str = now_local.strftime("%H:%M %Z")
+    utc_offset = now_local.utcoffset()
+    offset_total = int(utc_offset.total_seconds())
+    offset_sign = "+" if offset_total >= 0 else "-"
+    offset_abs = abs(offset_total)
+    offset_label = f"UTC{offset_sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
     example_dt = (now_utc + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     prompt = (
-        f'Current date and time: {now_str}\n\n'
+        f'Current time: {utc_str} (local: {local_str}, {offset_label})\n\n'
         f'The user said: "{text}"\n\n'
         "If this is a reminder request, extract when and what.\n"
         f'Respond with JSON only: {{"due_at": "{example_dt}", "title": "example title"}}\n'
-        "- due_at must be UTC ISO 8601\n"
-        "- For relative times (\"in 30 minutes\", \"in 2 hours\"), add exactly that amount to the current time above\n"
+        "- due_at must be UTC ISO 8601 (ending in Z)\n"
+        "- For relative times (\"in 30 minutes\", \"in 2 hours\"): add that amount to the UTC time above\n"
+        "- For absolute local times (\"at 6pm\", \"tomorrow morning\"): interpret as local time then subtract the UTC offset\n"
         "- title: concise, what to remind about\n"
         "If not a reminder or time cannot be determined, respond with exactly: SKIP"
     )
@@ -2567,7 +2574,7 @@ def _generate_reminder_message(
     The reminder title is user-supplied data and is wrapped in triple-quotes
     to prevent prompt injection.
     """
-    base_prompt = "You are Joi, an AI assistant."
+    base_prompt = get_prompt_for_conversation("direct", conversation_id, conversation_id)
 
     facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
     system_parts = [base_prompt]
@@ -2598,11 +2605,16 @@ Rules:
 
 Just the message, nothing else."""
 
+    recent = memory.get_recent_messages(limit=5, conversation_id=conversation_id)
+    history = [
+        {"role": "assistant" if m.direction == "outbound" else "user", "content": m.content_text}
+        for m in reversed(recent) if m.content_text
+    ]
+
     try:
         response = llm.chat(
-            messages=[{"role": "user", "content": user_prompt}],
+            messages=history + [{"role": "user", "content": user_prompt}],
             system=system_prompt,
-            model=CURIOSITY_MODEL,
         )
         if response.error or not response.text:
             logger.warning("Reminder: LLM generation failed", extra={"error": response.error})
