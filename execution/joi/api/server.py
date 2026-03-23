@@ -2369,13 +2369,15 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
     example_dt = (now_utc + timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     prompt = (
-        f'Current time: {utc_str} (local: {local_str}, {offset_label})\n\n'
+        f'Current UTC time: {utc_str}\n\n'
         f'The user said: "{text}"\n\n'
         "If this is a reminder request, extract when and what.\n"
         f'Respond with JSON only: {{"due_at": "{example_dt}", "title": "example title"}}\n'
         "- due_at must be UTC ISO 8601 (ending in Z)\n"
-        "- For relative times (\"in 30 minutes\", \"in 2 hours\"): add that amount to the UTC time above\n"
-        "- For absolute local times (\"at 6pm\", \"tomorrow morning\"): interpret as local time then subtract the UTC offset\n"
+        "- For relative times (\"in 10 minutes\", \"in 2 hours\"): add that amount to the UTC time above\n"
+        f"- For absolute local times (\"at 6pm\", \"tomorrow\"):"
+        f" user's timezone is {local_str.split()[1]} ({offset_label}),"
+        f" so convert: local time - {offset_abs // 3600}h = UTC\n"
         "- title: concise, what to remind about\n"
         "If not a reminder or time cannot be determined, respond with exactly: SKIP"
     )
@@ -2387,7 +2389,6 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         due_at = datetime.fromisoformat(data["due_at"].replace("Z", "+00:00"))
         if not isinstance(due_at, datetime):
             due_at = datetime(due_at.year, due_at.month, due_at.day, tzinfo=timezone.utc)
-        due_at = due_at - now_local.utcoffset()
         title = str(data.get("title", "")).strip()[:200]
     except (KeyError, ValueError, TypeError):
         return None
