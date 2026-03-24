@@ -176,12 +176,16 @@ REMINDERS USAGE:
 
 REMINDERS SUBCOMMANDS:
     list [--conversation ID] [--status STATUS] [--order-by id|date]  List reminders (default: all statuses)
+    delete-expired                              Delete all reminders past their expiry time
+    delete-fired                                Delete all reminders with status 'fired'
     clear [--conversation ID]                   Delete all reminders (with confirmation)
 
 REMINDERS EXAMPLES:
     joi-admin reminders list                    # All reminders
     joi-admin reminders list --conversation +123         # Reminders for one conversation
     joi-admin reminders list --status pending   # Only pending
+    joi-admin reminders delete-expired          # Remove stale expired reminders
+    joi-admin reminders delete-fired            # Remove already-fired reminders
     joi-admin reminders clear                   # Delete all reminders
     joi-admin reminders clear --conversation +123        # Delete for one conversation
 
@@ -2888,7 +2892,7 @@ cmd_reminders() {
     fi
 
     local subcommand="${1:-}"
-    [[ -z "$subcommand" ]] && error "Usage: joi-admin reminders <list|show|delete|clear> [OPTIONS]"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin reminders <list|show|delete|delete-expired|delete-fired|clear> [OPTIONS]"
     shift || true
 
     case "$subcommand" in
@@ -3109,19 +3113,73 @@ SQL
 Usage: joi-admin reminders <subcommand> [OPTIONS]
 
 Subcommands:
-  list    [--conversation ID] [--status STATUS] [--order-by id|date]
-  show    <id>
-  delete  <id>
-  clear   [--conversation ID]
+  list            [--conversation ID] [--status STATUS] [--order-by id|date]
+  show            <id>
+  delete          <id>
+  delete-expired  Delete all reminders past their expiry time
+  delete-fired    Delete all reminders with status 'fired'
+  clear           [--conversation ID]
 
 Examples:
   joi-admin reminders list
   joi-admin reminders show 3
   joi-admin reminders delete 3
+  joi-admin reminders delete-expired
+  joi-admin reminders delete-fired
   joi-admin reminders clear --conversation +1234567890
 HELP
             exit 0
             ;;
+        delete-expired)
+            local count
+            count=$(db_scalar "SELECT COUNT(*) FROM reminders WHERE expires_at < datetime('now');")
+
+            if [[ "${count:-0}" == "0" ]]; then
+                echo "No expired reminders found."
+                exit 0
+            fi
+
+            echo ""
+            echo "=== DELETE EXPIRED REMINDERS ==="
+            echo "  Reminders to delete: $count"
+            echo ""
+
+            read -p "Delete $count expired reminder(s)? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            db_exec "DELETE FROM reminders WHERE expires_at < datetime('now');"
+            info "Deleted $count expired reminder(s)"
+            ;;
+
+        delete-fired)
+            local count
+            count=$(db_scalar "SELECT COUNT(*) FROM reminders WHERE status = 'fired';")
+
+            if [[ "${count:-0}" == "0" ]]; then
+                echo "No fired reminders found."
+                exit 0
+            fi
+
+            echo ""
+            echo "=== DELETE FIRED REMINDERS ==="
+            echo "  Reminders to delete: $count"
+            echo ""
+
+            read -p "Delete $count fired reminder(s)? [y/N] " -n 1 -r
+            echo
+            if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+                echo "Aborted."
+                exit 1
+            fi
+
+            db_exec "DELETE FROM reminders WHERE status = 'fired';"
+            info "Deleted $count fired reminder(s)"
+            ;;
+
         *)
             error "Unknown reminders subcommand: $subcommand"
             ;;
