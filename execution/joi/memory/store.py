@@ -295,7 +295,9 @@ CREATE TABLE IF NOT EXISTS pending_topics (
     outcome_at TEXT DEFAULT NULL,
     retry_count INTEGER DEFAULT 0,
     last_retry_at TEXT DEFAULT NULL,
-    sent_message_id TEXT DEFAULT NULL
+    sent_message_id TEXT DEFAULT NULL,
+    -- Outcome curiosity emotional context (Phase 4c)
+    emotional_context TEXT DEFAULT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pending_topics_conv_status
     ON pending_topics(conversation_id, status);
@@ -764,6 +766,10 @@ class MemoryStore:
                 conn.execute("ALTER TABLE pending_topics ADD COLUMN retry_count INTEGER DEFAULT 0")
                 conn.execute("ALTER TABLE pending_topics ADD COLUMN last_retry_at TEXT DEFAULT NULL")
                 conn.execute("ALTER TABLE pending_topics ADD COLUMN sent_message_id TEXT DEFAULT NULL")
+                conn.commit()
+            if "emotional_context" not in topic_columns:
+                logger.info("Migration: Adding emotional_context column to pending_topics table")
+                conn.execute("ALTER TABLE pending_topics ADD COLUMN emotional_context TEXT DEFAULT NULL")
                 conn.commit()
 
         # Phase 4b: Check topic_feedback for undertaker column

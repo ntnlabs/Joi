@@ -1883,6 +1883,8 @@ def _generate_proactive_message(
     topic_title: str,
     topic_content: Optional[str],
     conversation_id: str,
+    topic_type: str = "tension",
+    emotional_context: Optional[str] = None,
 ) -> Optional[str]:
     """
     Generate a proactive message for Wind based on a topic.
@@ -1923,13 +1925,28 @@ def _generate_proactive_message(
         context_parts.append(f"Relevant context from our history:\n{summaries_ctx}")
     context_block = "\n\n".join(context_parts) + "\n\n" if context_parts else ""
 
-    user_prompt = (
-        f"{context_block}"
-        f"You want to bring something up: {topic_info}\n\n"
-        "Write one short message — the kind you'd fire off without overthinking it. "
-        "Could be a question, a passing observation, or something that crossed your mind. "
-        "No greeting. No philosophical warm-up. Get straight to the point. Just the message."
-    )
+    if topic_type == "followup":
+        emotional_line = (
+            f"How they felt about it at the time: {emotional_context}\n\n"
+            if emotional_context else ""
+        )
+        user_prompt = (
+            f"{context_block}"
+            f"Something you've been thinking about: {topic_info}\n\n"
+            f"{emotional_line}"
+            "Write one short, warm message checking in on how it went. "
+            "Show that you actually remember and care. Don't just ask for a status update — "
+            "acknowledge the feeling if it was there. No greeting. No philosophical warm-up. "
+            "Just the message."
+        )
+    else:
+        user_prompt = (
+            f"{context_block}"
+            f"You want to bring something up: {topic_info}\n\n"
+            "Write one short message — the kind you'd fire off without overthinking it. "
+            "Could be a question, a passing observation, or something that crossed your mind. "
+            "No greeting. No philosophical warm-up. Get straight to the point. Just the message."
+        )
 
     try:
         # Use chat with system prompt for better personality consistency
