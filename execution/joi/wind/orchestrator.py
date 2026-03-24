@@ -1210,16 +1210,26 @@ class WindOrchestrator:
         undertaker_block = "\n".join(f"- {f}" for f in undertaker_families) or "(none)"
         resolved_block = "\n".join(f"- {s.summary_text}" for s in resolved_summaries) or "(none)"
 
+        today_str = now.strftime("%Y-%m-%d (%A)")
         prompt = (
+            f"Today is {today_str}.\n\n"
             f"Recent conversation (oldest first):\n{transcript}\n\n"
-            "Identify the single most promising unfinished thread, open question, or "
-            "mentioned future event worth following up on. Only pick something with real "
-            "continuation potential — not something already resolved, trivial, or that "
-            "Joi already addressed.\n\n"
+            "Identify the single most promising unfinished thread or open question worth "
+            "following up on. Only pick something with real continuation potential — not "
+            "something already resolved, trivial, or that Joi already addressed.\n\n"
+            "Also check: did the user mention a specific upcoming event with a known time "
+            "(interview, flight, appointment, exam, meeting, trip, medical procedure, etc.) "
+            "that hasn't happened yet? If so, capture it separately as a followup.\n\n"
             'Respond with JSON only:\n'
-            '{"title": "<short natural topic title>", '
-            '"summary": "<what to follow up on, 1-2 sentences>", '
-            '"confidence": <0.0-1.0>}'
+            '{\n'
+            '  "tension": {"title": "<short natural topic title>", "summary": "<what to follow up on, 1-2 sentences>", "confidence": <0.0-1.0>},\n'
+            '  "followup": {"title": "<short title>", "summary": "<what the event is, 1 sentence>", '
+            '"event_time": "<YYYY-MM-DDTHH:MM:SS when the event ends / user will be back, or null>", '
+            '"emotional_context": "<one sentence: how did the user seem to feel about this — e.g. seemed nervous and unsure, was really excited, was dreading it. null if neutral or unclear>", '
+            '"confidence": <0.0-1.0>}\n'
+            '}\n'
+            "Set confidence to 0 for either if there is no good candidate. "
+            "followup.event_time must be a future local datetime or null.\n"
             f"\n\nPERMANENTLY OFF-LIMITS topic areas (never surface these):\n{undertaker_block}"
             f"\n\nALREADY RESOLVED topics — only surface again if there is a GENUINELY NEW ANGLE "
             f"(e.g. user raised a new problem on the same subject, not just revisiting the same thread):\n{resolved_block}"
@@ -1242,9 +1252,12 @@ class WindOrchestrator:
                 raw = raw.strip()
 
             data = json.loads(raw)
-            title = str(data.get("title", "")).strip()
-            summary = str(data.get("summary", "")).strip()
-            confidence = float(data.get("confidence", 0.0))
+
+            # --- Tension topic (existing logic, now reads from nested key) ---
+            tension_data = data.get("tension") or {}
+            title = str(tension_data.get("title", "")).strip()
+            summary = str(tension_data.get("summary", "")).strip()
+            confidence = float(tension_data.get("confidence", 0.0))
 
             # Hard undertaker guard (belt + suspenders — prompt is soft)
             if confidence >= 0.5 and title and self.feedback_manager:
@@ -1285,6 +1298,52 @@ class WindOrchestrator:
                     "conversation_id": conversation_id,
                     "confidence": confidence,
                 })
+
+            # --- Followup topic (outcome curiosity with emotional context) ---
+            followup_data = data.get("followup") or {}
+            fu_title = str(followup_data.get("title", "")).strip()
+            fu_summary = str(followup_data.get("summary", "")).strip()
+            fu_confidence = float(followup_data.get("confidence", 0.0))
+            fu_event_time_str = followup_data.get("event_time")
+            fu_emotional = str(followup_data.get("emotional_context") or "").strip()
+
+            if fu_confidence >= 0.6 and fu_title and fu_event_time_str:
+                try:
+                    event_time = datetime.fromisoformat(fu_event_time_str)
+                    if event_time > now - timedelta(minutes=30):
+                        due_at = event_time + timedelta(hours=2)
+                        expires_at = due_at + timedelta(days=3)
+                        fu_novelty_key = (
+                            f"followup_{hashlib.md5(fu_title.lower().encode()).hexdigest()[:12]}"
+                            f"_{event_time.strftime('%Y-%m-%d')}"
+                        )
+                        fu_family = normalize_topic_family("followup", fu_title)
+                        in_cooldown = (
+                            self.feedback_manager and
+                            self.feedback_manager.is_in_cooldown(conversation_id, fu_family)
+                        )
+                        if not in_cooldown:
+                            self.topic_manager.add_topic(
+                                conversation_id=conversation_id,
+                                topic_type="followup",
+                                title=fu_title,
+                                content=fu_summary,
+                                emotional_context=fu_emotional or None,
+                                priority=60,
+                                due_at=due_at,
+                                expires_at=expires_at,
+                                novelty_key=fu_novelty_key,
+                            )
+                            logger.info("Followup topic created from outcome curiosity", extra={
+                                "conversation_id": conversation_id,
+                                "title": fu_title,
+                                "event_time": event_time.isoformat(),
+                                "due_at": due_at.isoformat(),
+                                "has_emotional_context": bool(fu_emotional),
+                                "confidence": fu_confidence,
+                            })
+                except (ValueError, TypeError):
+                    pass
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.debug("Tension mining: failed to parse LLM response", extra={
