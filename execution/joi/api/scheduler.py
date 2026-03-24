@@ -385,6 +385,8 @@ class Scheduler:
                     topic_title=topic.title,
                     topic_content=topic.content,
                     conversation_id=conv_id,
+                    topic_type=topic.topic_type,
+                    emotional_context=topic.emotional_context,
                 )
 
                 if not message_text:

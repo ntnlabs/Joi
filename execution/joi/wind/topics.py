@@ -35,6 +35,8 @@ class PendingTopic:
     retry_count: int = 0
     last_retry_at: Optional[datetime] = None
     sent_message_id: Optional[str] = None  # Links to message.message_id
+    # Outcome curiosity emotional context (Phase 4c)
+    emotional_context: Optional[str] = None
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -103,6 +105,7 @@ class TopicManager:
             retry_count=row["retry_count"] if "retry_count" in row.keys() else 0,
             last_retry_at=_parse_datetime(row["last_retry_at"]) if "last_retry_at" in row.keys() else None,
             sent_message_id=row["sent_message_id"] if "sent_message_id" in row.keys() else None,
+            emotional_context=row["emotional_context"] if "emotional_context" in row.keys() else None,
         )
 
     def get_pending_topics(
@@ -123,7 +126,7 @@ class TopicManager:
             SELECT id, conversation_id, topic_type, title, content, priority,
                    status, created_at, expires_at, due_at, mentioned_at, novelty_key,
                    source_event_id, outcome, outcome_at, retry_count, last_retry_at,
-                   sent_message_id
+                   sent_message_id, emotional_context
             FROM pending_topics
             WHERE conversation_id = ?
               AND status = ?
@@ -145,7 +148,7 @@ class TopicManager:
             SELECT id, conversation_id, topic_type, title, content, priority,
                    status, created_at, expires_at, due_at, mentioned_at, novelty_key,
                    source_event_id, outcome, outcome_at, retry_count, last_retry_at,
-                   sent_message_id
+                   sent_message_id, emotional_context
             FROM pending_topics
             WHERE id = ?
             """,
@@ -168,6 +171,7 @@ class TopicManager:
         due_at: Optional[datetime] = None,
         novelty_key: Optional[str] = None,
         source_event_id: Optional[str] = None,
+        emotional_context: Optional[str] = None,
     ) -> int:
         """
         Add a new topic to the queue.
@@ -252,8 +256,9 @@ class TopicManager:
             """
             INSERT INTO pending_topics (
                 conversation_id, topic_type, title, content, priority,
-                status, created_at, expires_at, due_at, novelty_key, source_event_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                status, created_at, expires_at, due_at, novelty_key, source_event_id,
+                emotional_context
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 conversation_id,
@@ -267,6 +272,7 @@ class TopicManager:
                 _format_datetime(due_at),
                 novelty_key,
                 source_event_id,
+                emotional_context,
             )
         )
         conn.commit()
@@ -606,7 +612,7 @@ class TopicManager:
             SELECT id, conversation_id, topic_type, title, content, priority,
                    status, created_at, expires_at, due_at, mentioned_at, novelty_key,
                    source_event_id, outcome, outcome_at, retry_count, last_retry_at,
-                   sent_message_id
+                   sent_message_id, emotional_context
             FROM pending_topics
             WHERE conversation_id = ?
               AND status = ?
@@ -653,7 +659,7 @@ class TopicManager:
             SELECT id, conversation_id, topic_type, title, content, priority,
                    status, created_at, expires_at, due_at, mentioned_at, novelty_key,
                    source_event_id, outcome, outcome_at, retry_count, last_retry_at,
-                   sent_message_id
+                   sent_message_id, emotional_context
             FROM pending_topics
             WHERE sent_message_id = ?
             """,
