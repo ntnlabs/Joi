@@ -3003,7 +3003,10 @@ SQL
             printf "  %-18s %s\n" "id:" "$(db_scalar "SELECT id FROM reminders WHERE id = $reminder_id;")"
             printf "  %-18s %s\n" "conversation_id:" "$(db_scalar "SELECT COALESCE(conversation_id,'') FROM reminders WHERE id = $reminder_id;")"
             printf "  %-18s %s\n" "title:" "$(db_scalar "SELECT COALESCE(title,'') FROM reminders WHERE id = $reminder_id;")"
-            printf "  %-18s %s\n" "due_at:" "$(db_scalar "SELECT COALESCE(due_at,'-') FROM reminders WHERE id = $reminder_id;")"
+            local _due_raw _due_disp
+            _due_raw=$(db_scalar "SELECT COALESCE(due_at,'-') FROM reminders WHERE id = $reminder_id;")
+            _due_disp=$(TZ="${JOI_TIMEZONE:-Europe/Bratislava}" date -d "${_due_raw}" +"%Y-%m-%dT%H:%M" 2>/dev/null || echo "$_due_raw")
+            printf "  %-18s %s\n" "due_at:" "$_due_disp"
             printf "  %-18s %s\n" "status:" "$(db_scalar "SELECT COALESCE(status,'-') FROM reminders WHERE id = $reminder_id;")"
             printf "  %-18s %s\n" "recurrence:" "$(db_scalar "SELECT COALESCE(recurrence,'-') FROM reminders WHERE id = $reminder_id;")"
             printf "  %-18s %s\n" "created_at:" "$(db_scalar "SELECT COALESCE(created_at,'-') FROM reminders WHERE id = $reminder_id;")"
