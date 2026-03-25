@@ -1254,7 +1254,10 @@ class WindOrchestrator:
             data = json.loads(raw)
 
             # --- Tension topic (existing logic, now reads from nested key) ---
+            # Support both nested {"tension": {...}} and old flat {"title": ..., ...} format
             tension_data = data.get("tension") or {}
+            if not tension_data and data.get("title"):
+                tension_data = data  # LLM returned old flat format
             title = str(tension_data.get("title", "")).strip()
             summary = str(tension_data.get("summary", "")).strip()
             confidence = float(tension_data.get("confidence", 0.0))
