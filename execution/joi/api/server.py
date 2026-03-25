@@ -1557,17 +1557,14 @@ def receive_message(msg: InboundMessage):
         })
         return InboundResponse(status="ok", message_id=msg.message_id)
 
-    # Record user interaction for Wind (resets unanswered counter, updates silence timer)
-    wind_orchestrator.record_user_interaction(
-        msg.conversation.id,
-        message_text=user_text,
-        reply_to_id=quote_reply_to_id,
-    )
-
-    # Wind snooze command: owner can silence proactive messages for a period
+    # Wind snooze command: check BEFORE record_user_interaction so "shh" is not fed
+    # to the engagement classifier as a topic response (would cause false deflections).
     if msg.is_owner and msg.conversation.type == "direct" and user_text:
         snooze_reply = _handle_wind_snooze_command(user_text, msg.conversation.id)
         if snooze_reply:
+            # Record interaction without message_text — resets unanswered counter
+            # but skips engagement classification (snooze is not a topic response)
+            wind_orchestrator.record_user_interaction(msg.conversation.id)
             _send_to_mesh(
                 recipient_id="owner",
                 recipient_transport_id=msg.conversation.id,
@@ -1576,6 +1573,13 @@ def receive_message(msg: InboundMessage):
                 reply_to=msg.message_id,
             )
             return InboundResponse(status="ok", message_id=msg.message_id)
+
+    # Record user interaction for Wind (resets unanswered counter, updates silence timer)
+    wind_orchestrator.record_user_interaction(
+        msg.conversation.id,
+        message_text=user_text,
+        reply_to_id=quote_reply_to_id,
+    )
 
     # Reminder post-fire snooze: "remind me again in 1h"
     if msg.is_owner and msg.conversation.type == "direct" and user_text:

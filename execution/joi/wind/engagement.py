@@ -241,8 +241,8 @@ USER RESPONSE:
 
 Analyze if the user:
 - ENGAGED: responded to the topic, asked follow-up, showed interest
-- IGNORED: response is completely unrelated to the topic
-- DEFLECTED: explicitly dismissed, changed topic, or indicated not interested
+- IGNORED: response is unrelated to the topic (user just moved on, no explicit rejection)
+- DEFLECTED: user explicitly rejected the topic (e.g. "not now", "drop it", "I don't want to talk about that", "stop asking")
 
 Return ONLY valid JSON with no extra text:
 {{"outcome": "engaged|ignored|deflected", "confidence": 0.0-1.0, "quality": 0.0-1.0}}
