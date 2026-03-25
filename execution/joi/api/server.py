@@ -2389,33 +2389,19 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
     Use LLM to extract reminder due_at and title from natural language.
     Returns (due_at: datetime UTC-aware, title: str) or None.
     """
-    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
     now_utc = datetime.now(timezone.utc)
-    now_local = now_utc.astimezone(tz)
-    utc_offset = now_local.utcoffset()
-    offset_total = int(utc_offset.total_seconds())
-    offset_sign = "+" if offset_total >= 0 else "-"
-    offset_abs = abs(offset_total)
-    offset_label = f"UTC{offset_sign}{offset_abs // 3600:02d}:{(offset_abs % 3600) // 60:02d}"
-    tz_abbr = now_local.strftime("%Z") or offset_label
-    offset_h = offset_abs // 3600
-    offset_m = (offset_abs % 3600) // 60
-    subtract_str = f"{offset_h}h {offset_m}m" if offset_m else f"{offset_h}h"
-    direction = "subtracting" if offset_total >= 0 else "adding"
-    # Static fictional timestamp — avoids anchoring the LLM on a real computed value
-    example_dt = "2099-01-15T14:30:00Z"
+    now_local = now_utc.astimezone(ZoneInfo(TIME_AWARENESS_TIMEZONE))
+    tz_abbr = now_local.strftime("%Z") or "local"
 
     prompt = (
-        f'Current local time: {now_local.strftime("%Y-%m-%d %H:%M")} ({tz_abbr})\n'
-        f'Timezone: {tz_abbr} ({offset_label})\n\n'
+        f'Current local date and time: {now_local.strftime("%Y-%m-%d %H:%M")} ({tz_abbr})\n\n'
         f'The user said: "{text}"\n\n'
-        "If this is a reminder request, extract when and what.\n"
-        f'Respond with JSON only: {{"due_at": "{example_dt}", "title": "example title"}}\n'
-        "- due_at must be UTC ISO 8601 (ending in Z)\n"
-        f"- Step 1: determine the intended local time ({tz_abbr}) — "
-        "relative (\"in 10 minutes\" = current local + 10 min) or absolute (\"at 6pm\" = 18:00 local).\n"
-        f"- Step 2: convert to UTC by {direction} {subtract_str}.\n"
-        "- title: concise, what to remind about\n"
+        "If this is a reminder request, extract the date/time and what to remind about.\n"
+        "Respond with JSON only:\n"
+        '{"year": 2026, "month": 3, "day": 26, "hour": 11, "minute": 0, "title": "what to remind about"}\n'
+        "- Use the current local date/time above as your reference. Do not convert to UTC.\n"
+        "- year/month/day/hour/minute are integers.\n"
+        "- title: concise description of what to remind about.\n"
         "If not a reminder or time cannot be determined, respond with exactly: SKIP"
     )
 
@@ -2424,17 +2410,19 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         logger.warning("Reminder LLM parse returned no data (SKIP or invalid JSON)", extra={"action": "reminder_llm_skip"})
         return None
     try:
-        due_str = data["due_at"].replace("Z", "+00:00")
-        due_at = datetime.fromisoformat(due_str)
-        if due_at.tzinfo is None:
-            # LLM returned naive datetime — assume local timezone
-            tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
-            due_at = due_at.replace(tzinfo=tz).astimezone(timezone.utc)
-        else:
-            due_at = due_at.astimezone(timezone.utc)
+        tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+        due_at = datetime(
+            year=int(data["year"]),
+            month=int(data["month"]),
+            day=int(data["day"]),
+            hour=int(data["hour"]),
+            minute=int(data.get("minute", 0)),
+            second=0,
+            tzinfo=tz,
+        ).astimezone(timezone.utc)
         title = str(data.get("title", "")).strip()[:200]
     except (KeyError, ValueError, TypeError) as e:
-        logger.warning("Reminder LLM returned invalid due_at or title", extra={
+        logger.warning("Reminder LLM returned invalid components", extra={
             "error": str(e), "data": str(data)[:120], "action": "reminder_parse_error"
         })
         return None
