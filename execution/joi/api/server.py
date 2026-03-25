@@ -1781,7 +1781,7 @@ def receive_message(msg: InboundMessage):
 
         system_chars = len(enriched_prompt) if enriched_prompt else 0
         messages_chars = sum(len(m.get("content", "") or "") for m in chat_messages)
-        logger.debug("LLM context size", extra={
+        logger.info("LLM context size", extra={
             "system_chars": system_chars,
             "messages_chars": messages_chars,
             "total_chars": system_chars + messages_chars,
