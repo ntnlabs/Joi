@@ -1772,6 +1772,15 @@ def receive_message(msg: InboundMessage):
                 debug_components=debug_components,
             )
 
+        system_chars = len(enriched_prompt) if enriched_prompt else 0
+        messages_chars = sum(len(m.get("content", "") or "") for m in chat_messages)
+        logger.debug("LLM context size", extra={
+            "system_chars": system_chars,
+            "messages_chars": messages_chars,
+            "total_chars": system_chars + messages_chars,
+            "action": "llm_context_size"
+        })
+
         queue_msg.heartbeat()  # Signal still working before LLM call
         _stop_typing = _start_typing_refresh(msg)
         try:
