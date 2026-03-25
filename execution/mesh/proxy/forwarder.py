@@ -275,6 +275,9 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
     # Legacy behavior - use MESH_JOI_URL with default HMAC secret
     url = f"{MESH_JOI_URL}/api/v1/message/inbound"
     secret = _get_hmac_secret()
+    if not secret:
+        logger.error("Forward rejected: no HMAC secret configured (fail-closed)", extra={"action": "forward_rejected"})
+        return
 
     # Hash conversation to worker - same convo always goes to same worker
     convo_id = _get_conversation_id(payload)
@@ -305,6 +308,9 @@ def forward_typing(sender: str, conversation_id: str) -> None:
 
     headers = {"Content-Type": "application/json"}
     secret = _get_hmac_secret()
+    if not secret:
+        logger.error("Forward rejected: no HMAC secret configured (fail-closed)", extra={"action": "forward_rejected"})
+        return
     if secret:
         hmac_headers = create_request_headers(body, secret)
         headers.update(hmac_headers)
@@ -341,9 +347,11 @@ def _forward_document_sync(
         # Build headers with HMAC if secret is configured
         headers = {"Content-Type": "application/json"}
         secret = _get_hmac_secret()
-        if secret:
-            hmac_headers = create_request_headers(body, secret)
-            headers.update(hmac_headers)
+        if not secret:
+            logger.error("Forward rejected: no HMAC secret configured (fail-closed)", extra={"action": "forward_rejected"})
+            return False
+        hmac_headers = create_request_headers(body, secret)
+        headers.update(hmac_headers)
 
         # Add config hash for sync verification
         config_hash = _get_config_hash()
