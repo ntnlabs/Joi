@@ -64,7 +64,8 @@ def get_shared_secret() -> Optional[bytes]:
         try:
             return bytes.fromhex(secret)
         except ValueError:
-            return secret.encode("utf-8")
+            logger.critical("HMAC secret is not valid hex — refusing to use weak secret", extra={"action": "hmac_config_error"})
+            return None
     return None
 
 
@@ -86,7 +87,8 @@ def get_shared_secret_for_backend(backend_name: str) -> Optional[bytes]:
         try:
             return bytes.fromhex(secret)
         except ValueError:
-            return secret.encode("utf-8")
+            logger.critical("HMAC secret is not valid hex — refusing to use weak secret", extra={"action": "hmac_config_error", "env_var": env_name})
+            return None
 
     # No fallback - fail-closed for security
     logger.warning("No HMAC secret for backend", extra={
@@ -105,8 +107,8 @@ def save_shared_secret(secret_hex: str) -> bool:
         HMAC_SECRET_FILE.parent.mkdir(parents=True, exist_ok=True)
         temp_file = HMAC_SECRET_FILE.with_suffix(".tmp")
         temp_file.write_text(secret_hex + "\n")
+        temp_file.chmod(0o600)
         temp_file.rename(HMAC_SECRET_FILE)
-        HMAC_SECRET_FILE.chmod(0o600)
         logger.info("Persisted rotated HMAC secret", extra={
             "action": "secret_persisted",
             "path": str(HMAC_SECRET_FILE)

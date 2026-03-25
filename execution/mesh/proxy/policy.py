@@ -74,51 +74,52 @@ class MeshPolicy:
         self.max_timestamp_skew_ms = int(validation.get("max_timestamp_skew_ms", 300_000))
 
     def evaluate_inbound(self, payload: Dict[str, Any]) -> PolicyDecision:
-        sender = self._sender_transport_id(payload)
-        if not sender:
-            return PolicyDecision(False, "invalid_sender")
+        with self._lock:
+            sender = self._sender_transport_id(payload)
+            if not sender:
+                return PolicyDecision(False, "invalid_sender")
 
-        conversation = payload.get("conversation", {})
-        if not isinstance(conversation, dict):
-            return PolicyDecision(False, "invalid_conversation")
+            conversation = payload.get("conversation", {})
+            if not isinstance(conversation, dict):
+                return PolicyDecision(False, "invalid_conversation")
 
-        convo_type = conversation.get("type")
-        convo_id = conversation.get("id")
-        if convo_type not in {"direct", "group"} or not isinstance(convo_id, str) or not convo_id:
-            return PolicyDecision(False, "invalid_conversation")
+            convo_type = conversation.get("type")
+            convo_id = conversation.get("id")
+            if convo_type not in {"direct", "group"} or not isinstance(convo_id, str) or not convo_id:
+                return PolicyDecision(False, "invalid_conversation")
 
-        if convo_type == "group":
-            # For groups: check group participants, not global allowed_senders
-            allowed_participants = self.group_participants.get(convo_id)
-            if allowed_participants is None:
-                return PolicyDecision(False, "group_not_allowed")
-            # Allow all messages from configured groups (for context)
-            # but mark non-participants as store_only (Joi won't respond)
-            sender_allowed = sender in allowed_participants
-            if not sender_allowed:
-                # Forward for context but don't respond
-                return PolicyDecision(True, "store_only", store_only=True)
-        else:
-            # For DMs: sender must be in allowed_senders
-            if sender not in self.allowed_senders:
-                return PolicyDecision(False, "unknown_sender")
+            if convo_type == "group":
+                # For groups: check group participants, not global allowed_senders
+                allowed_participants = self.group_participants.get(convo_id)
+                if allowed_participants is None:
+                    return PolicyDecision(False, "group_not_allowed")
+                # Allow all messages from configured groups (for context)
+                # but mark non-participants as store_only (Joi won't respond)
+                sender_allowed = sender in allowed_participants
+                if not sender_allowed:
+                    # Forward for context but don't respond
+                    return PolicyDecision(True, "store_only", store_only=True)
+            else:
+                # For DMs: sender must be in allowed_senders
+                if sender not in self.allowed_senders:
+                    return PolicyDecision(False, "unknown_sender")
 
-        validation_result = self._validate_content(payload)
-        if not validation_result.allowed:
-            return validation_result
+            validation_result = self._validate_content(payload)
+            if not validation_result.allowed:
+                return validation_result
 
-        timestamp = payload.get("timestamp")
-        if not isinstance(timestamp, int):
-            return PolicyDecision(False, "invalid_timestamp")
-        now_ms = int(time.time() * 1000)
-        if abs(now_ms - timestamp) > self.max_timestamp_skew_ms:
-            return PolicyDecision(False, "timestamp_out_of_window")
+            timestamp = payload.get("timestamp")
+            if not isinstance(timestamp, int):
+                return PolicyDecision(False, "invalid_timestamp")
+            now_ms = int(time.time() * 1000)
+            if abs(now_ms - timestamp) > self.max_timestamp_skew_ms:
+                return PolicyDecision(False, "timestamp_out_of_window")
 
-        limit_result = self.rate_limiter.check_and_add(f"inbound:{sender}", now_ms=now_ms)
-        if not limit_result.allowed:
-            return PolicyDecision(False, limit_result.reason)
+            limit_result = self.rate_limiter.check_and_add(f"inbound:{sender}", now_ms=now_ms)
+            if not limit_result.allowed:
+                return PolicyDecision(False, limit_result.reason)
 
-        return PolicyDecision(True, "ok")
+            return PolicyDecision(True, "ok")
 
     def get_group_names(self, group_id: str) -> Optional[List[str]]:
         """Get the names Joi responds to in a specific group."""

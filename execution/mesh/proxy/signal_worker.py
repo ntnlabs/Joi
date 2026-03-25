@@ -599,6 +599,12 @@ def verify_hmac_auth():
     if request.path in ("/health", "/config/status"):
         return None
 
+    # Reject oversized requests before reading body
+    MAX_BODY = 10 * 1024 * 1024  # 10MB
+    content_length = request.content_length
+    if content_length and content_length > MAX_BODY:
+        return jsonify({"status": "error", "error": "request_too_large"}), 413
+
     # Check if HMAC is available (dynamic check - not just startup state)
     if not _is_hmac_available():
         # Fail-closed: reject if no HMAC configured
@@ -876,12 +882,12 @@ def send_outbound():
         try:
             result = _rpc.call("send", payload, timeout=30.0)
         except Exception as exc:
-            logger.error("Signal send failed", extra={"error": str(exc)})
-            return jsonify({"status": "error", "error": str(exc)}), 500
+            logger.error("Signal send failed", extra={"error": str(exc), "action": "send_failed"})
+            return jsonify({"status": "error", "error": "send_failed"}), 500
 
     if "error" in result:
-        logger.warning("Signal send error", extra={"error": str(result["error"])})
-        return jsonify({"status": "error", "error": str(result["error"])}), 500
+        logger.warning("Signal send error", extra={"error": str(result["error"]), "action": "send_failed"})
+        return jsonify({"status": "error", "error": "send_failed"}), 500
 
     # Extract timestamp from result
     sent_at = None
@@ -1126,7 +1132,10 @@ def _process_attachments(
             logger.warning("Attachment missing ID, cannot locate file")
             continue
 
-        attachment_path = SIGNAL_ATTACHMENTS_DIR / attachment_id
+        attachment_path = (SIGNAL_ATTACHMENTS_DIR / attachment_id).resolve()
+        if not str(attachment_path).startswith(str(SIGNAL_ATTACHMENTS_DIR.resolve())):
+            logger.warning("Path traversal blocked", extra={"attachment_id": str(attachment_id), "action": "path_traversal_blocked"})
+            continue
         if not attachment_path.exists():
             logger.warning("Attachment file not found", extra={"path": str(attachment_path)})
             continue
@@ -1335,6 +1344,13 @@ def _send_rate_limit_notice(payload: Dict[str, Any]) -> None:
 
     # Check cooldown - don't spam rate limit notices
     now = time.time()
+
+    # Prune stale entries
+    cutoff = now - _rate_limit_notice_cooldown * 2
+    stale_keys = [k for k, v in _rate_limit_notice_sent.items() if v <= cutoff]
+    for k in stale_keys:
+        del _rate_limit_notice_sent[k]
+
     last_sent = _rate_limit_notice_sent.get(sender, 0)
     if now - last_sent < _rate_limit_notice_cooldown:
         logger.debug("Skipping rate limit notice (cooldown)", extra={"sender": _redact_pii(sender, "phone")})
@@ -1364,13 +1380,13 @@ def _send_rate_limit_notice(payload: Dict[str, Any]) -> None:
             logger.error("Failed to send rate limit notice", extra={"error": str(exc)})
 
 
-def run_http_server(port: int):
+def run_http_server(port: int, host: str = "0.0.0.0"):
     """Run Flask server in a thread using waitress (production WSGI server)."""
     from waitress import serve
-    logger.info("HTTP server (waitress) listening", extra={"port": port, "action": "http_start"})
+    logger.info("HTTP server (waitress) listening", extra={"host": host, "port": port, "action": "http_start"})
     # waitress is production-ready: thread pool, proper HTTP parsing, no dev warnings
     # threads=4 handles concurrent requests (e.g., multiple outbound sends)
-    serve(flask_app, host="0.0.0.0", port=port, threads=4, _quiet=True)
+    serve(flask_app, host=host, port=port, threads=4, _quiet=True)
 
 
 def main() -> None:
@@ -1450,7 +1466,7 @@ def main() -> None:
         logger.warning("HMAC authentication DISABLED - set MESH_HMAC_SECRET")
 
     # Start HTTP server in background thread
-    http_thread = threading.Thread(target=run_http_server, args=(http_port,), daemon=True)
+    http_thread = threading.Thread(target=run_http_server, args=(http_port, settings.bind_host), daemon=True)
     http_thread.start()
 
     # Start watchdog thread to monitor signal-cli health
