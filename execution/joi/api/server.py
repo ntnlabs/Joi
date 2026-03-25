@@ -404,7 +404,8 @@ _SNOOZE_CLEAR     = re.compile(r"\b(wake|unsnooze|unmute|resume)\b", re.I)
 _DURATION_HOURS   = re.compile(r"(\d+)\s*h(?:ours?)?", re.I)
 _DURATION_MINS    = re.compile(r"(\d+)\s*m(?:in(?:utes?)?)?", re.I)
 _DURATION_DAYS    = re.compile(r"(\d+)\s*d(?:ays?)?", re.I)
-_DURATION_TONIGHT = re.compile(r"\btonight\b", re.I)
+_DURATION_TONIGHT   = re.compile(r"\btonight\b", re.I)
+_DURATION_TOMORROW  = re.compile(r"\btomorrow\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", re.I)
 
 # --- Reminder Post-Fire Snooze Patterns ---
 _REMINDER_SNOOZE_TRIGGER = re.compile(
@@ -2421,6 +2422,7 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
 
     data = _llm_detect(prompt, model=CURIOSITY_MODEL)
     if not data:
+        logger.warning("Reminder LLM parse returned no data (SKIP or invalid JSON)", extra={"action": "reminder_llm_skip"})
         return None
     try:
         due_at = datetime.fromisoformat(data["due_at"].replace("Z", "+00:00"))
@@ -2486,6 +2488,19 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]
         if candidate <= now_local:
             candidate += timedelta(days=1)
         due_at = candidate.astimezone(timezone.utc)
+        time_end = m.end()
+    elif m := _DURATION_TOMORROW.search(text):
+        tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+        now_local = now.astimezone(tz)
+        hour = int(m.group(1))
+        minute = int(m.group(2)) if m.group(2) else 0
+        ampm = (m.group(3) or "").lower()
+        if ampm == "pm" and hour < 12:
+            hour += 12
+        elif ampm == "am" and hour == 12:
+            hour = 0
+        tomorrow_local = (now_local + timedelta(days=1)).replace(hour=hour, minute=minute, second=0, microsecond=0)
+        due_at = tomorrow_local.astimezone(timezone.utc)
         time_end = m.end()
     elif m := _DURATION_HOURS.search(text):
         due_at = now + timedelta(hours=min(int(m.group(1)), 168))
