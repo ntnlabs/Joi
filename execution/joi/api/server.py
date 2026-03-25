@@ -2399,8 +2399,9 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         "If this is a reminder request, extract the date/time and what to remind about.\n"
         "Respond with JSON only:\n"
         '{"year": 2026, "month": 3, "day": 26, "hour": 11, "minute": 0, "title": "what to remind about"}\n'
-        "- Use the current local date/time above as your reference. Do not convert to UTC.\n"
-        "- year/month/day/hour/minute are integers.\n"
+        "- year/month/day/hour/minute are integers representing LOCAL time — output exactly what the user said.\n"
+        "- Do NOT adjust the hour for UTC or any timezone offset. Python handles that separately.\n"
+        "- If the user says 11:15, output hour=11, minute=15. Never subtract or add hours.\n"
         "- title: concise description of what to remind about.\n"
         "If not a reminder or time cannot be determined, respond with exactly: SKIP"
     )
