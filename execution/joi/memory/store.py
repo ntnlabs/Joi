@@ -1049,7 +1049,7 @@ class MemoryStore:
             self.set_state("last_interaction_at", str(now_ms))
 
         logger.debug("Stored message", extra={"direction": direction, "message_id": message_id})
-        return cursor.lastrowid or 0
+        return cursor.lastrowid if cursor.rowcount > 0 else 0
 
     def get_recent_messages(
         self,
