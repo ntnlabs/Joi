@@ -395,6 +395,18 @@ class WindOrchestrator:
     def snooze(self, conversation_id: str, until: datetime) -> None:
         """Snooze Wind for a conversation until specified time."""
         self.state_manager.set_snooze(conversation_id, until)
+        # Defer any awaiting-response topics to after snooze ends so they are
+        # not misclassified as deflected when the user returns
+        awaiting = self.topic_manager.get_topics_awaiting_response(conversation_id)
+        for topic in awaiting:
+            self.topic_manager.defer_topic(topic.id, until)
+        if awaiting:
+            logger.debug("Deferred awaiting topics for snooze", extra={
+                "conversation_id": conversation_id,
+                "count": len(awaiting),
+                "until": until.isoformat(),
+                "action": "snooze_defer"
+            })
 
     def clear_snooze(self, conversation_id: str) -> None:
         """Clear Wind snooze for a conversation."""
@@ -713,9 +725,13 @@ class WindOrchestrator:
         rules = LIFECYCLE_RULES.get(topic.topic_type, DEFAULT_LIFECYCLE)
         action = rules.get(outcome, "dismiss")
 
-        if action in ("resolve", "complete", "dismiss", "mark_engaged"):
-            # Topic is done - status already updated by mark_outcome
+        if action in ("resolve", "complete", "mark_engaged"):
+            # Topic is done - status already updated by mark_outcome (engaged → mentioned)
             pass
+
+        elif action == "dismiss":
+            # Deflected: mark dismissed so it no longer counts toward the mining cap
+            self.topic_manager.mark_dismissed(topic.id)
 
         elif action.startswith("retry_"):
             # Retry logic with pursuit back-off
