@@ -744,6 +744,7 @@ def _detect_and_extract_fact(
     sender_id: str = "",
     sender_name: str = "",
     is_group: bool = False,
+    detected_at: Optional[int] = None,
 ) -> Optional[str]:
     """
     Use LLM to detect if user wants something remembered, and extract it.
@@ -814,6 +815,7 @@ Return ONLY valid JSON, nothing else:"""
             source="stated",
             conversation_id=conversation_id,
             important=is_important,
+            detected_at=detected_at,
         )
         if policy_manager.is_privacy_mode():
             logger.info("Saved stated fact [privacy mode]", extra={
@@ -1666,6 +1668,7 @@ def receive_message(msg: InboundMessage):
                 sender_id=msg.sender.transport_id,
                 sender_name=msg.sender.display_name or "",
                 is_group=(msg.conversation.type == "group"),
+                detected_at=msg.timestamp,
             )
             # Note: _detect_and_extract_fact already stores the fact, so for true deferred commit
             # we'd need to refactor it. For now, heartbeat extends timeout to reduce partial state.
