@@ -2977,8 +2977,9 @@ SQL
                 "--------------------" "----------" "----------" "-------"
             while IFS='|' read -r id conv title due stat recur snoozes; do
                 [[ -z "$id" ]] && continue
+                due_disp=$(TZ="${JOI_TIMEZONE:-Europe/Bratislava}" date -d "${due}" +"%Y-%m-%dT%H:%M" 2>/dev/null || echo "${due:0:20}")
                 printf "%-4s  %-20s  %-30s  %-20s  %-10s  %-10s  %s\n" \
-                    "$id" "${conv:0:20}" "${title:0:30}" "${due:0:20}" \
+                    "$id" "${conv:0:20}" "${title:0:30}" "${due_disp:0:20}" \
                     "${stat:0:10}" "${recur:0:10}" "$snoozes"
             done <<< "$rows"
             ;;
