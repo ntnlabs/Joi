@@ -315,6 +315,15 @@ SUMMARIES_FTS_ENABLED = os.getenv("JOI_SUMMARIES_FTS_ENABLED", "1") == "1"  # De
 SUMMARIES_FTS_MAX_TOKENS = int(os.getenv("JOI_SUMMARIES_FTS_MAX_TOKENS", "1500"))
 FTS_CONTEXT_MESSAGES = int(os.getenv("JOI_FTS_CONTEXT_MESSAGES", "3"))  # Recent user turns used as FTS query
 
+# Time-of-day definitions for reminder commands (hours in 24h local time)
+REMINDER_EARLY_MORNING_HOUR = int(os.getenv("JOI_REMINDER_EARLY_MORNING_HOUR", "6"))
+REMINDER_MORNING_HOUR       = int(os.getenv("JOI_REMINDER_MORNING_HOUR", "8"))
+REMINDER_LUNCH_HOUR         = int(os.getenv("JOI_REMINDER_LUNCH_HOUR", "12"))
+REMINDER_AFTERNOON_HOUR     = int(os.getenv("JOI_REMINDER_AFTERNOON_HOUR", "16"))
+REMINDER_EVENING_HOUR       = int(os.getenv("JOI_REMINDER_EVENING_HOUR", "19"))
+REMINDER_TONIGHT_HOUR       = int(os.getenv("JOI_REMINDER_TONIGHT_HOUR", "21"))
+REMINDER_LATE_NIGHT_HOUR    = int(os.getenv("JOI_REMINDER_LATE_NIGHT_HOUR", "23"))
+
 # Brain debug - write full LLM call payload to YAML files
 BRAIN_DEBUG = os.getenv("JOI_BRAIN_DEBUG", "0") == "1"
 BRAIN_DEBUG_DIR = os.getenv("JOI_BRAIN_DEBUG_DIR", "/var/lib/joi/llm_debug")
@@ -421,8 +430,13 @@ _REMINDER_LIST_TRIGGER = re.compile(
 )
 _REMINDER_TIME_VOCAB = (
     "Time word definitions (use these exact hours when resolving):\n"
-    "  early morning=06:00, morning=08:00, lunch=12:00, afternoon=16:00,"
-    " evening=19:00, tonight=22:00, late night=23:00"
+    f"  early morning={REMINDER_EARLY_MORNING_HOUR:02d}:00,"
+    f" morning={REMINDER_MORNING_HOUR:02d}:00,"
+    f" lunch={REMINDER_LUNCH_HOUR:02d}:00,"
+    f" afternoon={REMINDER_AFTERNOON_HOUR:02d}:00,"
+    f" evening={REMINDER_EVENING_HOUR:02d}:00,"
+    f" tonight={REMINDER_TONIGHT_HOUR:02d}:00,"
+    f" late night={REMINDER_LATE_NIGHT_HOUR:02d}:00"
 )
 
 # --- Reschedule Intent Detection ---
@@ -2396,7 +2410,7 @@ def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional
     if (datetime.now(timezone.utc) - last.fired_at).total_seconds() > 7200:
         return None
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     if m := _DURATION_HOURS.search(text):
         new_due = now + timedelta(hours=min(int(m.group(1)), 168))
     elif m := _DURATION_MINS.search(text):
@@ -2639,8 +2653,7 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]
     if m := _DURATION_TONIGHT.search(text):
         tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
         now_local = now.astimezone(tz)
-        # "Tonight" = 9pm local time
-        candidate = now_local.replace(hour=21, minute=0, second=0, microsecond=0)
+        candidate = now_local.replace(hour=REMINDER_TONIGHT_HOUR, minute=0, second=0, microsecond=0)
         if candidate <= now_local:
             candidate += timedelta(days=1)
         due_at = candidate.astimezone(timezone.utc)
