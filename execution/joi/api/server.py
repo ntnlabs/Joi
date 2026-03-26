@@ -414,6 +414,10 @@ _REMINDER_SNOOZE_TRIGGER = re.compile(
 # --- Reminder Command Patterns ---
 _REMINDER_TRIGGER = re.compile(r"\bremind\s+me\b", re.I)
 _REMINDER_ABOUT   = re.compile(r"\b(?:to|about)\b", re.I)
+_REMINDER_LIST_TRIGGER = re.compile(
+    r"\b(remind(ers?)?|agenda|scheduled?|upcoming)\b",
+    re.I,
+)
 
 # --- Reschedule Intent Detection ---
 _RESCHEDULE_TRIGGER = re.compile(
@@ -1755,6 +1759,12 @@ def receive_message(msg: InboundMessage):
                 f"\n\nNote: A reminder was just successfully set: \"{r_title}\" due in {r_label}."
             )
 
+        # Reminder list query: inject pending/recent reminders so Joi can answer naturally.
+        if not reminder_result and msg.is_owner and msg.conversation.type == "direct" and user_text:
+            if _REMINDER_LIST_TRIGGER.search(user_text) and _is_reminder_list_query(user_text):
+                enriched_prompt = (enriched_prompt or "") + \
+                    f"\n\n{_build_reminders_context(msg.conversation.id)}"
+
         # Generate response from LLM with conversation context
         model_source = get_model_source(msg.conversation.type, msg.conversation.id, msg.sender.transport_id)
         prompt_source = get_prompt_source(msg.conversation.type, msg.conversation.id, msg.sender.transport_id)
@@ -2433,6 +2443,35 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         })
         return None
     return (due_at, title)
+
+
+def _is_reminder_list_query(text: str) -> bool:
+    """Use LLM to confirm the message is asking to see/list reminders."""
+    prompt = (
+        f'The user said: "{text}"\n\n'
+        "Is this asking to see, list, or check their reminders or agenda?\n"
+        'Respond with JSON only: {"list": true} or {"list": false}'
+    )
+    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    return bool(result and result.get("list"))
+
+
+def _build_reminders_context(conversation_id: str) -> str:
+    """Return formatted reminders (pending + recent fired) for LLM context injection."""
+    reminders = reminder_manager.list_recent(conversation_id, days=7)
+    if not reminders:
+        return "The user has no pending or recent reminders."
+    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+    lines = []
+    for r in reminders:
+        if r.due_at:
+            due_str = r.due_at.astimezone(tz).strftime("%a %b %d at %H:%M")
+        else:
+            due_str = "unknown time"
+        status_label = "pending" if r.status == "pending" else "already fired"
+        recur = f", repeating: {r.recurrence}" if r.recurrence else ""
+        lines.append(f'- "{r.title}" — {due_str} [{status_label}{recur}]')
+    return "Reminders (pending and recent):\n" + "\n".join(lines)
 
 
 def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]:

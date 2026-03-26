@@ -298,3 +298,26 @@ class ReminderManager:
             (conversation_id,),
         )
         return [self._row_to_reminder(row) for row in cursor.fetchall()]
+
+    def list_recent(self, conversation_id: str, days: int = 7) -> List[Reminder]:
+        """
+        List reminders for context: all pending + fired within the last `days` days.
+        Ordered by due_at ASC.
+        """
+        cutoff = _fmt_dt(datetime.now(timezone.utc) - timedelta(days=days))
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT id, conversation_id, title, due_at, status, recurrence,
+                   created_at, fired_at, expires_at, snooze_count
+            FROM reminders
+            WHERE conversation_id = ?
+              AND (
+                status = 'pending'
+                OR (status = 'fired' AND fired_at >= ?)
+              )
+            ORDER BY due_at ASC
+            """,
+            (conversation_id, cutoff),
+        )
+        return [self._row_to_reminder(row) for row in cursor.fetchall()]
