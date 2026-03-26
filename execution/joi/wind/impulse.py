@@ -50,6 +50,8 @@ class ImpulseResult:
     # WindMood fields
     threshold_offset: float = 0.0
     accumulated_impulse: float = 0.0
+    # Pre-trigger accumulated value (before reset on trigger); same as accumulated_impulse when no trigger
+    trigger_accumulated_impulse: float = 0.0
 
     @property
     def should_send(self) -> bool:
@@ -314,11 +316,13 @@ class ImpulseEngine:
 
         # Soft probability if above threshold
         should_trigger = False
+        trigger_accumulated = new_accumulated
         if crossed_threshold:
             trigger_probability = self._soft_trigger_probability(new_accumulated, current_threshold)
             should_trigger = random.random() < trigger_probability
 
             if should_trigger:
+                trigger_accumulated = new_accumulated  # save pre-reset value for logging
                 # Reset accumulator on trigger
                 self.state_manager.update_state(conversation_id, accumulated_impulse=0.0)
                 new_accumulated = 0.0
@@ -335,6 +339,7 @@ class ImpulseEngine:
             factors=factors,
             threshold_offset=new_offset,
             accumulated_impulse=new_accumulated,
+            trigger_accumulated_impulse=trigger_accumulated,
         )
 
     def _get_current_threshold(self, state: Optional[WindState]) -> float:

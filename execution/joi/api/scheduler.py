@@ -369,11 +369,16 @@ class Scheduler:
             # Update config from policy manager (in case it changed)
             self._wind_orchestrator.update_config(self._get_wind_config())
 
-            # Run Wind tick - returns list of (conv_id, should_send, skip_reason, topic, score)
+            # Run Wind tick - returns list of (conv_id, should_send, skip_reason, topic, score,
+            #                                    accumulated_impulse, threshold_offset, threshold)
+            # Note: tick() evaluates gates at tick time. The scheduler then does slow LLM generation
+            # before sending. This means user activity that arrives during generation is not re-checked
+            # here — this is intentional (natural timing feel). The silence gate in impulse.py is the
+            # authoritative guard; the occasional overlap adds serendipity to Wind's timing.
             results = self._wind_orchestrator.tick()
 
             # Process any conversations that should receive proactive messages
-            for conv_id, should_send, skip_reason, topic, score in results:
+            for conv_id, should_send, skip_reason, topic, score, accumulated_impulse, threshold_offset, threshold in results:
                 if not should_send or not topic:
                     continue
 
@@ -440,6 +445,9 @@ class Scheduler:
                         impulse_score=score,
                         message_text=message_text,
                         message_id=message_id,
+                        accumulated_impulse=accumulated_impulse,
+                        threshold_offset=threshold_offset,
+                        threshold=threshold,
                     )
                 else:
                     logger.error("Wind: failed to send", extra={"conversation_id": conv_id})
