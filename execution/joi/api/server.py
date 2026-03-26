@@ -415,7 +415,7 @@ _REMINDER_SNOOZE_TRIGGER = re.compile(
 _REMINDER_TRIGGER = re.compile(r"\bremind\s+me\b", re.I)
 _REMINDER_ABOUT   = re.compile(r"\b(?:to|about)\b", re.I)
 _REMINDER_LIST_TRIGGER = re.compile(
-    r"\b(remind(ers?)?|agenda|scheduled?|upcoming)\b",
+    r"\b(remind(ers?)?|agenda|plan(s|ned)?|scheduled?|upcoming|calendar)\b",
     re.I,
 )
 
@@ -1759,11 +1759,20 @@ def receive_message(msg: InboundMessage):
                 f"\n\nNote: A reminder was just successfully set: \"{r_title}\" due in {r_label}."
             )
 
-        # Reminder list query: inject pending/recent reminders so Joi can answer naturally.
+        # Reminder list / agenda-set: both gated by _REMINDER_LIST_TRIGGER.
+        # Agenda-set check runs first; list-query is the fallback.
         if not reminder_result and msg.is_owner and msg.conversation.type == "direct" and user_text:
-            if _REMINDER_LIST_TRIGGER.search(user_text) and _is_reminder_list_query(user_text):
-                enriched_prompt = (enriched_prompt or "") + \
-                    f"\n\n{_build_reminders_context(msg.conversation.id)}"
+            if _REMINDER_LIST_TRIGGER.search(user_text):
+                if _is_agenda_set_query(user_text):
+                    agenda_results = _handle_agenda_set(user_text, msg.conversation.id)
+                    if agenda_results:
+                        lines = "\n".join(f'- "{t}" — {l}' for t, l in agenda_results)
+                        enriched_prompt = (enriched_prompt or "") + (
+                            f"\n\n{len(agenda_results)} reminder(s) were just set from the user's agenda:\n{lines}"
+                        )
+                elif _is_reminder_list_query(user_text):
+                    enriched_prompt = (enriched_prompt or "") + \
+                        f"\n\n{_build_reminders_context(msg.conversation.id)}"
 
         # Generate response from LLM with conversation context
         model_source = get_model_source(msg.conversation.type, msg.conversation.id, msg.sender.transport_id)
@@ -2472,6 +2481,94 @@ def _build_reminders_context(conversation_id: str) -> str:
         recur = f", repeating: {r.recurrence}" if r.recurrence else ""
         lines.append(f'- "{r.title}" — {due_str} [{status_label}{recur}]')
     return "Reminders (pending and recent):\n" + "\n".join(lines)
+
+
+def _is_agenda_set_query(text: str) -> bool:
+    """Use LLM to confirm the message is providing a list of events/tasks to schedule."""
+    prompt = (
+        f'The user said: "{text}"\n\n'
+        "Is this providing a list of scheduled events, appointments, or tasks to remember "
+        "(i.e. the user wants reminders set for multiple items)?\n"
+        'Respond with JSON only: {"set": true} or {"set": false}'
+    )
+    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    return bool(result and result.get("set"))
+
+
+def _llm_parse_agenda_items(text: str) -> List[tuple]:
+    """
+    Parse multiple agenda items from natural language.
+    Returns list of (due_at: datetime UTC-aware, title: str), sorted by due_at ASC.
+    Empty list if nothing parseable.
+    """
+    now_utc = datetime.now(timezone.utc)
+    now_local = now_utc.astimezone(ZoneInfo(TIME_AWARENESS_TIMEZONE))
+    tz_abbr = now_local.strftime("%Z") or "local"
+
+    prompt = (
+        f'Current local date and time: {now_local.strftime("%Y-%m-%d %H:%M")} ({tz_abbr})\n\n'
+        f'The user said: "{text}"\n\n'
+        "Extract ALL scheduled events or tasks as a JSON object with an \"items\" array.\n"
+        "Rules:\n"
+        "- Each item: {\"year\": int, \"month\": int, \"day\": int, \"hour\": int, \"minute\": int, \"title\": str}\n"
+        "- Dates are LOCAL time — output exactly what the user said, no UTC adjustment.\n"
+        "- If a date is relative (\"tomorrow\", \"next Monday\"), resolve it from the current date above.\n"
+        "- If multiple items share an implied date, apply it to all of them.\n"
+        "- Sort items by date/time ascending.\n"
+        "- title: concise description of the event.\n"
+        "- If no items can be extracted, respond with exactly: SKIP\n\n"
+        "Example response:\n"
+        "{\"items\": [{\"year\": 2026, \"month\": 3, \"day\": 27, \"hour\": 10, \"minute\": 0, \"title\": \"Meeting\"}, ...]}"
+    )
+
+    data = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    if not data or "items" not in data:
+        logger.warning("Agenda LLM parse returned no items", extra={"action": "agenda_llm_skip"})
+        return []
+
+    results = []
+    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+    for item in data["items"]:
+        try:
+            due_at = datetime(
+                year=int(item["year"]),
+                month=int(item["month"]),
+                day=int(item["day"]),
+                hour=int(item["hour"]),
+                minute=int(item.get("minute", 0)),
+                second=0,
+                tzinfo=tz,
+            ).astimezone(timezone.utc)
+            title = str(item.get("title", "")).strip()[:200]
+        except (KeyError, ValueError, TypeError) as e:
+            logger.warning("Agenda item parse failed", extra={"error": str(e), "item": str(item)[:80]})
+            continue
+        if not title or due_at <= now_utc - timedelta(seconds=30):
+            logger.warning("Agenda item rejected: empty title or past", extra={"title": title})
+            continue
+        results.append((due_at, title))
+    return results
+
+
+def _handle_agenda_set(text: str, conversation_id: str) -> Optional[List[tuple]]:
+    """
+    Parse and store multiple agenda items. Returns list of (title, label) or None.
+    """
+    items = _llm_parse_agenda_items(text)
+    if not items:
+        return None
+
+    results = []
+    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+    for due_at, title in items:
+        reminder_manager.add(conversation_id, title, due_at)
+        due_local = due_at.astimezone(tz).strftime("%a %b %d at %H:%M")
+        results.append((title, due_local))
+        logger.info("Agenda item added", extra={
+            "title": title, "due_at": due_at.isoformat(),
+            "conversation_id": conversation_id, "action": "agenda_item_add",
+        })
+    return results
 
 
 def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]:
