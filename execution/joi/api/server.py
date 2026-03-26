@@ -313,6 +313,7 @@ FACTS_FTS_ENABLED = os.getenv("JOI_FACTS_FTS_ENABLED", "1") == "1"  # Default: e
 FACTS_FTS_MAX_TOKENS = int(os.getenv("JOI_FACTS_FTS_MAX_TOKENS", "400"))
 SUMMARIES_FTS_ENABLED = os.getenv("JOI_SUMMARIES_FTS_ENABLED", "1") == "1"  # Default: enabled
 SUMMARIES_FTS_MAX_TOKENS = int(os.getenv("JOI_SUMMARIES_FTS_MAX_TOKENS", "1500"))
+FTS_CONTEXT_MESSAGES = int(os.getenv("JOI_FTS_CONTEXT_MESSAGES", "3"))  # Recent user turns used as FTS query
 
 # Brain debug - write full LLM call payload to YAML files
 BRAIN_DEBUG = os.getenv("JOI_BRAIN_DEBUG", "0") == "1"
@@ -1712,6 +1713,17 @@ def receive_message(msg: InboundMessage):
         is_group_chat = msg.conversation.type == "group"
         chat_messages = _build_chat_messages(recent_messages, is_group=is_group_chat)
 
+        # Build FTS query from last N user turns for better multi-turn context
+        # e.g. "cottage?" + "when was I there?" → FTS finds cottage facts on 2nd turn
+        fts_query = user_text
+        if FTS_CONTEXT_MESSAGES > 1:
+            prior_user_texts = [
+                m.content_text for m in recent_messages
+                if m.direction == "inbound" and m.content_text
+            ][-(FTS_CONTEXT_MESSAGES - 1):]
+            if prior_user_texts:
+                fts_query = " ".join(prior_user_texts + [user_text])
+
         # Get per-conversation model (if any)
         custom_model = get_model_for_conversation(
             conversation_type=msg.conversation.type,
@@ -1740,10 +1752,10 @@ def receive_message(msg: InboundMessage):
                 sender_id=msg.sender.transport_id,
             )
             if base_prompt:
-                enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
+                enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
             else:
                 # No prompt file - only add facts/summaries/RAG if available
-                enriched_prompt = _build_enriched_prompt("", user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
+                enriched_prompt = _build_enriched_prompt("", fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
                 enriched_prompt = enriched_prompt.strip() or None  # None if empty
         else:
             # No custom model: use prompt with fallback to default
@@ -1752,7 +1764,7 @@ def receive_message(msg: InboundMessage):
                 conversation_id=msg.conversation.id,
                 sender_id=msg.sender.transport_id,
             )
-            enriched_prompt = _build_enriched_prompt(base_prompt, user_text, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
+            enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
 
         # Note: We no longer hint to the LLM about saved facts - this caused meta-reactions
         # and excessive "tagging" behavior. Memory is now invisible to the response generation.
