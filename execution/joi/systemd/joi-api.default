@@ -134,6 +134,15 @@ JOI_TIMEZONE=Europe/Bratislava
 # How long to retain fired/expired/cancelled reminders (days). 0 = keep forever.
 #JOI_REMINDER_RETENTION_DAYS=180
 
+# Time-of-day definitions for reminder commands (hours in 24h local time)
+#JOI_REMINDER_EARLY_MORNING_HOUR=6
+#JOI_REMINDER_MORNING_HOUR=8
+#JOI_REMINDER_LUNCH_HOUR=12
+#JOI_REMINDER_AFTERNOON_HOUR=16
+#JOI_REMINDER_EVENING_HOUR=19
+#JOI_REMINDER_TONIGHT_HOUR=21
+#JOI_REMINDER_LATE_NIGHT_HOUR=23
+
 # --- Scheduler (Wind/Tasks) ---
 # Background scheduler for proactive messaging and reminders
 JOI_SCHEDULER_ENABLED=1
