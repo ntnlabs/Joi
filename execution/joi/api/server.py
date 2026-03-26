@@ -418,6 +418,11 @@ _REMINDER_LIST_TRIGGER = re.compile(
     r"\b(remind(ers?)?|agenda|plan(s|ned)?|scheduled?|upcoming|calendar)\b",
     re.I,
 )
+_REMINDER_TIME_VOCAB = (
+    "Time word definitions (use these exact hours when resolving):\n"
+    "  early morning=06:00, morning=08:00, lunch=12:00, afternoon=16:00,"
+    " evening=19:00, tonight=22:00, late night=23:00"
+)
 
 # --- Reschedule Intent Detection ---
 _RESCHEDULE_TRIGGER = re.compile(
@@ -2413,7 +2418,8 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
     tz_abbr = now_local.strftime("%Z") or "local"
 
     prompt = (
-        f'Current local date and time: {now_local.strftime("%Y-%m-%d %H:%M")} ({tz_abbr})\n\n'
+        f'Current local date and time: {now_local.strftime("%Y-%m-%d %H:%M")} ({tz_abbr})\n'
+        f'{_REMINDER_TIME_VOCAB}\n\n'
         f'The user said: "{text}"\n\n'
         "If this is a reminder request, extract the date/time and what to remind about.\n"
         "Respond with JSON only:\n"
@@ -2506,7 +2512,8 @@ def _llm_parse_agenda_items(text: str) -> List[tuple]:
     tz_abbr = now_local.strftime("%Z") or "local"
 
     prompt = (
-        f'Current local date and time: {now_local.strftime("%Y-%m-%d %H:%M")} ({tz_abbr})\n\n'
+        f'Current local date and time: {now_local.strftime("%Y-%m-%d %H:%M")} ({tz_abbr})\n'
+        f'{_REMINDER_TIME_VOCAB}\n\n'
         f'The user said: "{text}"\n\n'
         "Extract ALL scheduled events or tasks as a JSON object with an \"items\" array.\n"
         "Rules:\n"
