@@ -146,12 +146,13 @@ class WindOrchestrator:
         self,
         conversation_id: str,
         now: Optional[datetime] = None,
-    ) -> Tuple[bool, Optional[str], Optional[PendingTopic], float]:
+    ) -> Tuple[bool, Optional[str], Optional[PendingTopic], float, float, float, float]:
         """
         Check impulse for a single conversation.
 
         Returns:
-            (should_send, skip_reason, selected_topic, impulse_score)
+            (should_send, skip_reason, selected_topic, impulse_score,
+             trigger_accumulated_impulse, threshold_offset, threshold)
         """
         if now is None:
             now = datetime.now()
@@ -170,7 +171,7 @@ class WindOrchestrator:
                 threshold=result.threshold,
                 skip_reason=result.gate_result.failed_gate,
             )
-            return False, result.gate_result.failed_gate, None, 0.0
+            return False, result.gate_result.failed_gate, None, 0.0, 0.0, 0.0, result.threshold
 
         # Check if above threshold
         if not result.above_threshold:
@@ -186,7 +187,7 @@ class WindOrchestrator:
                 threshold_offset=result.threshold_offset,
                 accumulated_impulse=result.accumulated_impulse,
             )
-            return False, "below_threshold", None, result.score
+            return False, "below_threshold", None, result.score, result.accumulated_impulse, result.threshold_offset, result.threshold
 
         # Select topic
         topic = self.topic_manager.get_best_topic(conversation_id)
@@ -210,7 +211,7 @@ class WindOrchestrator:
                 threshold_offset=result.threshold_offset,
                 accumulated_impulse=result.accumulated_impulse,
             )
-            return False, "no_viable_topic", None, result.score
+            return False, "no_viable_topic", None, result.score, result.accumulated_impulse, result.threshold_offset, result.threshold
 
         # Shadow mode: log decision but don't send
         if self.config.shadow_mode:
@@ -232,28 +233,29 @@ class WindOrchestrator:
                 conversation_id, result.score, result.threshold, result.accumulated_impulse,
                 topic.id, topic.title
             )
-            return False, "shadow_mode", topic, result.score
+            return False, "shadow_mode", topic, result.score, result.accumulated_impulse, result.threshold_offset, result.threshold
 
         # Live mode: signal that we should send
         # Caller (scheduler) handles actual LLM generation and sending
         logger.info(
             "Wind live: triggering send to %s (score=%.2f, threshold=%.2f, accum=%.2f, topic=#%d: %s)",
-            conversation_id, result.score, result.threshold, result.accumulated_impulse,
+            conversation_id, result.score, result.threshold, result.trigger_accumulated_impulse,
             topic.id, topic.title
         )
-        return True, None, topic, result.score
+        return True, None, topic, result.score, result.trigger_accumulated_impulse, result.threshold_offset, result.threshold
 
     def check_impulse_all(
         self,
         now: Optional[datetime] = None,
-    ) -> List[Tuple[str, bool, Optional[str], Optional[PendingTopic], float]]:
+    ) -> List[Tuple[str, bool, Optional[str], Optional[PendingTopic], float, float, float, float]]:
         """
         Check impulse for all eligible conversations.
 
         Only processes conversations in the allowlist.
 
         Returns:
-            List of (conversation_id, should_send, skip_reason, topic, impulse_score)
+            List of (conversation_id, should_send, skip_reason, topic, impulse_score,
+                     accumulated_impulse, threshold_offset, threshold)
         """
         if now is None:
             now = datetime.now()
@@ -267,15 +269,15 @@ class WindOrchestrator:
         # Only check conversations in allowlist
         for conversation_id in self.config.allowlist:
             try:
-                should_send, skip_reason, topic, score = self.check_impulse(conversation_id, now)
-                results.append((conversation_id, should_send, skip_reason, topic, score))
+                should_send, skip_reason, topic, score, accumulated_impulse, threshold_offset, threshold = self.check_impulse(conversation_id, now)
+                results.append((conversation_id, should_send, skip_reason, topic, score, accumulated_impulse, threshold_offset, threshold))
             except Exception as e:
                 logger.error(
                     "Error checking impulse",
                     extra={"conversation_id": conversation_id, "error": str(e)},
                     exc_info=True,
                 )
-                results.append((conversation_id, False, f"error: {e}", None, 0.0))
+                results.append((conversation_id, False, f"error: {e}", None, 0.0, 0.0, 0.0, self.config.impulse_threshold))
 
         # Expire stale topics while we're at it
         self.topic_manager.expire_stale_topics()
@@ -285,14 +287,15 @@ class WindOrchestrator:
     def tick(
         self,
         now: Optional[datetime] = None,
-    ) -> List[Tuple[str, bool, Optional[str], Optional[PendingTopic], float]]:
+    ) -> List[Tuple[str, bool, Optional[str], Optional[PendingTopic], float, float, float, float]]:
         """
         Scheduler tick entry point.
 
         Called by the scheduler every interval (default 60s).
 
         Returns:
-            List of (conversation_id, should_send, skip_reason, topic, impulse_score)
+            List of (conversation_id, should_send, skip_reason, topic, impulse_score,
+                     accumulated_impulse, threshold_offset, threshold)
             Caller (scheduler) handles actual sends for should_send=True.
         """
         if now is None:
@@ -318,7 +321,7 @@ class WindOrchestrator:
 
         # Log summary
         checked = len(results)
-        to_send = sum(1 for _, should_send, _, _, _ in results if should_send)
+        to_send = sum(1 for _, should_send, _, _, _, _, _, _ in results if should_send)
 
         if checked > 0:
             logger.debug(
@@ -419,6 +422,9 @@ class WindOrchestrator:
         impulse_score: float,
         message_text: str,
         message_id: Optional[str] = None,
+        accumulated_impulse: float = 0.0,
+        threshold_offset: float = 0.0,
+        threshold: Optional[float] = None,
     ) -> None:
         """
         Record that a proactive message was successfully sent.
@@ -432,6 +438,9 @@ class WindOrchestrator:
             impulse_score: Impulse score at time of send
             message_text: Message text sent
             message_id: Message ID of the sent message (for reply tracking)
+            accumulated_impulse: Pre-trigger accumulated impulse (before reset)
+            threshold_offset: Threshold drift offset at time of send
+            threshold: Actual drifted threshold used for trigger decision
         """
         # Log the successful send
         self.decision_logger.log_decision(
@@ -439,9 +448,11 @@ class WindOrchestrator:
             eligible=True,
             decision="send",
             impulse_score=impulse_score,
-            threshold=self.config.impulse_threshold,
+            threshold=threshold if threshold is not None else self.config.impulse_threshold,
             selected_topic_id=topic.id,
             draft_message=message_text,
+            accumulated_impulse=accumulated_impulse,
+            threshold_offset=threshold_offset,
         )
 
         # Phase 4a: Mark topic as sent with message_id for tracking
