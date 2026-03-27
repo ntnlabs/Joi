@@ -10,6 +10,35 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger("joi.wind.state")
 
+# Phase 4d: Plutchik primary emotion valence and vocabulary
+_MOOD_VALENCE: dict[str, int] = {
+    "joy": 1, "trust": 1, "anticipation": 1, "surprise": 0,
+    "anger": -1, "disgust": -1, "fear": -1, "sadness": -1, "neutral": 0,
+}
+
+_MOOD_VOCABULARY: dict[str, tuple[str, str, str]] = {
+    "joy":          ("serenity",     "joy",           "ecstasy"),
+    "trust":        ("acceptance",   "trust",         "admiration"),
+    "anticipation": ("interest",     "anticipation",  "vigilance"),
+    "surprise":     ("distraction",  "surprise",      "amazement"),
+    "anger":        ("annoyance",    "anger",         "rage"),
+    "disgust":      ("boredom",      "disgust",       "loathing"),
+    "fear":         ("apprehension", "fear",          "terror"),
+    "sadness":      ("pensiveness",  "sadness",       "grief"),
+}
+
+
+def _mood_word(state: str, intensity: float) -> str:
+    """Resolve Plutchik primary + intensity to vocabulary word."""
+    vocab = _MOOD_VOCABULARY.get(state)
+    if not vocab:
+        return state
+    if intensity < 0.4:
+        return vocab[0]
+    if intensity < 0.7:
+        return vocab[1]
+    return vocab[2]
+
 
 @dataclass
 class WindState:
@@ -41,6 +70,10 @@ class WindState:
     convo_gap_ema_seconds: Optional[float] = None
     # Tension mining pointer (epoch ms of newest mined message)
     last_tension_mined_message_ts: Optional[int] = None
+    # Phase 4d: Named emotional state (Plutchik)
+    mood_state: str = "neutral"
+    mood_intensity: float = 0.5
+    mood_updated_at: Optional[datetime] = None
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -118,7 +151,8 @@ class WindStateManager:
                    engagement_score, total_proactives_sent, total_engaged,
                    total_ignored, total_deflected, last_engaged_at, last_deflected_at,
                    convo_gap_ema_seconds, last_tension_mined_message_ts,
-                   proactive_fire_times_json
+                   proactive_fire_times_json,
+                   mood_state, mood_intensity, mood_updated_at
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -160,6 +194,9 @@ class WindStateManager:
             convo_gap_ema_seconds=row["convo_gap_ema_seconds"],
             last_tension_mined_message_ts=row["last_tension_mined_message_ts"],
             proactive_fire_times=fire_times,
+            mood_state=row["mood_state"] or "neutral",
+            mood_intensity=row["mood_intensity"] if row["mood_intensity"] is not None else 0.5,
+            mood_updated_at=_parse_datetime(row["mood_updated_at"]),
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -194,6 +231,7 @@ class WindStateManager:
         "total_ignored", "total_deflected", "last_engaged_at", "last_deflected_at",
         "convo_gap_ema_seconds", "last_tension_mined_message_ts",
         "proactive_fire_times_json",
+        "mood_state", "mood_intensity", "mood_updated_at",
     })
 
     def update_state(self, conversation_id: str, **updates) -> None:
@@ -535,6 +573,25 @@ class WindStateManager:
         conn.execute(sql, params)
         conn.commit()
 
+        # Phase 4d: nudge mood intensity based on proactive outcome
+        state = self.get_state(conversation_id)
+        if state:
+            _intensity_nudge = {"engaged": 0.06, "ignored": -0.03, "deflected": -0.06}
+            nudge = _intensity_nudge.get(outcome, 0.0)
+            if nudge != 0.0:
+                new_intensity = round(max(0.0, min(1.0, state.mood_intensity + nudge)), 3)
+                new_mood_state = state.mood_state
+                if outcome == "engaged" and new_intensity > 0.4 and _MOOD_VALENCE.get(new_mood_state, 0) < 0:
+                    new_mood_state = "joy"
+                elif outcome == "deflected" and new_intensity < 0.3 and _MOOD_VALENCE.get(new_mood_state, 0) > 0:
+                    new_mood_state = "sadness"
+                self.update_state(
+                    conversation_id,
+                    mood_intensity=new_intensity,
+                    mood_state=new_mood_state,
+                    mood_updated_at=datetime.now().isoformat(),
+                )
+
         # Log with fresh state
         state = self.get_state(conversation_id)
         logger.info("Recorded engagement", extra={
@@ -607,3 +664,30 @@ class WindStateManager:
                 "last_deflected_at": row["last_deflected_at"],
             })
         return results
+
+    # --- Phase 4d: Mood management methods ---
+
+    def update_mood(self, conversation_id: str, state: str, intensity: float, reason: str = "") -> None:
+        """Update mood from conversation analysis or manual override."""
+        intensity = round(max(0.0, min(1.0, intensity)), 3)
+        self.update_state(
+            conversation_id,
+            mood_state=state,
+            mood_intensity=intensity,
+            mood_updated_at=datetime.now().isoformat(),
+        )
+        logger.info("Wind mood updated", extra={
+            "conversation_id": conversation_id,
+            "mood_state": state,
+            "mood_intensity": intensity,
+            "reason": reason,
+            "action": "mood_update",
+        })
+
+    def rollup_mood(self, conversation_id: str) -> None:
+        """Daily intensity decay — mood fades toward moderate without reinforcement."""
+        ws = self.get_state(conversation_id)
+        if not ws:
+            return
+        new_intensity = round(ws.mood_intensity * 0.85 + 0.5 * 0.15, 3)
+        self.update_state(conversation_id, mood_intensity=new_intensity)

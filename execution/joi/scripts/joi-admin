@@ -197,6 +197,7 @@ WIND SUBCOMMANDS:
     reset-windmood [conversation_id]  Reset WindMood to defaults (offset=NULL, accumulated=0)
     set-windmood <conversation_id>    Fine-tune WindMood values
     show-engagement [conversation_id] Show engagement stats (score, sent/engaged/ignored/deflected)
+    set-mood <conversation_id>        Set mood state and intensity (Phase 4d)
     reset-engagement [conversation_id] Reset engagement score to 0.5 and clear counters
     show-feedback [conversation_id]   Show per-topic-family feedback (interest/rejection weights, undertaker status)
     clear-cooldowns <conversation_id> Clear all topic family cooldowns
@@ -224,6 +225,7 @@ WIND EXAMPLES:
     joi-admin wind reset-windmood +123456789            # Reset specific conversation
     joi-admin wind set-windmood +123 --offset 0.05      # Fine-tune offset
     joi-admin wind set-windmood +123 --accumulated 0.3  # Fine-tune accumulator
+    joi-admin wind set-mood +123 --state=joy --intensity=0.7    # Set mood to joyful
     joi-admin wind show-engagement                      # Show all engagement stats
     joi-admin wind show-engagement +123456789           # Show specific conversation
     joi-admin wind reset-engagement                     # Reset all engagement to neutral
@@ -1501,6 +1503,8 @@ SELECT
     conversation_id,
     COALESCE(threshold_offset, 'NULL'),
     COALESCE(accumulated_impulse, 0.0),
+    COALESCE(mood_state, 'neutral'),
+    COALESCE(mood_intensity, 0.5),
     COALESCE(updated_at, '')
 FROM wind_state
 $where_clause
@@ -1513,11 +1517,11 @@ SQL
                 exit 0
             fi
 
-            printf "%-40s  %12s  %12s  %s\n" "conversation_id" "offset" "accumulated" "updated_at"
-            printf "%-40s  %12s  %12s  %s\n" "---------------" "------" "-----------" "----------"
-            while IFS='|' read -r conv_id offset accum updated; do
+            printf "%-40s  %12s  %12s  %14s  %9s  %s\n" "conversation_id" "offset" "accumulated" "mood_state" "intensity" "updated_at"
+            printf "%-40s  %12s  %12s  %14s  %9s  %s\n" "---------------" "------" "-----------" "----------" "---------" "----------"
+            while IFS='|' read -r conv_id offset accum mood_state mood_intensity updated; do
                 [[ -z "${conv_id}${offset}${accum}${updated}" ]] && continue
-                printf "%-40s  %12s  %12.2f  %s\n" "$conv_id" "$offset" "$accum" "$updated"
+                printf "%-40s  %12s  %12.2f  %14s  %9.3f  %s\n" "$conv_id" "$offset" "$accum" "$mood_state" "$mood_intensity" "$updated"
             done <<< "$rows"
             ;;
 
@@ -1643,6 +1647,92 @@ SQL
             info "Updated WindMood for '$conversation'"
             [[ -n "$offset" ]] && echo "  threshold_offset = $offset"
             [[ -n "$accumulated" ]] && echo "  accumulated_impulse = $accumulated"
+            ;;
+
+        set-mood)
+            local conversation="${1:-}"
+            [[ -z "$conversation" ]] && error "set-mood requires a conversation_id"
+            shift || true
+
+            local mood_state=""
+            local mood_intensity=""
+
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --state=*)
+                        mood_state="${1#--state=}"
+                        shift
+                        ;;
+                    --state)
+                        [[ -z "${2:-}" ]] && error "--state requires a value"
+                        mood_state="$2"; shift 2
+                        ;;
+                    --intensity=*)
+                        mood_intensity="${1#--intensity=}"
+                        shift
+                        ;;
+                    --intensity)
+                        [[ -z "${2:-}" ]] && error "--intensity requires a value"
+                        mood_intensity="$2"; shift 2
+                        ;;
+                    --help|-h)
+                        cat <<'HELP'
+Usage: joi-admin wind set-mood <conversation_id> --state=<state> --intensity=<0.0-1.0>
+
+Set the named emotional state (Plutchik primary) and intensity for a conversation.
+
+Options:
+  --state STATE       One of: joy, trust, anticipation, surprise, anger, disgust, fear, sadness, neutral
+  --intensity FLOAT   Intensity 0.0-1.0 (0.0=low, 0.5=moderate, 1.0=high)
+
+Examples:
+  joi-admin wind set-mood +123456789 --state=joy --intensity=0.7
+  joi-admin wind set-mood +123456789 --state=neutral --intensity=0.5
+HELP
+                        exit 0
+                        ;;
+                    *)
+                        error "Unknown option for 'wind set-mood': $1"
+                        ;;
+                esac
+            done
+
+            [[ -z "$mood_state" ]] && error "set-mood requires --state"
+            [[ -z "$mood_intensity" ]] && error "set-mood requires --intensity"
+
+            # Validate state
+            case "$mood_state" in
+                joy|trust|anticipation|surprise|anger|disgust|fear|sadness|neutral) ;;
+                *) error "--state must be one of: joy, trust, anticipation, surprise, anger, disgust, fear, sadness, neutral" ;;
+            esac
+
+            # Validate intensity
+            if ! [[ "$mood_intensity" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+                error "--intensity must be a number between 0.0 and 1.0"
+            fi
+            local intensity_check
+            intensity_check=$(echo "$mood_intensity" | awk '{ if ($1 < 0.0 || $1 > 1.0) print "bad" }')
+            if [[ "$intensity_check" == "bad" ]]; then
+                error "--intensity must be between 0.0 and 1.0"
+            fi
+
+            local conversation_escaped
+            conversation_escaped=$(sql_escape_literal "$conversation")
+
+            # Ensure state row exists
+            local exists
+            exists=$(db_scalar "SELECT COUNT(*) FROM wind_state WHERE conversation_id = '$conversation_escaped';")
+            if [[ "${exists:-0}" == "0" ]]; then
+                error "No Wind state found for conversation '$conversation' (has it been seen by Wind?)"
+            fi
+
+            local now
+            now=$(date -Iseconds)
+            db_exec "UPDATE wind_state SET mood_state = '$mood_state', mood_intensity = $mood_intensity, mood_updated_at = '$now', updated_at = '$now' WHERE conversation_id = '$conversation_escaped';"
+
+            info "Mood updated for '$conversation'"
+            echo "  mood_state     = $mood_state"
+            echo "  mood_intensity = $mood_intensity"
             ;;
 
         show-engagement)
@@ -2261,6 +2351,7 @@ Wind state subcommands:
   set-windmood      <conversation_id> [--offset N] [--impulse N]  Set WindMood values
   show-engagement   [conversation_id]                Show engagement metrics
   reset-engagement  [conversation_id]                Reset engagement counters
+  set-mood          <conversation_id> --state=S --intensity=F  Set Plutchik mood state
   show-feedback     <conversation_id>                Show topic family feedback
   undertaker-clear  <conversation_id> <family>       Remove undertaker flag
   undertaker-list   <conversation_id>                List all undertaker-blocked families
