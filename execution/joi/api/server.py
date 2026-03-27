@@ -62,6 +62,7 @@ from memory import MemoryConsolidator, MemoryStore
 
 # Import Wind module (path already set above)
 from wind import WindOrchestrator, WindConfig
+from wind.state import _mood_word
 
 # Import Reminder subsystem
 from reminders import ReminderManager
@@ -2273,6 +2274,17 @@ def _build_enriched_prompt(
             logger.info("RAG: no matches for query")
     if _debug is not None:
         _debug["rag"] = {"chars": len(rag_context), "content": rag_context} if rag_context else None
+
+    # Phase 4d: Inject mood as response modifier
+    if conversation_id and wind_orchestrator:
+        _ws = wind_orchestrator.state_manager.get_state(conversation_id)
+        if _ws and _ws.mood_state != "neutral":
+            _mword = _mood_word(_ws.mood_state, _ws.mood_intensity)
+            mood_line = (
+                f"Your current mood: {_mword}.\n"
+                "Let this naturally color your tone — don't announce it, just let it show."
+            )
+            parts.insert(1, "\n\n" + mood_line)
 
     # Add current datetime if time awareness is enabled
     if TIME_AWARENESS_ENABLED:

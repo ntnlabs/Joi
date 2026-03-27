@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from .config import WindConfig
 from .feedback import TopicFeedbackManager
-from .state import WindStateManager, WindState
+from .state import WindStateManager, WindState, _MOOD_VALENCE
 from .topics import TopicManager
 
 logger = logging.getLogger("joi.wind.impulse")
@@ -454,9 +454,16 @@ class ImpulseEngine:
         factors["affinity"] = affinity_contribution
         factors["novelty"] = novelty_contribution
 
+        # Phase 4d: Mood factor
+        mood_contribution = 0.0
+        if state and state.mood_state in _MOOD_VALENCE:
+            valence = _MOOD_VALENCE[state.mood_state]
+            mood_contribution = valence * state.mood_intensity * self.config.mood_weight
+        factors["mood"] = mood_contribution
+
         logger.debug(
             "Impulse factors for %s: base=%.2f silence=%.2f pressure=%.2f "
-            "fatigue=%.2f engagement=%.2f affinity=%.2f novelty=%.2f",
+            "fatigue=%.2f engagement=%.2f affinity=%.2f novelty=%.2f mood=%.2f",
             conversation_id,
             factors["base"],
             factors["silence"],
@@ -465,6 +472,7 @@ class ImpulseEngine:
             factors["engagement"],
             factors["affinity"],
             factors["novelty"],
+            factors["mood"],
         )
 
         return factors

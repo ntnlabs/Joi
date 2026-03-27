@@ -201,6 +201,7 @@ class Scheduler:
             self._check_hmac_rotation()
             self._purge_old_reminders()
             self._dedup_wind_topics()
+            self._rollup_moods()
             logger.info("Scheduler: end-of-day procedures complete", extra={"action": "daily_tasks_done"})
 
         # Refresh membership cache (only runs if business mode + dm_group_knowledge)
@@ -625,6 +626,18 @@ class Scheduler:
             self._wind_orchestrator.deduplicate_topics_all()
         except Exception as e:
             logger.warning("Scheduler: topic dedup failed", extra={"error": str(e)})
+
+    def _rollup_moods(self) -> None:
+        """Daily mood intensity decay toward moderate for all allowlisted conversations."""
+        if not self._wind_orchestrator:
+            return
+        for conv_id in self._wind_orchestrator.config.allowlist:
+            try:
+                self._wind_orchestrator.state_manager.rollup_mood(conv_id)
+            except Exception as e:
+                logger.warning("Failed to rollup mood", extra={
+                    "conversation_id": conv_id, "error": str(e),
+                })
 
     def _startup_config_push(self):
         """Push config to mesh on startup to ensure sync."""

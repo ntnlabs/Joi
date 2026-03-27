@@ -38,6 +38,7 @@ class WindConfig:
     topic_pressure_weight: float = 0.2
     fatigue_weight: float = 0.3
     engagement_weight: float = 0.2  # Phase 4a: boost/dampen based on engagement score
+    mood_weight: float = 0.15       # Phase 4d: max impulse contribution from mood (±0.15 at intensity 1.0)
 
     # Phase 4a: Engagement tracking
     ignore_timeout_hours: float = 12.0  # Hours before topic is considered ignored
@@ -113,6 +114,7 @@ class WindConfig:
             topic_pressure_weight=data.get("topic_pressure_weight", 0.2),
             fatigue_weight=data.get("fatigue_weight", 0.3),
             engagement_weight=data.get("engagement_weight", 0.2),
+            mood_weight=data.get("mood_weight", 0.15),
             ignore_timeout_hours=data.get("ignore_timeout_hours", 12.0),
             interest_decay_rate=data.get("interest_decay_rate", 0.02),
             novelty_weight=data.get("novelty_weight", 0.1),
@@ -158,6 +160,7 @@ class WindConfig:
             "topic_pressure_weight": self.topic_pressure_weight,
             "fatigue_weight": self.fatigue_weight,
             "engagement_weight": self.engagement_weight,
+            "mood_weight": self.mood_weight,
             "ignore_timeout_hours": self.ignore_timeout_hours,
             "interest_decay_rate": self.interest_decay_rate,
             "novelty_weight": self.novelty_weight,

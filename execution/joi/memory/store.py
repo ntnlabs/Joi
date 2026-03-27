@@ -272,7 +272,11 @@ CREATE TABLE IF NOT EXISTS wind_state (
     -- Tension mining pointer (epoch ms of newest mined message)
     last_tension_mined_message_ts INTEGER DEFAULT NULL,
     -- Rolling 24h fire timestamps for sliding window cap (v12)
-    proactive_fire_times_json TEXT DEFAULT NULL
+    proactive_fire_times_json TEXT DEFAULT NULL,
+    -- Phase 4d: Named emotional state (Plutchik)
+    mood_state TEXT DEFAULT 'neutral',
+    mood_intensity REAL DEFAULT 0.5,
+    mood_updated_at TEXT DEFAULT NULL
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -752,6 +756,13 @@ class MemoryStore:
             if "last_tension_mined_message_ts" not in wind_columns:
                 logger.info("Migration: Adding 'last_tension_mined_message_ts' column to wind_state table")
                 conn.execute("ALTER TABLE wind_state ADD COLUMN last_tension_mined_message_ts INTEGER DEFAULT NULL")
+                conn.commit()
+            # Phase 4d: Mood system
+            if "mood_state" not in wind_columns:
+                logger.info("Migration: Adding mood columns to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN mood_state TEXT DEFAULT 'neutral'")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN mood_intensity REAL DEFAULT 0.5")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN mood_updated_at TEXT DEFAULT NULL")
                 conn.commit()
 
         # Check pending_topics table for engagement columns (v8)
