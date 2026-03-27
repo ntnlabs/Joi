@@ -99,6 +99,8 @@ JOI_RAG_ENABLED=1
 #JOI_SUMMARIES_FTS_ENABLED=1
 #JOI_SUMMARIES_FTS_MAX_TOKENS=1500
 #JOI_FTS_CONTEXT_MESSAGES=3
+#JOI_FTS_HOT_BOOST=1
+#JOI_FTS_HEATED_BOOST=2
 
 # --- Knowledge Ingestion ---
 # Directory watched for new knowledge files to ingest into RAG
