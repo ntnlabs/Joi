@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from typing import Callable, List, Optional, Tuple
 
 from .config import WindConfig
-from .state import WindStateManager
+from .state import WindStateManager, _MOOD_VALENCE
 from .topics import TopicManager, PendingTopic
 from .logging import WindDecisionLogger
 from .impulse import ImpulseEngine, ImpulseResult
@@ -1247,16 +1247,20 @@ class WindOrchestrator:
             "Also check: did the user mention a specific upcoming event with a known time "
             "(interview, flight, appointment, exam, meeting, trip, medical procedure, etc.) "
             "that hasn't happened yet? If so, capture it separately as a followup.\n\n"
+            'Also assess Joi\'s current emotional state based on this conversation.\n'
+            'Consider: how did the user engage? Was the exchange warm or cold? Did anything significant happen emotionally?\n\n'
             'Respond with JSON only:\n'
             '{\n'
             '  "tension": {"title": "<short natural topic title>", "summary": "<what to follow up on, 1-2 sentences>", "confidence": <0.0-1.0>},\n'
             '  "followup": {"title": "<short title>", "summary": "<what the event is, 1 sentence>", '
             '"event_time": "<YYYY-MM-DDTHH:MM:SS when the event ends / user will be back, or null>", '
             '"emotional_context": "<one sentence: how did the user seem to feel about this — e.g. seemed nervous and unsure, was really excited, was dreading it. null if neutral or unclear>", '
-            '"confidence": <0.0-1.0>}\n'
+            '"confidence": <0.0-1.0>},\n'
+            '  "mood_update": {"state": "<one of: joy, trust, anticipation, surprise, anger, disgust, fear, sadness, neutral>", "intensity": <0.0-1.0>, "reason": "<one sentence>"}\n'
             '}\n'
-            "Set confidence to 0 for either if there is no good candidate. "
-            "followup.event_time must be a future local datetime or null.\n"
+            "Set confidence to 0 for either tension/followup if there is no good candidate. "
+            "followup.event_time must be a future local datetime or null. "
+            "Set mood_update to null if no significant mood shift is detected.\n"
             f"\n\nPERMANENTLY OFF-LIMITS topic areas (never surface these):\n{undertaker_block}"
             f"\n\nALREADY RESOLVED topics — only surface again if there is a GENUINELY NEW ANGLE "
             f"(e.g. user raised a new problem on the same subject, not just revisiting the same thread):\n{resolved_block}"
@@ -1374,6 +1378,15 @@ class WindOrchestrator:
                             })
                 except (ValueError, TypeError):
                     pass
+
+            # --- Phase 4d: Mood update from conversation analysis ---
+            mood_update = data.get("mood_update")
+            if mood_update and isinstance(mood_update, dict):
+                m_state = mood_update.get("state", "neutral")
+                m_intensity = float(mood_update.get("intensity", 0.5))
+                m_reason = mood_update.get("reason", "")
+                if m_state in _MOOD_VALENCE:
+                    self.state_manager.update_mood(conversation_id, m_state, m_intensity, m_reason)
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.debug("Tension mining: failed to parse LLM response", extra={
