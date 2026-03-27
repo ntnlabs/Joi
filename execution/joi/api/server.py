@@ -314,6 +314,8 @@ FACTS_FTS_MAX_TOKENS = int(os.getenv("JOI_FACTS_FTS_MAX_TOKENS", "400"))
 SUMMARIES_FTS_ENABLED = os.getenv("JOI_SUMMARIES_FTS_ENABLED", "1") == "1"  # Default: enabled
 SUMMARIES_FTS_MAX_TOKENS = int(os.getenv("JOI_SUMMARIES_FTS_MAX_TOKENS", "1500"))
 FTS_CONTEXT_MESSAGES = int(os.getenv("JOI_FTS_CONTEXT_MESSAGES", "3"))  # Recent user turns used as FTS query
+FTS_HOT_BOOST    = int(os.getenv("JOI_FTS_HOT_BOOST", "1"))    # extra turns when conversation is hot
+FTS_HEATED_BOOST = int(os.getenv("JOI_FTS_HEATED_BOOST", "2")) # extra turns when conversation is heated
 
 # Time-of-day definitions for reminder commands (hours in 24h local time)
 REMINDER_EARLY_MORNING_HOUR = int(os.getenv("JOI_REMINDER_EARLY_MORNING_HOUR", "6"))
@@ -1727,14 +1729,26 @@ def receive_message(msg: InboundMessage):
         is_group_chat = msg.conversation.type == "group"
         chat_messages = _build_chat_messages(recent_messages, is_group=is_group_chat)
 
-        # Build FTS query from last N user turns for better multi-turn context
+        # Build FTS query from last N user turns for better multi-turn context.
+        # Boost window for fast conversations using Wind's shared pace thresholds.
         # e.g. "cottage?" + "when was I there?" → FTS finds cottage facts on 2nd turn
+        fts_window = FTS_CONTEXT_MESSAGES
+        if wind_orchestrator:
+            _ws = wind_orchestrator.state_manager.get_state(msg.conversation.id)
+            if _ws and _ws.convo_gap_ema_seconds is not None:
+                _heated_secs = wind_orchestrator.config.active_convo_gap_minutes * 60
+                _hot_secs = wind_orchestrator.config.active_convo_hot_gap_minutes * 60
+                if _ws.convo_gap_ema_seconds <= _heated_secs:
+                    fts_window += FTS_HEATED_BOOST
+                elif _ws.convo_gap_ema_seconds <= _hot_secs:
+                    fts_window += FTS_HOT_BOOST
+
         fts_query = user_text
-        if FTS_CONTEXT_MESSAGES > 1:
+        if fts_window > 1:
             prior_user_texts = [
                 m.content_text for m in recent_messages
                 if m.direction == "inbound" and m.content_text
-            ][-(FTS_CONTEXT_MESSAGES - 1):]
+            ][-(fts_window - 1):]
             if prior_user_texts:
                 fts_query = " ".join(prior_user_texts + [user_text])
 
