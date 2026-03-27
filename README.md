@@ -40,7 +40,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Reaction responses (contextual acknowledgments)
 - ✅ Response cooldown (5s DMs, 2s groups - configurable)
 - ✅ Wind proactive messaging (phases 4a+4b+4c partial: impulse, engagement feedback, affinity/decay, special dates, spontaneous sharing, tension extraction)
-- ✅ Wind phase 5 (queue health): hot conversation suppression, rolling 24h daily cap
+- ✅ Wind phase 5 (queue health): hot/heated conversation suppression (two-tier EMA), rolling 24h daily cap
 - ⏳ Wind phase 4c (remaining): emotional follow-up, outcome curiosity, adaptive quiet hours
 - ⏳ Wind phase 4d: daily mood momentum, day-of-week personality, 30-day cycle
 - ⏳ Wind phase 5 (remaining): similar topic merge, topic priority decay, wake-up procedure
@@ -51,10 +51,22 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Real-time fact saving (hybrid: keyword trigger + LLM detection)
 - ✅ Memory consolidation (LLM extracts facts + summarizes on context overflow)
 - ✅ RAG knowledge retrieval (FTS5 full-text search)
+- ✅ Multi-turn FTS context window (last N user turns used as search query)
+- ✅ Dynamic FTS window boost for fast conversations (hot/heated tiers via Wind EMA)
 - ✅ Per-user/group RAG scopes with access control
 - ✅ Document ingestion into scoped RAG (including attachments)
 - ✅ Auto-ingestion via watched directory
 - ✅ SQLCipher database encryption (key-file based)
+
+### Reminders
+
+- ✅ Natural language reminder creation ("remind me tomorrow at 9 to call X")
+- ✅ Multi-reminder input in one message (agenda-set)
+- ✅ Reminder list query ("what reminders do I have?")
+- ✅ Post-fire snooze ("snooze 30m", "remind me again in 1h")
+- ✅ Reschedule and cancel via chat
+- ✅ Configurable time-of-day vocabulary (morning, tonight, etc.)
+- ✅ Daily cleanup of old fired/expired/cancelled reminders
 
 ### Config & Security
 - ✅ One-way config push (Joi → mesh, stateless mesh)
