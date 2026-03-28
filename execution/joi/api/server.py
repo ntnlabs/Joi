@@ -1732,6 +1732,12 @@ def receive_message(msg: InboundMessage):
             _mood_result = _detect_user_mood(user_text)
             if _mood_result:
                 new_m_state, new_m_intensity = _mood_result
+                logger.debug("User mood classified", extra={
+                    "conversation_id": fact_key,
+                    "mood_state": new_m_state,
+                    "mood_intensity": new_m_intensity,
+                    "action": "user_mood_classified",
+                })
                 _ws = wind_orchestrator.state_manager.get_state(fact_key)
                 if _ws:
                     dist = _mood_jump_distance(
