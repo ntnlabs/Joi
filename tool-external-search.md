@@ -210,6 +210,40 @@ ALTER TABLE user_facts ADD COLUMN external_safe INTEGER DEFAULT NULL;
 ALTER TABLE user_facts ADD COLUMN private_fact INTEGER DEFAULT NULL;
 ```
 
+## Search in Wind & Reminders
+
+Wind proactive messages and reminders can also benefit from search — Joi
+enriches her own outbound messages with fresh external context before sending.
+
+**Wind:** topic content drives the pre-screen. If Joi wants to follow up on
+a music artist, a sports result, or a news story, she can search for current
+info before composing the message. The pre-screen prompt shifts from
+"the user said X" to "Joi wants to bring up X":
+
+```
+Joi is about to send a proactive message about: "<topic title> — <topic summary>"
+
+Would fresh external information make this message meaningfully better?
+(e.g. recent news, current stats, lyrics, latest release)
+
+Respond with JSON only:
+{"search": false}
+or
+{"search": true, "query": "<concise search query>"}
+```
+
+**Reminders:** most reminders don't need search ("dentist appointment").
+But outcome-curiosity followups might — "checking how the concert went"
+could benefit from a setlist search. Same pre-screen, topic-driven.
+
+**Key difference from user-triggered search:** no "looking it up" message
+is sent to the user — Joi is composing proactively, the search happens
+silently before the message is generated. The user just receives a
+well-informed message.
+
+Same global search queue, same HMAC channel to Search VM, same injection
+pattern. Pre-screen prompt is the only thing that changes.
+
 ## Files to Create/Modify
 
 - `execution/search/` — new Search VM service (Flask, DDG, trafilatura, HMAC auth)
