@@ -3,9 +3,9 @@
 
 # Personal/private files
 CLAUDE.md
+values.md
 hardware-budget-analysis.md
 dev-notes.md
-duality-system.md
 execution/joi/ollama/Modelfile
 local-prep/
 security-overview.txt
