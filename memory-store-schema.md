@@ -332,6 +332,61 @@ Natural-language rescheduling is also supported in chat ("push the dentist appoi
 to next week"). `_handle_reschedule_intent()` in `server.py` uses a focused LLM
 extraction call to detect intent and call `reschedule_fact()` before the main response.
 
+#### Fact Privacy Classification
+
+Two columns gate how facts flow outside Joi's local context:
+
+| Column | Type | Default | Meaning |
+|--------|------|---------|---------|
+| `external_safe` | `INTEGER` (0/1) | `NULL` | Safe to include in external search queries |
+| `private_fact` | `INTEGER` (0/1) | `NULL` | Sensitive — extra protection applies |
+
+`NULL` = unclassified. Unclassified facts are treated conservatively:
+not sent externally, no special local restrictions.
+
+**`external_safe = 1`** — fact may be included in the pre-screen LLM call
+that generates search queries. Typical examples: favourite band, hobby,
+city of residence, preferred cuisine.
+
+**`private_fact = 1`** — fact is sensitive regardless of context. Effects:
+- Never included in external search context
+- Redacted by `_redact_pii()` even when global privacy mode is off
+- Never included in summaries pushed to Mesh
+- Never logged in plain text
+
+Typical examples: medical conditions, relationship details, financial info,
+mental health, legal matters.
+
+Both flags are set at fact extraction time — the extraction LLM includes
+them in its JSON output alongside `key`, `value`, `confidence`, etc.:
+
+```json
+{
+  "key": "favourite_band",
+  "value": "Radiohead",
+  "confidence": 0.9,
+  "external_safe": true,
+  "private_fact": false
+}
+```
+
+```json
+{
+  "key": "medical_condition",
+  "value": "anxiety",
+  "confidence": 0.85,
+  "external_safe": false,
+  "private_fact": true
+}
+```
+
+Can also be set or overridden manually:
+```bash
+joi-admin facts set-privacy <id> --external-safe
+joi-admin facts set-privacy <id> --private
+joi-admin facts set-privacy <id> --clear
+```
+
 #### Staleness Policy
 
 ```python
