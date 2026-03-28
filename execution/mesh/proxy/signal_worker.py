@@ -1011,10 +1011,12 @@ def _handle_receipt_message(raw: Dict[str, Any]) -> bool:
 
 
 def _as_dict(value: Any) -> Dict[str, Any]:
+    """Return value if it is a dict, otherwise return an empty dict."""
     return value if isinstance(value, dict) else {}
 
 
 def _as_list_of_dicts(value: Any) -> List[Dict[str, Any]]:
+    """Return value filtered to dicts if it is a list, otherwise return an empty list."""
     if isinstance(value, list):
         return [x for x in value if isinstance(x, dict)]
     return []
@@ -1399,8 +1401,6 @@ def run_http_server(port: int, host: str = "0.0.0.0"):
 def main() -> None:
     global _rpc, _account, _account_uuid, _signal_cli_bin, _signal_cli_config_dir
 
-    log_level = os.getenv("MESH_LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(level=getattr(logging, log_level, logging.INFO), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     settings = load_settings()
     _account = os.getenv("SIGNAL_ACCOUNT", "")
     if not _account:
@@ -1622,6 +1622,7 @@ def main() -> None:
                         logger.info("Attachment-only message processed, skipping Joi forward")
                         continue
 
+                    payload.get("content", {}).pop("transport_native", None)
                     forward_to_joi(payload)
             except Exception as exc:  # noqa: BLE001
                 logger.error("signal_worker error", extra={"error": str(exc)})
