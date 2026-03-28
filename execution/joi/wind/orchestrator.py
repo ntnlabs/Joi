@@ -1382,14 +1382,22 @@ class WindOrchestrator:
                 except (ValueError, TypeError):
                     pass
 
-            # --- Phase 4d: Mood update from conversation analysis ---
+            # --- Phase 4d: Mood observation from conversation analysis ---
+            # Parsed but not applied — mined mood is from old batches (pre-compaction or
+            # historical silence), not current state. Kept here for future use.
             mood_update = data.get("mood_update")
             if mood_update and isinstance(mood_update, dict):
                 m_state = mood_update.get("state", "neutral")
                 m_intensity = float(mood_update.get("intensity", 0.5))
                 m_reason = mood_update.get("reason", "")
                 if m_state in _MOOD_VALENCE:
-                    self.state_manager.update_mood(conversation_id, m_state, m_intensity, m_reason)
+                    logger.debug("Mood observation from mining (not applied)", extra={
+                        "conversation_id": conversation_id,
+                        "mood_state": m_state,
+                        "mood_intensity": m_intensity,
+                        "reason": m_reason,
+                        "action": "mood_mined",
+                    })
 
             # Advance the mining pointer only after successful parse
             self.state_manager.update_state(
