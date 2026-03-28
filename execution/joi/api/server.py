@@ -1996,6 +1996,14 @@ def _generate_proactive_message(
 
     # Build system prompt
     system_parts = [base_prompt]
+    if wind_orchestrator:
+        _ws = wind_orchestrator.state_manager.get_state(conversation_id)
+        if _ws and _ws.mood_state != "neutral":
+            _mword = _mood_word(_ws.mood_state, _ws.mood_intensity)
+            system_parts.append(
+                f"\n\nYour current mood: {_mword}.\n"
+                "Let this naturally color your tone — don't announce it, just let it show."
+            )
     if facts_ctx:
         system_parts.append(f"\n\n{facts_ctx}")
     system_prompt = "".join(system_parts)
@@ -2812,6 +2820,14 @@ def _generate_reminder_message(
 
     facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
     system_parts = [base_prompt]
+    if wind_orchestrator:
+        _ws = wind_orchestrator.state_manager.get_state(conversation_id)
+        if _ws and _ws.mood_state != "neutral":
+            _mword = _mood_word(_ws.mood_state, _ws.mood_intensity)
+            system_parts.append(
+                f"\n\nYour current mood: {_mword}.\n"
+                "Let this naturally color your tone — don't announce it, just let it show."
+            )
     if facts_text:
         system_parts.append(f"\n\n{facts_text}")
     system_prompt = "".join(system_parts)
