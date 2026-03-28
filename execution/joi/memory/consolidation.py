@@ -348,6 +348,9 @@ Corrected JSON:"""
             for fact in valid_facts:
                 try:
                     fact_key = fact["key"]
+                    # Mood is tracked per-message in WindState, not as a fact
+                    if fact_key == "current_mood":
+                        continue
                     fact_value = str(fact["value"])
 
                     # For groups, try to extract name from value and prefix key

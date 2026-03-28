@@ -62,7 +62,7 @@ from memory import MemoryConsolidator, MemoryStore
 
 # Import Wind module (path already set above)
 from wind import WindOrchestrator, WindConfig
-from wind.state import _mood_word
+from wind.state import _mood_word, _MOOD_VALENCE
 
 # Import Reminder subsystem
 from reminders import ReminderManager
@@ -763,6 +763,43 @@ def _llm_detect(prompt: str, model: Optional[str] = None) -> Optional[dict]:
     except Exception as exc:
         logger.debug("LLM intent detection failed", extra={"error": str(exc)})
         return None
+
+
+def _detect_user_mood(text: str) -> Optional[tuple]:
+    """
+    Classify the user's Plutchik mood state from a single message.
+    Returns (state, intensity) or None if classification fails.
+    Runs on every inbound message — lightweight classification only.
+    """
+    prompt = (
+        f'Classify the emotional state expressed in this message: "{text}"\n\n'
+        'Return JSON only:\n'
+        '{"mood_state": "<joy|trust|anticipation|surprise|anger|disgust|fear|sadness|neutral>", '
+        '"intensity": <0.0-1.0>}\n\n'
+        'Use neutral/0.5 if the message has no emotional content.'
+    )
+    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    if result and "mood_state" in result and "intensity" in result:
+        state = str(result["mood_state"])
+        intensity = float(result["intensity"])
+        if state in _MOOD_VALENCE:
+            return (state, round(intensity, 3))
+    return None
+
+
+def _mood_jump_distance(
+    old_state: str, old_intensity: float,
+    new_state: str, new_intensity: float,
+) -> int:
+    """Distance between two mood observations. ≥ 2 triggers injection."""
+    def _cat(i: float) -> int:
+        if i < 0.4: return 0
+        if i < 0.7: return 1
+        return 2
+    dist = abs(_cat(new_intensity) - _cat(old_intensity))
+    if new_state != old_state:
+        dist += 1
+    return dist
 
 
 def _detect_and_extract_fact(
@@ -1689,6 +1726,36 @@ def receive_message(msg: InboundMessage):
             # Note: _detect_and_extract_fact already stores the fact, so for true deferred commit
             # we'd need to refactor it. For now, heartbeat extends timeout to reduce partial state.
 
+        # Mood jump detection: classify user mood and check for significant shift
+        mood_jump_text = None
+        if wind_orchestrator and not msg.store_only:
+            _mood_result = _detect_user_mood(user_text)
+            if _mood_result:
+                new_m_state, new_m_intensity = _mood_result
+                _ws = wind_orchestrator.state_manager.get_state(fact_key)
+                if _ws:
+                    dist = _mood_jump_distance(
+                        _ws.user_mood_state, _ws.user_mood_intensity,
+                        new_m_state, new_m_intensity,
+                    )
+                    if dist >= 2:
+                        old_word = _mood_word(_ws.user_mood_state, _ws.user_mood_intensity)
+                        new_word = _mood_word(new_m_state, new_m_intensity)
+                        mood_jump_text = (
+                            f"User's mood has shifted from {old_word} to {new_word}. "
+                            "React naturally to this change — don't announce it, just let it show."
+                        )
+                        logger.info("User mood jump detected", extra={
+                            "conversation_id": fact_key,
+                            "old_state": _ws.user_mood_state,
+                            "old_intensity": _ws.user_mood_intensity,
+                            "new_state": new_m_state,
+                            "new_intensity": new_m_intensity,
+                            "distance": dist,
+                            "action": "mood_jump",
+                        })
+                wind_orchestrator.state_manager.update_user_mood(fact_key, new_m_state, new_m_intensity)
+
         # Reschedule intent: owner can reschedule temporal facts via natural language.
         # Does not return early — Joi's normal LLM response confirms the action.
         # Runs inside the queue so the LLM extraction call is serialized with other LLM work.
@@ -1770,10 +1837,10 @@ def receive_message(msg: InboundMessage):
                 sender_id=msg.sender.transport_id,
             )
             if base_prompt:
-                enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
+                enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, mood_jump=mood_jump_text, _debug=_debug_arg)
             else:
                 # No prompt file - only add facts/summaries/RAG if available
-                enriched_prompt = _build_enriched_prompt("", fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
+                enriched_prompt = _build_enriched_prompt("", fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, mood_jump=mood_jump_text, _debug=_debug_arg)
                 enriched_prompt = enriched_prompt.strip() or None  # None if empty
         else:
             # No custom model: use prompt with fallback to default
@@ -1782,7 +1849,7 @@ def receive_message(msg: InboundMessage):
                 conversation_id=msg.conversation.id,
                 sender_id=msg.sender.transport_id,
             )
-            enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, _debug=_debug_arg)
+            enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, mood_jump=mood_jump_text, _debug=_debug_arg)
 
         # Note: We no longer hint to the LLM about saved facts - this caused meta-reactions
         # and excessive "tagging" behavior. Memory is now invisible to the response generation.
@@ -2169,10 +2236,15 @@ def _build_enriched_prompt(
     user_message: Optional[str] = None,
     conversation_id: Optional[str] = None,
     knowledge_scopes: Optional[List[str]] = None,
+    mood_jump: Optional[str] = None,
     _debug: Optional[dict] = None,
 ) -> str:
     """Build system prompt enriched with user facts, summaries, and RAG context for this conversation."""
     parts = [base_prompt]
+
+    # Mood jump injection: behavioral hint, injected before facts/summaries
+    if mood_jump:
+        parts.insert(1, "\n\n" + mood_jump)
 
     # Add user facts for this conversation (FTS search with fallback)
     facts_text = None

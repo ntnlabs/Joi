@@ -283,7 +283,11 @@ CREATE TABLE IF NOT EXISTS wind_state (
     -- Phase 4d: Named emotional state (Plutchik)
     mood_state TEXT DEFAULT 'neutral',
     mood_intensity REAL DEFAULT 0.5,
-    mood_updated_at TEXT DEFAULT NULL
+    mood_updated_at TEXT DEFAULT NULL,
+    -- User mood (per-message classification)
+    user_mood_state TEXT DEFAULT 'neutral',
+    user_mood_intensity REAL DEFAULT 0.5,
+    user_mood_updated_at TEXT DEFAULT NULL
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -866,6 +870,15 @@ class MemoryStore:
             conn.execute(
                 "ALTER TABLE wind_state ADD COLUMN proactive_fire_times_json TEXT DEFAULT NULL"
             )
+            conn.commit()
+
+        # Migration v13: user mood tracking columns
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+        if "user_mood_state" not in cols:
+            logger.info("Migration v13: Adding user mood columns to wind_state table")
+            conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_state TEXT DEFAULT 'neutral'")
+            conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_intensity REAL DEFAULT 0.5")
+            conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_updated_at TEXT DEFAULT NULL")
             conn.commit()
 
         # Check FTS integrity and rebuild if needed

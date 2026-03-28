@@ -74,6 +74,10 @@ class WindState:
     mood_state: str = "neutral"
     mood_intensity: float = 0.5
     mood_updated_at: Optional[datetime] = None
+    # User mood (per-message classification, distinct from Joi's mood)
+    user_mood_state: str = "neutral"
+    user_mood_intensity: float = 0.5
+    user_mood_updated_at: Optional[datetime] = None
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
@@ -152,7 +156,8 @@ class WindStateManager:
                    total_ignored, total_deflected, last_engaged_at, last_deflected_at,
                    convo_gap_ema_seconds, last_tension_mined_message_ts,
                    proactive_fire_times_json,
-                   mood_state, mood_intensity, mood_updated_at
+                   mood_state, mood_intensity, mood_updated_at,
+                   user_mood_state, user_mood_intensity, user_mood_updated_at
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -197,6 +202,9 @@ class WindStateManager:
             mood_state=row["mood_state"] or "neutral",
             mood_intensity=row["mood_intensity"] if row["mood_intensity"] is not None else 0.5,
             mood_updated_at=_parse_datetime(row["mood_updated_at"]),
+            user_mood_state=row["user_mood_state"] or "neutral",
+            user_mood_intensity=row["user_mood_intensity"] if row["user_mood_intensity"] is not None else 0.5,
+            user_mood_updated_at=_parse_datetime(row["user_mood_updated_at"]),
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -232,6 +240,7 @@ class WindStateManager:
         "convo_gap_ema_seconds", "last_tension_mined_message_ts",
         "proactive_fire_times_json",
         "mood_state", "mood_intensity", "mood_updated_at",
+        "user_mood_state", "user_mood_intensity", "user_mood_updated_at",
     })
 
     def update_state(self, conversation_id: str, **updates) -> None:
@@ -682,6 +691,22 @@ class WindStateManager:
             "mood_intensity": intensity,
             "reason": reason,
             "action": "mood_update",
+        })
+
+    def update_user_mood(self, conversation_id: str, state: str, intensity: float) -> None:
+        """Update user's observed mood state."""
+        intensity = round(max(0.0, min(1.0, intensity)), 3)
+        self.update_state(
+            conversation_id,
+            user_mood_state=state,
+            user_mood_intensity=intensity,
+            user_mood_updated_at=datetime.now().isoformat(),
+        )
+        logger.debug("User mood updated", extra={
+            "conversation_id": conversation_id,
+            "user_mood_state": state,
+            "user_mood_intensity": intensity,
+            "action": "user_mood_update",
         })
 
     def rollup_mood(self, conversation_id: str) -> None:
