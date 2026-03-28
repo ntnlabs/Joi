@@ -1465,6 +1465,7 @@ def main() -> None:
     except Exception as e:
         logger.warning("Signal server test failed (continuing anyway)", extra={"error": str(e)})
 
+    log_level = os.getenv("LOG_LEVEL", "INFO")
     logger.info("Signal worker started", extra={"log_level": log_level, "action": "startup"})
     logger.info("Waiting for config push from Joi (denying all messages)")
     if _is_hmac_available():
