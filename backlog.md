@@ -62,6 +62,31 @@ Address these before the next major feature phase.
   Fix: either deny on any refresh failure (true fail-closed), or allow stale cache only within
   a grace period (e.g. 2x TTL) and deny beyond that. Also fix the misleading docstring.
 
+- **Missing docstrings on _as_dict / _as_list_of_dicts** (`execution/mesh/proxy/signal_worker.py:1013-1017`)
+  Two one-liner helper functions lack docstrings. Add a one-line description to each.
+
+- **logging.basicConfig() in main() is dead code** (`execution/mesh/proxy/signal_worker.py:1403`)
+  `configure_logging()` is called at module import time (line 17), so `basicConfig` in `main()`
+  is always a no-op. Safe to delete.
+
+- **Rate limiter not thread-safe** (`execution/mesh/proxy/rate_limiter.py`)
+  `check_and_add` has no locking. Two concurrent threads for the same sender key could both
+  pass the limit check before either records the event. No real race today since the Signal
+  receive loop is single-threaded, but the class is not safe if that changes.
+  Fix: add a `threading.Lock` acquired in `check_and_add`.
+
+- **jsonrpc_client single recv(65536) may truncate large responses** (`execution/mesh/proxy/jsonrpc_client.py:24`)
+  `s.recv(65536)` returns at most 64KB in one call. Large signal-cli responses (e.g. big group
+  member lists) may arrive in multiple chunks — only the first is read, causing a JSON parse
+  error or silent data loss. Fix: read in a loop until EOF, then decode the full buffer.
+
+- **transport_native raw Signal envelope forwarded to Joi** (`execution/mesh/proxy/signal_worker.py:1324`)
+  The normalized payload includes `content.transport_native` — the full raw Signal envelope
+  (sourceUuid, serverGuid, device info, raw dataMessage, etc.). Mesh uses it internally for
+  attachment processing and mention re-checking, both of which happen before `forward_to_joi`.
+  Joi receives this data unnecessarily and it may end up in logs.
+  Fix: `payload["content"].pop("transport_native", None)` after Mesh processing, before forward.
+
 ---
 
 ## Sysprep

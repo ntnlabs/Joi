@@ -355,6 +355,37 @@ tracking, no lifecycle rules, no impulse gating, works in all modes.
 
 ---
 
+## External Inspiration & Ideas (from awesome-opensource-ai review, 2026-03-26)
+
+Projects worth revisiting when hardware or scope allows:
+
+### Memory & State
+- **Mem0** (https://github.com/mem0ai/mem0) — universal memory layer for AI agents.
+  Closest open-source analogue to Joi's facts/summaries system. Worth studying their
+  retrieval and consolidation approach, especially how they handle memory decay and
+  conflict resolution.
+- **Letta** (https://github.com/letta-ai/letta) — stateful agents with structured memory.
+  Heavier than Joi needs, but the architecture ideas around long-term vs working memory
+  are relevant to the FTS → summary pipeline.
+
+### RAG & Retrieval
+- **RAGFlow** (https://github.com/infiniflow/ragflow) — deep document understanding RAG.
+  Could inspire better ingestion of complex/structured documents beyond plain text chunks.
+- **Khoj** (https://github.com/khoj-ai/khoj) — self-hostable personal AI assistant.
+  Architecturally closest thing to Joi in the open-source world. Worth a read to compare
+  approaches to memory, search, and proactive features.
+
+### Observability
+- **Langfuse** (https://github.com/langfuse/langfuse) — open LLM observability platform.
+  Could provide tracing for Wind decisions, FTS hits, LLM call payloads. Adds infra
+  complexity but would replace the current manual brain-debug YAML approach.
+
+### Voice (future channel)
+- **Whisper** (https://github.com/openai/whisper) — if Signal voice messages ever become
+  an input channel, Whisper is the obvious transcription path.
+
+---
+
 ## Value Anchors (Future Consideration)
 
 An LLM has no genuine values — it simulates them from training. Without deliberate scaffolding,
