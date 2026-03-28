@@ -123,9 +123,15 @@ or
 **DuckDuckGo** via HTML endpoint — no API key, no account, no external dependencies.
 Privacy-focused. For personal use, rate limiting is not a concern.
 
-Runs on Mesh (has WAN). Joi sends a search query over the existing HMAC-authenticated
-Joi→Mesh channel. The search endpoint on Mesh is protected by HMAC the same way
-as all other Joi→Mesh endpoints — unauthenticated requests are rejected.
+Runs on a dedicated **Search VM** — separate from Mesh, which is comms-only
+(Signal, and future Telegram/WhatsApp). The Search VM has WAN access, connects
+to Joi via Nebula VPN, and exposes a single HMAC-authenticated Flask endpoint.
+Unauthenticated requests are rejected.
+
+**Search VM stack:**
+- Nebula VPN (Joi → Search VM, no direct WAN exposure to Joi)
+- Flask service — single endpoint, receives query, returns extracted content
+- `trafilatura`, `httpx` — minimal dependencies, single purpose
 
 ## Page Fetch & Content Extraction
 
@@ -206,9 +212,10 @@ ALTER TABLE user_facts ADD COLUMN private_fact INTEGER DEFAULT NULL;
 
 ## Files to Create/Modify
 
-- `execution/mesh/` — search proxy endpoint (HMAC-protected, hits DDG, fetches+extracts pages, returns content)
+- `execution/search/` — new Search VM service (Flask, DDG, trafilatura, HMAC auth)
+- `execution/search/systemd/` — systemd unit + defaults file for search service
 - `execution/joi/api/search.py` — pre-screen logic, global search queue, result injection
 - `execution/joi/api/server.py` — call into `search.py`, inject results into prompt
 - `execution/joi/memory/store.py` — schema v13 migration, `external_safe`/`private_fact` columns
 - `execution/joi/systemd/joi-api.default` — `JOI_SEARCH_ENABLED`, `JOI_SEARCH_MODEL`, `JOI_SEARCH_TIMEOUT`, `JOI_SEARCH_MAX_RESULTS`, `JOI_SEARCH_MAX_CHARS`
-- `execution/mesh/systemd/mesh-signal-worker.default` — search endpoint config
+- `sysprep/` — stage scripts for Search VM provisioning
