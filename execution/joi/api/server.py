@@ -1919,7 +1919,7 @@ def receive_message(msg: InboundMessage):
         )
 
         # Check if memory consolidation needed
-        _maybe_run_consolidation()
+        _maybe_run_consolidation(conversation_id=msg.conversation.id)
 
         return InboundResponse(status="ok", message_id=msg.message_id)
 
@@ -2296,13 +2296,14 @@ def _build_enriched_prompt(
     return "".join(parts)
 
 
-def _maybe_run_consolidation() -> None:
+def _maybe_run_consolidation(conversation_id: Optional[str] = None) -> None:
     """Run memory consolidation if context window exceeded."""
     try:
         result = consolidator.run_consolidation(
             context_messages=CONTEXT_MESSAGE_COUNT,
             compact_batch_size=COMPACT_BATCH_SIZE,
             archive_instead_of_delete=CONSOLIDATION_ARCHIVE,
+            conversation_id=conversation_id,
         )
         if result["ran"]:
             action = "archived" if CONSOLIDATION_ARCHIVE else "deleted"
@@ -2901,13 +2902,15 @@ def _send_to_mesh(
     cooldown = RESPONSE_COOLDOWN_GROUP_SECONDS if conversation.type == "group" else RESPONSE_COOLDOWN_DM_SECONDS
     now = time.time()
     with _get_send_lock(convo_id):
-        last_send = _last_send_times.get(convo_id, 0)
+        with _send_locks_lock:
+            last_send = _last_send_times.get(convo_id, 0)
         elapsed = now - last_send
         if elapsed < cooldown:
             wait_time = cooldown - elapsed
             logger.debug("Cooldown: waiting before sending", extra={"wait_seconds": round(wait_time, 1), "conversation_id": convo_id})
             time.sleep(wait_time)
-        _last_send_times[convo_id] = time.time()
+        with _send_locks_lock:
+            _last_send_times[convo_id] = time.time()
 
     url = f"{settings.mesh_url}/api/v1/message/outbound"
 
