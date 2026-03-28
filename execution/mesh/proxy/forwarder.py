@@ -47,6 +47,7 @@ _worker_queues: List[queue.Queue] = []
 _workers: List[threading.Thread] = []
 _workers_started = False
 _workers_lock = threading.Lock()
+_stop_event = threading.Event()
 
 
 def _cleanup_client():
@@ -124,11 +125,14 @@ def _get_config_hash() -> Optional[str]:
 def _worker_loop(worker_id: int) -> None:
     """Process messages for this worker sequentially (ensures causal ordering)."""
     q = _worker_queues[worker_id]
-    while True:
+    while not _stop_event.is_set():
         try:
-            work_item = q.get()
-            if work_item is None:  # Shutdown signal
-                break
+            work_item = q.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        if work_item is None:  # Shutdown signal (belt-and-suspenders)
+            break
+        try:
             url, payload, backend_name, secret = work_item
             _forward_sync(url, payload, backend_name, secret)
             q.task_done()
@@ -157,12 +161,13 @@ def _shutdown_workers() -> None:
     with _workers_lock:
         if not _workers_started:
             return
-        # Send shutdown signal to all workers
+        _stop_event.set()
+        # Best-effort sentinel for workers blocked on q.get() with long timeout
         for q in _worker_queues:
             try:
                 q.put_nowait(None)
             except queue.Full:
-                pass
+                pass  # Worker will exit via _stop_event on next timeout
         _workers_started = False
 
 
