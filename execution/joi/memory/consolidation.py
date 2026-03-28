@@ -257,7 +257,7 @@ class MemoryConsolidator:
             return []
 
         # Only extract facts from what the user said — Joi's outbound messages
-        # (including [REMINDER] and [WIND] proactives) contain no user facts.
+        # (including [JOI-REMINDER] and [JOI-WIND] proactives) contain no user facts.
         inbound_messages = [m for m in messages if m.direction == "inbound"]
         # detected_at = timestamp of the most recent inbound message in the batch
         detected_at = max((m.timestamp for m in inbound_messages), default=None) if inbound_messages else None
@@ -405,10 +405,10 @@ Corrected JSON:"""
         if not messages:
             return None
 
-        # Strip proactive outbound messages ([REMINDER], [WIND]) — they are not
+        # Strip proactive outbound messages ([JOI-REMINDER], [JOI-WIND]) — they are not
         # conversation and cause the LLM to confabulate dialogue around them.
         # Normal Joi replies are kept.
-        _PROACTIVE = ("[REMINDER]", "[WIND]")
+        _PROACTIVE = ("[JOI-REMINDER]", "[JOI-WIND]")
         messages = [
             m for m in messages
             if not (m.direction == "outbound"
