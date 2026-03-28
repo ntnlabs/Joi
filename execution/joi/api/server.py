@@ -1730,7 +1730,7 @@ def receive_message(msg: InboundMessage):
         mood_jump_text = None
         if wind_orchestrator and not msg.store_only:
             _mood_result = _detect_user_mood(user_text)
-            logger.info("User mood detection", extra={
+            logger.debug("User mood detection", extra={
                 "conversation_id": fact_key,
                 "result": str(_mood_result),
                 "action": "user_mood_detect",
