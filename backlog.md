@@ -12,11 +12,11 @@ Address these before the next major feature phase.
   inline in the main Signal receive loop. While Joi is slow (mid-inference), no other
   messages are received. Fix: fire attachment and typing forwards in background threads.
 
-- **Consolidation scans all conversations instead of current one** (`execution/joi/api/server.py`, `execution/joi/memory/consolidation.py`)
+- ~~**Consolidation scans all conversations instead of current one** (`execution/joi/api/server.py`, `execution/joi/memory/consolidation.py`)
   `run_consolidation()` fetches all distinct conversation IDs and checks each one on every
   message. Only the conversation that just received a message can have crossed the threshold.
   Fix: pass `conversation_id` through `_maybe_run_consolidation()` into `run_consolidation()`
-  and skip the full scan. Likely leftover from single-conversation v1 code.
+  and skip the full scan. Likely leftover from single-conversation v1 code.~~ ✓ Fixed
 
 - **Rewrite all FTS/RAG/facts fallback logic** (`execution/joi/api/server.py:2196, 2249`)
   When FTS returns nothing (e.g. short message like "ok", "lol"), the current fallback dumps
@@ -33,12 +33,12 @@ Address these before the next major feature phase.
   Result: weaker FTS matches for Slovak queries, more frequent fallback-to-everything triggers.
   Fix: lower length threshold, add Slovak stopwords, consider unicode-aware tokenization.
 
-- **Race condition in send cache cleanup** (`execution/joi/api/server.py:348, 2910`)
+- ~~**Race condition in send cache cleanup** (`execution/joi/api/server.py:348, 2910`)
   `_last_send_times` is written under per-conversation lock (`_get_send_lock`) but read
   and mutated during cleanup under `_send_locks_lock`. Two different locks — concurrent
   send + cleanup can cause `RuntimeError: dictionary changed size during iteration`.
   Fix: protect all access to `_last_send_times` with `_send_locks_lock` consistently,
-  or use a `threading.RLock` and always acquire it before touching the dict.
+  or use a `threading.RLock` and always acquire it before touching the dict.~~ ✓ Fixed
 
 - **Scheduler bypasses MessageQueue for LLM calls** (`execution/joi/api/server.py:2037`, `execution/joi/api/scheduler.py`)
   Wind and reminder generation call `llm.chat()` directly from the scheduler thread,
@@ -91,12 +91,12 @@ Address these before the next major feature phase.
 
 ## Sysprep
 
-- **iptables cutover before package installs, no rollback trap** (`sysprep/router/setup.sh:105`)
+- ~~**iptables cutover before package installs, no rollback trap** (`sysprep/router/setup.sh:105`)
   Firewall is flushed and default-DROP applied at step 3, but `apk add dnsmasq/chrony` runs
   at steps 4-5. If `apk` fails mid-run, `set -e` exits and the machine is left with DROP-all
   rules saved to disk. SSH rules are included so lockout is unlikely, but not guaranteed.
   Fix: move `iptables -P INPUT/FORWARD/OUTPUT DROP` to after all rules are added, or add a
-  `trap` that restores a permissive policy on failure before exiting.
+  `trap` that restores a permissive policy on failure before exiting.~~ ✓ Fixed
 
 ---
 

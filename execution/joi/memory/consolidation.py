@@ -457,6 +457,7 @@ Corrected JSON:"""
         context_messages: int = 50,
         compact_batch_size: int = 20,
         archive_instead_of_delete: bool = False,
+        conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Run count-based memory consolidation per conversation.
@@ -472,6 +473,7 @@ Corrected JSON:"""
             context_messages: Context window size (trigger when exceeded)
             compact_batch_size: Number of oldest messages to compact
             archive_instead_of_delete: If True, archive messages; if False, delete them
+            conversation_id: If provided, only consolidate this conversation (skip full scan)
 
         Returns:
             Dict with consolidation results (totals across all conversations)
@@ -485,8 +487,11 @@ Corrected JSON:"""
             "conversations_processed": 0,
         }
 
-        # Get all distinct conversation IDs
-        conversation_ids = self.memory.get_distinct_conversation_ids(min_messages=1)
+        # Use provided conversation_id or scan all conversations
+        if conversation_id:
+            conversation_ids = [conversation_id]
+        else:
+            conversation_ids = self.memory.get_distinct_conversation_ids(min_messages=1)
 
         for convo_id in conversation_ids:
             convo_results = self._consolidate_conversation(

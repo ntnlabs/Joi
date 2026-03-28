@@ -104,9 +104,6 @@ echo "[3/5] Configuring firewall..."
 
 iptables -F
 iptables -X
-iptables -P INPUT DROP
-iptables -P FORWARD DROP
-iptables -P OUTPUT DROP
 
 # Loopback + established
 iptables -A INPUT -i lo -j ACCEPT
@@ -141,6 +138,11 @@ iptables -A OUTPUT -o $WAN_IF -p tcp --dport 53 -j ACCEPT
 # WAN egress for package installs/updates (apk)
 iptables -A OUTPUT -o $WAN_IF -p tcp --dport 80 -j ACCEPT
 iptables -A OUTPUT -o $WAN_IF -p tcp --dport 443 -j ACCEPT
+
+# Tighten default policy now that all rules are in place
+iptables -P INPUT DROP
+iptables -P FORWARD DROP
+iptables -P OUTPUT DROP
 
 # Persist
 rc-update add iptables 2>/dev/null || true
