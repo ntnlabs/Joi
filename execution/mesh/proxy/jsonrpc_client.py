@@ -21,7 +21,13 @@ class SignalJsonRpcClient:
             s.sendall(payload)
             s.shutdown(socket.SHUT_WR)
 
-            response_bytes = s.recv(65536)
+            chunks = []
+            while True:
+                chunk = s.recv(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            response_bytes = b"".join(chunks)
 
         if not response_bytes:
             raise RuntimeError("No response from signal-cli JSON-RPC socket")
