@@ -1510,7 +1510,11 @@ def main() -> None:
                         if sender:
                             group_id = typing_msg.get("groupId")
                             convo_id = group_id if group_id else sender
-                            forward_typing(sender=sender, conversation_id=convo_id)
+                            threading.Thread(
+                                target=forward_typing,
+                                kwargs=dict(sender=sender, conversation_id=convo_id),
+                                daemon=True,
+                            ).start()
                         continue
 
                     payload = _normalize_signal_message(msg, bot_account=_account, bot_uuid=_account_uuid)
@@ -1610,12 +1614,16 @@ def main() -> None:
                         envelope = _as_dict(raw_native.get("envelope"))
                         data_message = _as_dict(envelope.get("dataMessage")) if envelope else {}
                         if data_message:
-                            _process_attachments(
-                                data_message=data_message,
-                                sender_id=payload.get("sender", {}).get("transport_id", ""),
-                                conversation_type=convo.get("type", "direct"),
-                                conversation_id=convo.get("id", ""),
-                            )
+                            threading.Thread(
+                                target=_process_attachments,
+                                kwargs=dict(
+                                    data_message=data_message,
+                                    sender_id=payload.get("sender", {}).get("transport_id", ""),
+                                    conversation_type=convo.get("type", "direct"),
+                                    conversation_id=convo.get("id", ""),
+                                ),
+                                daemon=True,
+                            ).start()
 
                     # Skip Joi forwarding for attachment-only messages (nothing to respond to)
                     if content_type == "attachment":
