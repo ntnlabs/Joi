@@ -244,6 +244,21 @@ well-informed message.
 Same global search queue, same HMAC channel to Search VM, same injection
 pattern. Pre-screen prompt is the only thing that changes.
 
+### Reminder Pre-Search
+
+Reminders fire at a specific time — search cannot block them. Instead,
+search runs ahead of time:
+
+1. Scheduler detects a reminder due within `JOI_SEARCH_REMINDER_ADVANCE_MINUTES`
+   (default: 15) — fires a background search for that reminder
+2. Results cached in memory (dict keyed on reminder ID, no files)
+3. At fire time — cached results injected into generation, reminder fires on time
+4. If search hasn't completed by fire time (queue backed up, slow network)
+   — fall back gracefully, fire without enrichment. Punctuality over enrichment.
+
+Cache TTL: slightly longer than the advance window to cover minor timing
+variance. Evicted after reminder fires.
+
 ## Files to Create/Modify
 
 - `execution/search/` — new Search VM service (Flask, DDG, trafilatura, HMAC auth)
