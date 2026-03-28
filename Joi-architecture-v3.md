@@ -41,15 +41,18 @@
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                          INTERNET                               │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────────┐
-│                         mesh VM                                 │
-│              Signal bot + Nebula lighthouse                     │
-│                    (STATELESS)                                  │
-└───────────────────────────┬─────────────────────────────────────┘
-                            │ Nebula mesh VPN (encrypted)
-┌───────────────────────────▼─────────────────────────────────────┐
+└──────────────┬───────────────────────────┬──────────────────────┘
+               │                           │
+┌──────────────▼──────────┐   ┌────────────▼────────────┐
+│        mesh VM          │   │       search VM         │
+│  Signal/comms proxy     │   │  DDG + page fetch       │
+│  Nebula lighthouse      │   │  trafilatura extraction  │
+│  (STATELESS)            │   │  (STATELESS)            │
+└──────────────┬──────────┘   └────────────┬────────────┘
+               │ Nebula VPN                │ Nebula VPN
+               └──────────────┬────────────┘
+                              │
+┌─────────────────────────────▼───────────────────────────────────┐
 │                      Proxmox Host                               │
 │  ┌────────────────────────────────────────────────────────────┐ │
 │  │                     Joi VM (isolated)                      │ │
@@ -73,7 +76,8 @@
 
 | VM | IP (Nebula) | Role | State |
 |----|-------------|------|-------|
-| mesh | 10.42.0.1 | Signal proxy, config receiver | Stateless |
+| mesh | 10.42.0.1 | Comms proxy (Signal, future Telegram/WhatsApp) | Stateless |
+| search | 10.42.0.2 | External search (DDG, page fetch, extraction) — two NICs: WAN + Nebula | Stateless |
 | joi | 10.42.0.10 | LLM agent, config authority | Stateful |
 
 ---
