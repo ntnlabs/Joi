@@ -1221,6 +1221,7 @@ def startup_event():
             cleanup_send_caches=_cleanup_send_caches,
             InboundConversation=InboundConversation,
             reminder_manager=reminder_manager,
+            message_queue=message_queue,
         )
         scheduler.start()
     wind_config = _get_wind_config()
@@ -2185,12 +2186,6 @@ def _build_enriched_prompt(
         if facts_text:
             parts.append("\n\n" + facts_text)
             logger.info("Facts FTS: added context", extra={"chars": len(facts_text)})
-        else:
-            # Fallback: load all facts if FTS returns nothing
-            facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
-            if facts_text:
-                parts.append("\n\n" + facts_text)
-                logger.debug("Facts FTS: fallback to all facts", extra={"chars": len(facts_text)})
     else:
         # FTS disabled: original behavior
         facts_text = memory.get_facts_as_text(min_confidence=0.6, conversation_id=conversation_id)
@@ -2238,12 +2233,6 @@ def _build_enriched_prompt(
         if summaries_text:
             parts.append("\n\n" + summaries_text)
             logger.info("Summaries FTS: added context", extra={"chars": len(summaries_text)})
-        else:
-            # Fallback: load recent summaries if FTS returns nothing
-            summaries_text = memory.get_summaries_as_text(days=10, conversation_id=conversation_id, max_chars=SUMMARIES_FTS_MAX_TOKENS * 4)
-            if summaries_text:
-                parts.append("\n\n" + summaries_text)
-                logger.debug("Summaries FTS: fallback to recent", extra={"chars": len(summaries_text)})
     else:
         # FTS disabled: original behavior
         summaries_text = memory.get_summaries_as_text(days=10, conversation_id=conversation_id, max_chars=SUMMARIES_FTS_MAX_TOKENS * 4)

@@ -18,13 +18,13 @@ Address these before the next major feature phase.
   Fix: pass `conversation_id` through `_maybe_run_consolidation()` into `run_consolidation()`
   and skip the full scan. Likely leftover from single-conversation v1 code.~~ ✓ Fixed
 
-- **Rewrite all FTS/RAG/facts fallback logic** (`execution/joi/api/server.py:2196, 2249`)
+- ~~**Rewrite all FTS/RAG/facts fallback logic** (`execution/joi/api/server.py:2196, 2249`)
   When FTS returns nothing (e.g. short message like "ok", "lol"), the current fallback dumps
   ALL facts (no limit) and 10 days of summaries into the prompt. This was designed assuming
   no keywords meant "need everything" — but it's the wrong trade-off. A short conversational
   message doesn't need 10 days of context, it needs nothing or a very small recent slice.
   Redesign: if FTS returns empty, inject nothing (or at most a small fixed-size recent
-  slice). Do not fall back to unbounded dumps for any path — facts, summaries, or RAG.
+  slice). Do not fall back to unbounded dumps for any path — facts, summaries, or RAG.~~ ✓ Fixed
 
 - ~~**FTS query sanitizer too aggressive for Slovak** (`execution/joi/memory/store.py:1500-1501`)
   `len(w) > 2` strips short Slovak prepositions and particles that carry real meaning
@@ -40,12 +40,12 @@ Address these before the next major feature phase.
   Fix: protect all access to `_last_send_times` with `_send_locks_lock` consistently,
   or use a `threading.RLock` and always acquire it before touching the dict.~~ ✓ Fixed
 
-- **Scheduler bypasses MessageQueue for LLM calls** (`execution/joi/api/server.py:2037`, `execution/joi/api/scheduler.py`)
+- ~~**Scheduler bypasses MessageQueue for LLM calls** (`execution/joi/api/server.py:2037`, `execution/joi/api/scheduler.py`)
   Wind and reminder generation call `llm.chat()` directly from the scheduler thread,
   bypassing the `MessageQueue`. Ollama serializes so no crash or OOM, but there is no
   priority control — user responses can be delayed by background Wind/reminder inference.
   Fix: route Wind and reminder LLM calls through `message_queue` with `is_owner=False`
-  so owner messages always take priority over proactive generation.
+  so owner messages always take priority over proactive generation.~~ ✓ Fixed
 
 - ~~**Unreliable worker shutdown in mesh forwarder** (`execution/mesh/proxy/forwarder.py:154`)
   `_shutdown_workers()` sends `None` sentinel via `put_nowait()`. If a queue is full
