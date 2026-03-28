@@ -506,7 +506,7 @@ class WindOrchestrator:
                         "signal_ts": signal_ts,
                     })
                     result = EngagementResult(
-                        outcome=EngagementClassifier.OUTCOME_ENGAGED,
+                        outcome="engaged",
                         confidence=1.0,
                         quality=0.8,
                         method="direct_reply",
@@ -528,12 +528,15 @@ class WindOrchestrator:
             # Get the original Wind message text for classification
             wind_message = self._get_wind_message_text(topic)
 
-            # Classify engagement
+            # Classify engagement.
+            # If a direct reply was already matched, don't feed the user message into
+            # the remaining topics — the reply was clearly targeted at the quoted topic.
+            # Remaining topics only get a timeout check.
             result = self.engagement_classifier.classify(
                 wind_message=wind_message,
                 wind_message_id=topic.sent_message_id,
                 mentioned_at=topic.mentioned_at or datetime.now(),
-                user_response=user_message,
+                user_response=None if directly_replied_topic_id else user_message,
                 user_response_reply_to=None,  # direct reply handled above
             )
 
@@ -1388,6 +1391,12 @@ class WindOrchestrator:
                 if m_state in _MOOD_VALENCE:
                     self.state_manager.update_mood(conversation_id, m_state, m_intensity, m_reason)
 
+            # Advance the mining pointer only after successful parse
+            self.state_manager.update_state(
+                conversation_id,
+                last_tension_mined_message_ts=newest_ts,
+            )
+
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             logger.debug("Tension mining: failed to parse LLM response", extra={
                 "conversation_id": conversation_id,
@@ -1398,12 +1407,6 @@ class WindOrchestrator:
                 "conversation_id": conversation_id,
                 "error": str(e),
             })
-
-        # Always advance the mining pointer
-        self.state_manager.update_state(
-            conversation_id,
-            last_tension_mined_message_ts=newest_ts,
-        )
 
     def check_timeout_topics(self, now: Optional[datetime] = None) -> int:
         """

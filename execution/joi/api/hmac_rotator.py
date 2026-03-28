@@ -499,8 +499,8 @@ class HMACRotator:
             hmac_headers = create_request_headers(body, current_secret)
             headers.update(hmac_headers)
 
-            # Use health endpoint if available, or a simple authenticated GET
-            url = f"{self._mesh_url}/health"
+            # Use HMAC-protected ping endpoint (not /health which is exempt from auth)
+            url = f"{self._mesh_url}/hmac/ping"
             with httpx.Client(timeout=5.0) as client:
                 resp = client.get(url, headers=headers)
 
@@ -540,7 +540,7 @@ class HMACRotator:
             hmac_headers = create_request_headers(body, secret)
             headers.update(hmac_headers)
 
-            url = f"{self._mesh_url}/health"
+            url = f"{self._mesh_url}/hmac/ping"
             with httpx.Client(timeout=5.0) as client:
                 resp = client.get(url, headers=headers)
                 return resp.status_code == 200

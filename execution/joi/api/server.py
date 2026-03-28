@@ -1322,15 +1322,10 @@ def _check_ingest_rate_limit(scope: str) -> bool:
         if scope not in _ingest_times:
             _ingest_times[scope] = []
 
-        # Remove old timestamps
+        # Remove expired timestamps
         _ingest_times[scope] = [t for t in _ingest_times[scope] if t > cutoff]
 
-        # Prune empty scope keys to prevent unbounded growth
-        if not _ingest_times[scope]:
-            del _ingest_times[scope]
-            return True
-
-        # Check limit
+        # Check limit before recording
         if len(_ingest_times[scope]) >= _INGEST_RATE_LIMIT:
             return False
 
@@ -2151,7 +2146,7 @@ def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[st
     For group conversations, includes sender name prefix so Joi knows who said what.
     """
     # Storage prefixes used by Wind/reminder scheduler — strip before sending to LLM
-    _STORAGE_PREFIXES = ("[JOI-WIND] ", "[REMINDER] ")
+    _STORAGE_PREFIXES = ("[JOI-WIND] ", "[JOI-REMINDER] ")
 
     chat_messages = []
     for msg in messages:

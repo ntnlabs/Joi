@@ -55,6 +55,7 @@ COMMANDS:
     summaries   Read-only context summary inspection
     fts         Check and rebuild FTS (full-text search) indexes
     wind        Inspect and manage Wind proactive messaging state
+    security    Toggle kill-switch and privacy-mode (writes policy file — Joi will shut down)
     nuke        Drop ALL tables in the memory database (irreversible)
 
 PURGE USAGE:
@@ -217,6 +218,25 @@ WIND OPTIONS:
     --offset VALUE        Set threshold_offset (-0.1 to 0.1)
     --accumulated VALUE   Set accumulated_impulse (>= 0)
     --limit N             Limit results (default varies by subcommand)
+
+SECURITY USAGE:
+    joi-admin security <SUBCOMMAND>
+
+SECURITY SUBCOMMANDS:
+    kill-switch <on|off>      Activate or deactivate the kill switch
+    privacy-mode <on|off>     Enable or disable privacy mode (PII redaction in logs)
+    status                    Show current security settings (read-only)
+
+WARNING: kill-switch and privacy-mode write to the mesh policy file which is monitored
+by tamper detection. Joi will shut down immediately after this command. Restart it with:
+    systemctl start joi-api
+
+SECURITY EXAMPLES:
+    joi-admin security status
+    joi-admin security kill-switch on
+    joi-admin security kill-switch off
+    joi-admin security privacy-mode on
+    joi-admin security privacy-mode off
 
 WIND EXAMPLES:
     joi-admin wind show-windmood                        # Show all conversations
@@ -3376,6 +3396,80 @@ SQL
     info "  Done. Restart joi-api to recreate a fresh schema."
 }
 
+cmd_security() {
+    local JOI_API_PORT="${JOI_BIND_PORT:-8443}"
+    local API_BASE="http://127.0.0.1:${JOI_API_PORT}"
+
+    _security_api_call() {
+        local method="$1"
+        local path="$2"
+        if ! command -v curl >/dev/null 2>&1; then
+            error "curl is required for security commands"
+        fi
+        curl -s -X "$method" "${API_BASE}${path}" -H "Content-Type: application/json"
+    }
+
+    local subcmd="${1:-}"
+    shift || true
+
+    case "$subcmd" in
+        status)
+            _security_api_call GET /admin/security/status
+            echo
+            ;;
+        kill-switch)
+            local value="${1:-}"
+            if [[ "$value" != "on" && "$value" != "off" ]]; then
+                error "Usage: joi-admin security kill-switch <on|off>"
+            fi
+            echo -e "${YELLOW}Warning: This writes the mesh policy file (tamper-protected).${NC}"
+            echo -e "${YELLOW}Joi will shut down immediately. Restart with: systemctl start joi-api${NC}"
+            echo
+            local active="false"
+            [[ "$value" == "on" ]] && active="true"
+            _security_api_call POST "/admin/security/kill-switch?active=${active}"
+            echo
+            ;;
+        privacy-mode)
+            local value="${1:-}"
+            if [[ "$value" != "on" && "$value" != "off" ]]; then
+                error "Usage: joi-admin security privacy-mode <on|off>"
+            fi
+            echo -e "${YELLOW}Warning: This writes the mesh policy file (tamper-protected).${NC}"
+            echo -e "${YELLOW}Joi will shut down immediately. Restart with: systemctl start joi-api${NC}"
+            echo
+            local enabled="false"
+            [[ "$value" == "on" ]] && enabled="true"
+            _security_api_call POST "/admin/security/privacy-mode?enabled=${enabled}"
+            echo
+            ;;
+        --help|-h|"")
+            cat <<'HELP'
+Usage: joi-admin security <SUBCOMMAND>
+
+SUBCOMMANDS:
+    status                    Show current security settings (read-only)
+    kill-switch <on|off>      Activate or deactivate the kill switch
+    privacy-mode <on|off>     Enable or disable privacy mode (PII redaction in logs)
+
+WARNING: kill-switch and privacy-mode write the mesh policy file which is monitored
+by tamper detection. Joi will shut down immediately after the command. Restart with:
+    systemctl start joi-api
+
+EXAMPLES:
+    joi-admin security status
+    joi-admin security kill-switch on
+    joi-admin security kill-switch off
+    joi-admin security privacy-mode on
+    joi-admin security privacy-mode off
+HELP
+            ;;
+        *)
+            error "Unknown security subcommand: $subcmd. Run 'joi-admin security --help'."
+            ;;
+    esac
+}
+
 main() {
     if [[ $# -lt 1 ]]; then
         usage
@@ -3412,6 +3506,9 @@ main() {
         wind)
             check_root
             cmd_wind "$@"
+            ;;
+        security)
+            cmd_security "$@"
             ;;
         nuke)
             check_root

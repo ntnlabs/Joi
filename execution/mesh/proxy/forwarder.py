@@ -222,8 +222,11 @@ def _forward_sync(url: str, payload: Dict[str, Any], backend_name: Optional[str]
 
 def _get_conversation_id(payload: Dict[str, Any]) -> str:
     """Extract conversation ID for worker routing (group_id or sender)."""
-    # Group messages use group_id, DMs use sender
-    return payload.get("group_id") or payload.get("sender", {}).get("transport_id", "unknown")
+    # Group messages use conversation.id, DMs use sender.transport_id
+    return (
+        payload.get("conversation", {}).get("id")
+        or payload.get("sender", {}).get("transport_id", "unknown")
+    )
 
 
 def forward_to_backend(payload: Dict[str, Any], backend_name: str, backend_url: str) -> None:
