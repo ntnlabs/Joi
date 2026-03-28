@@ -684,6 +684,13 @@ def verify_hmac_auth():
     return None
 
 
+@flask_app.route("/hmac/ping", methods=["GET"])
+def hmac_ping():
+    """HMAC authentication probe. Auth is verified by the before_request hook.
+    Used by Joi to confirm a specific HMAC key is accepted by mesh."""
+    return jsonify({"status": "ok"})
+
+
 @flask_app.route("/health", methods=["GET"])
 def health():
     hmac_status = "enabled" if _is_hmac_available() else "disabled"

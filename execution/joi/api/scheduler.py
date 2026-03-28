@@ -5,7 +5,7 @@ import os
 import time
 import threading
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, Optional
 
 logger = logging.getLogger("joi.api.scheduler")
@@ -202,6 +202,7 @@ class Scheduler:
             self._purge_old_reminders()
             self._dedup_wind_topics()
             self._rollup_moods()
+            self._rollup_feedback_decay()
             logger.info("Scheduler: end-of-day procedures complete", extra={"action": "daily_tasks_done"})
 
         # Refresh membership cache (only runs if business mode + dm_group_knowledge)
@@ -521,7 +522,7 @@ class Scheduler:
                         message_id=message_id,
                         direction="outbound",
                         content_type="text",
-                        content_text=f"[REMINDER] {message_text}",
+                        content_text=f"[JOI-REMINDER] {message_text}",
                         timestamp=int(time.time() * 1000),
                         conversation_id=reminder.conversation_id,
                     )
@@ -638,6 +639,15 @@ class Scheduler:
                 logger.warning("Failed to rollup mood", extra={
                     "conversation_id": conv_id, "error": str(e),
                 })
+
+    def _rollup_feedback_decay(self) -> None:
+        """Daily decay of Wind topic rejection weights (forgiveness over time)."""
+        if not self._wind_orchestrator:
+            return
+        try:
+            self._wind_orchestrator.feedback_manager.apply_daily_decay()
+        except Exception as e:
+            logger.warning("Failed to apply feedback decay", extra={"error": str(e)})
 
     def _startup_config_push(self):
         """Push config to mesh on startup to ensure sync."""
