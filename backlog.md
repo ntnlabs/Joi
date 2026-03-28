@@ -7,10 +7,10 @@ Address these before the next major feature phase.
 
 ## Mesh
 
-- **Synchronous blocking in mesh receive loop** (`execution/mesh/proxy/signal_worker.py`)
+- ~~**Synchronous blocking in mesh receive loop** (`execution/mesh/proxy/signal_worker.py`)
   Attachment processing and typing indicator forwarding do blocking HTTP POSTs to Joi
   inline in the main Signal receive loop. While Joi is slow (mid-inference), no other
-  messages are received. Fix: fire attachment and typing forwards in background threads.
+  messages are received. Fix: fire attachment and typing forwards in background threads.~~ ✓ Fixed
 
 - ~~**Consolidation scans all conversations instead of current one** (`execution/joi/api/server.py`, `execution/joi/memory/consolidation.py`)
   `run_consolidation()` fetches all distinct conversation IDs and checks each one on every
@@ -26,12 +26,12 @@ Address these before the next major feature phase.
   Redesign: if FTS returns empty, inject nothing (or at most a small fixed-size recent
   slice). Do not fall back to unbounded dumps for any path — facts, summaries, or RAG.
 
-- **FTS query sanitizer too aggressive for Slovak** (`execution/joi/memory/store.py:1500-1501`)
+- ~~**FTS query sanitizer too aggressive for Slovak** (`execution/joi/memory/store.py:1500-1501`)
   `len(w) > 2` strips short Slovak prepositions and particles that carry real meaning
   (`vo`, `na`, `zo`, `po`, `ku`). Stopword list is English-only — Slovak words that
   should be filtered aren't, and fall through to the length filter instead.
   Result: weaker FTS matches for Slovak queries, more frequent fallback-to-everything triggers.
-  Fix: lower length threshold, add Slovak stopwords, consider unicode-aware tokenization.
+  Fix: lower length threshold, add Slovak stopwords, consider unicode-aware tokenization.~~ ✓ Fixed
 
 - ~~**Race condition in send cache cleanup** (`execution/joi/api/server.py:348, 2910`)
   `_last_send_times` is written under per-conversation lock (`_get_send_lock`) but read
@@ -47,20 +47,20 @@ Address these before the next major feature phase.
   Fix: route Wind and reminder LLM calls through `message_queue` with `is_owner=False`
   so owner messages always take priority over proactive generation.
 
-- **Unreliable worker shutdown in mesh forwarder** (`execution/mesh/proxy/forwarder.py:154`)
+- ~~**Unreliable worker shutdown in mesh forwarder** (`execution/mesh/proxy/forwarder.py:154`)
   `_shutdown_workers()` sends `None` sentinel via `put_nowait()`. If a queue is full
   (Joi is down, messages piling up), `queue.Full` is silently swallowed and that worker
   never receives the shutdown signal. Workers are daemon threads so process exits eventually,
   but graceful shutdown fails — in-flight messages in full queues are lost without processing.
   Fix: replace sentinel approach with a `threading.Event` stop flag that workers check
-  alongside the queue, independent of queue capacity.
+  alongside the queue, independent of queue capacity.~~ ✓ Fixed
 
-- **Group membership cache not truly fail-closed** (`execution/joi/api/group_cache.py:178-181`)
+- ~~**Group membership cache not truly fail-closed** (`execution/joi/api/group_cache.py:178-181`)
   The docstring claims fail-closed behavior, but when a refresh fails and stale cache exists,
   access is granted from stale data. A revoked group member retains cross-group knowledge
   access until the next successful refresh. Only relevant in business mode + dm_group_knowledge.
   Fix: either deny on any refresh failure (true fail-closed), or allow stale cache only within
-  a grace period (e.g. 2x TTL) and deny beyond that. Also fix the misleading docstring.
+  a grace period (e.g. 2x TTL) and deny beyond that. Also fix the misleading docstring.~~ ✓ Fixed
 
 - ~~**Missing docstrings on _as_dict / _as_list_of_dicts** (`execution/mesh/proxy/signal_worker.py:1013-1017`)
   Two one-liner helper functions lack docstrings. Add a one-line description to each.~~ ✓ Fixed

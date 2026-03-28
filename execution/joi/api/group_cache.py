@@ -129,6 +129,7 @@ class GroupMembershipCache:
         """Get list of groups where user is a member.
 
         Security: Fail-closed - if membership cannot be verified, returns empty list.
+        Stale cache is accepted only within a 2× TTL grace period after a failed refresh.
         """
         if not self._should_be_active():
             return []  # Feature disabled
@@ -174,14 +175,21 @@ class GroupMembershipCache:
             if refresh_success:
                 return self._find_user_groups_unlocked(user_id)
 
-            # Refresh failed - re-check cache state (may have changed during HTTP call)
+            # Refresh failed — allow stale cache only within grace period (2× TTL)
             current_has_cache = len(self._cache) > 0
-            if current_has_cache:
-                logger.warning("Using stale membership cache (refresh failed)", extra={"action": "cache_stale"})
+            grace_period = refresh_seconds * 2
+            if current_has_cache and time_since_refresh <= grace_period:
+                logger.warning(
+                    "Using stale membership cache within grace period (refresh failed)",
+                    extra={"action": "cache_stale", "age_s": int(time_since_refresh)},
+                )
                 return self._find_user_groups_unlocked(user_id)
             else:
-                # FAIL-CLOSED: No cache and refresh failed - deny access
-                logger.warning("No membership cache and refresh failed - denying group access (fail-closed)", extra={"action": "access_denied"})
+                # FAIL-CLOSED: No cache, or stale cache beyond grace period
+                logger.warning(
+                    "Denying group access (fail-closed)",
+                    extra={"action": "access_denied", "has_cache": current_has_cache, "age_s": int(time_since_refresh)},
+                )
                 return []
 
     def _find_user_groups_unlocked(self, user_id: str) -> List[str]:

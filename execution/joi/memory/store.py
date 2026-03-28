@@ -24,13 +24,20 @@ except ImportError:
 
 logger = logging.getLogger("joi.memory")
 
-# Common English stopwords filtered out from FTS queries
+# Common stopwords filtered out from FTS queries
 _STOPWORDS = {
+    # English
     "i", "me", "my", "we", "our", "you", "your", "he", "she", "they", "it",
     "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
     "of", "with", "by", "from", "is", "was", "are", "were", "be", "been",
     "have", "has", "had", "do", "does", "did", "will", "would", "could",
     "should", "may", "might", "that", "this", "what", "which", "who",
+    # Slovak function words (no semantic value in FTS)
+    "je", "sa", "to", "ta", "ten", "tá", "tú", "tej", "tých",
+    "nie", "aj", "ani", "ale", "ak", "že", "čo", "kto", "kde", "keď",
+    "som", "si", "sú", "sme", "ste", "bol", "bola", "bolo", "boli",
+    "ho", "mu", "ju", "ich", "im", "tu", "tam", "tak", "už", "len",
+    "pri", "pre", "bez", "nad", "pod", "cez", "ako", "aby",
 }
 
 # Default path for encryption key file
@@ -1498,7 +1505,7 @@ class MemoryStore:
         # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
         # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
         all_words = re.findall(r'\w+', query)
-        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 2]
+        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 1]
         if not words:
             words = all_words  # Fall back to full list so FTS still runs
         if not words:
@@ -1941,7 +1948,7 @@ class MemoryStore:
         # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
         # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
         all_words = re.findall(r'\w+', query)
-        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 2]
+        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 1]
         if not words:
             words = all_words  # Fall back to full list so FTS still runs
         if not words:
@@ -2339,7 +2346,7 @@ class MemoryStore:
         # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
         # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
         all_words = re.findall(r'\w+', query)
-        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 2]
+        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 1]
         if not words:
             words = all_words  # Fall back to full list so FTS still runs
         if not words:
