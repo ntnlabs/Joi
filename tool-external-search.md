@@ -16,7 +16,7 @@ User message
                            →  {"search": true, "query": "..."}
                                     → send "looking it up" message to user
                                     → enqueue search request (global queue)
-                                    → DDG search on Mesh → fetch top 1-2 pages
+                                    → DDG search on Search VM → fetch top 1-2 pages
                                     → trafilatura extracts content
                                     → results returned to Joi
                                     → inject into context
@@ -52,9 +52,9 @@ pretending nothing happened.
 
 Failure triggers:
 - Pre-screen exceeds `JOI_LLM_TIMEOUT` (30s default)
-- Mesh search + fetch exceeds `JOI_SEARCH_TIMEOUT` (default: 30s)
+- Search VM fetch exceeds `JOI_SEARCH_TIMEOUT` (default: 30s)
 - All fetched pages return empty/garbage content
-- Mesh unreachable (Nebula VPN flap, service down)
+- Search VM unreachable (Nebula VPN flap, service down)
 
 ## Global Search Queue
 
@@ -129,7 +129,7 @@ to Joi via Nebula VPN, and exposes a single HMAC-authenticated Flask endpoint.
 Unauthenticated requests are rejected.
 
 **Search VM stack:**
-- Nebula VPN (Joi → Search VM, no direct WAN exposure to Joi)
+- Two NICs: WAN (DDG + page fetches) + Nebula VPN (Joi-only, no direct WAN exposure to Joi)
 - Flask service — single endpoint, receives query, returns extracted content
 - `trafilatura`, `httpx` — minimal dependencies, single purpose
 
@@ -266,5 +266,5 @@ variance. Evicted after reminder fires.
 - `execution/joi/api/search.py` — pre-screen logic, global search queue, result injection
 - `execution/joi/api/server.py` — call into `search.py`, inject results into prompt
 - `execution/joi/memory/store.py` — schema v13 migration, `external_safe`/`private_fact` columns
-- `execution/joi/systemd/joi-api.default` — `JOI_SEARCH_ENABLED`, `JOI_SEARCH_MODEL`, `JOI_SEARCH_TIMEOUT`, `JOI_SEARCH_MAX_RESULTS`, `JOI_SEARCH_MAX_CHARS`
+- `execution/joi/systemd/joi-api.default` — `JOI_SEARCH_ENABLED`, `JOI_SEARCH_MODEL`, `JOI_SEARCH_TIMEOUT`, `JOI_SEARCH_MAX_RESULTS`, `JOI_SEARCH_MAX_CHARS`, `JOI_SEARCH_REMINDER_ADVANCE_MINUTES`
 - `sysprep/` — stage scripts for Search VM provisioning
