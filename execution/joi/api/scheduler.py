@@ -57,6 +57,7 @@ class Scheduler:
         self._cleanup_send_caches: Optional[Callable] = None
         self._InboundConversation = None
         self._reminder_manager = None
+        self._message_queue = None
 
     def set_dependencies(
         self,
@@ -77,6 +78,7 @@ class Scheduler:
         cleanup_send_caches: Callable,
         InboundConversation,
         reminder_manager,
+        message_queue=None,
     ):
         """Set dependencies after construction to avoid circular imports."""
         self._memory = memory
@@ -96,6 +98,7 @@ class Scheduler:
         self._run_auto_ingestion = run_auto_ingestion
         self._InboundConversation = InboundConversation
         self._reminder_manager = reminder_manager
+        self._message_queue = message_queue
 
     def start(self):
         """Start the scheduler thread."""
@@ -387,14 +390,32 @@ class Scheduler:
                 # Compact context before sending to ensure clean context when user replies
                 self._compact_before_wind(conv_id)
 
-                # Generate proactive message
-                message_text = self._generate_proactive_message(
-                    topic_title=topic.title,
-                    topic_content=topic.content,
-                    conversation_id=conv_id,
-                    topic_type=topic.topic_type,
-                    emotional_context=topic.emotional_context,
-                )
+                # Generate proactive message (via MessageQueue so user messages get priority)
+                try:
+                    if self._message_queue:
+                        message_text = self._message_queue.enqueue(
+                            message_id=f"wind-{conv_id}-{int(time.time())}",
+                            handler=lambda msg: self._generate_proactive_message(
+                                topic_title=topic.title,
+                                topic_content=topic.content,
+                                conversation_id=conv_id,
+                                topic_type=topic.topic_type,
+                                emotional_context=topic.emotional_context,
+                            ),
+                            is_owner=False,
+                            timeout=600.0,
+                        )
+                    else:
+                        message_text = self._generate_proactive_message(
+                            topic_title=topic.title,
+                            topic_content=topic.content,
+                            conversation_id=conv_id,
+                            topic_type=topic.topic_type,
+                            emotional_context=topic.emotional_context,
+                        )
+                except Exception as e:
+                    logger.warning("Wind: LLM generation failed", extra={"error": str(e), "conversation_id": conv_id})
+                    continue
 
                 if not message_text:
                     logger.warning("Wind: failed to generate message", extra={"conversation_id": conv_id})
@@ -477,13 +498,30 @@ class Scheduler:
                 # Determine recurrence context for prompt
                 is_recurring = bool(reminder.recurrence)
 
-                # Generate reminder message with injection-safe prompt
-                message_text = self._generate_reminder_message(
-                    title=reminder.title,
-                    conversation_id=reminder.conversation_id,
-                    is_recurring=is_recurring,
-                    snooze_count=reminder.snooze_count,
-                )
+                # Generate reminder message (via MessageQueue so user messages get priority)
+                try:
+                    if self._message_queue:
+                        message_text = self._message_queue.enqueue(
+                            message_id=f"reminder-{reminder.id}-{int(time.time())}",
+                            handler=lambda msg: self._generate_reminder_message(
+                                title=reminder.title,
+                                conversation_id=reminder.conversation_id,
+                                is_recurring=is_recurring,
+                                snooze_count=reminder.snooze_count,
+                            ),
+                            is_owner=False,
+                            timeout=600.0,
+                        )
+                    else:
+                        message_text = self._generate_reminder_message(
+                            title=reminder.title,
+                            conversation_id=reminder.conversation_id,
+                            is_recurring=is_recurring,
+                            snooze_count=reminder.snooze_count,
+                        )
+                except Exception as e:
+                    logger.warning("Reminder: LLM generation failed", extra={"error": str(e), "reminder_id": reminder.id})
+                    continue  # Retry on next tick — don't mark fired for transient queue errors
 
                 if not message_text:
                     logger.warning("Reminder: failed to generate message", extra={
