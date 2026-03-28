@@ -194,6 +194,10 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - **Database**: SQLite + SQLCipher
 - **Home Automation**: openHAB (read-only)
 
+## Known Limitations
+
+- **Emoji reactions**: signal-cli only includes reaction data in its JSON output if the reacted-to message exists in its local database. If the signal-cli database is cleared or reset, incoming reactions arrive as empty DataMessages with no emoji field and Joi cannot respond to them.
+
 ## License
 
 GPL-3.0 - See [LICENSE](LICENSE) for details.

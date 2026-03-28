@@ -1247,13 +1247,7 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
             # No message type at all - dump full raw for investigation
             logger.debug("Empty envelope (no message type), raw: %s", raw)
 
-    # Reaction may be at top level or nested inside "message" dict (signal-cli version dependent)
     reaction = _as_dict(data_message.get("reaction"))
-    if not reaction:
-        message_field = data_message.get("message")
-        if isinstance(message_field, dict):
-            reaction = _as_dict(message_field.get("reaction"))
-            logger.debug("Reaction found in message dict", extra={"reaction": reaction})
     message_text = _extract_message_text(data_message)
     bot_mentioned = _check_bot_mentioned(data_message, bot_account, bot_uuid) if bot_account else False
 
@@ -1273,9 +1267,7 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
         else:
             # Log why we're skipping (dataMessage exists but no text/attachments)
             if data_message:
-                logger.debug("dataMessage has no text/attachments, envelope_keys: %s, dataMessage: %s",
-                             list(envelope.keys()),
-                             data_message)
+                logger.debug("dataMessage has no text/attachments, keys: %s", list(data_message.keys()))
             return None
 
     # Prefer phone number over UUID for sender identification
