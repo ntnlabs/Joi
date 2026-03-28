@@ -1273,9 +1273,8 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
         else:
             # Log why we're skipping (dataMessage exists but no text/attachments)
             if data_message:
-                logger.debug("dataMessage has no text/attachments, keys: %s, message_field_type: %s, raw: %s",
-                             list(data_message.keys()),
-                             type(data_message.get("message")).__name__,
+                logger.debug("dataMessage has no text/attachments, envelope_keys: %s, dataMessage: %s",
+                             list(envelope.keys()),
                              data_message)
             return None
 
