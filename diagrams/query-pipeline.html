@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Joi — Query Ingestion Pipeline</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    padding: 32px;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #58a6ff;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: #8b949e;
+    font-size: 12px;
+    margin-bottom: 36px;
+  }
+
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    max-width: 820px;
+    margin: 0 auto;
+  }
+
+  .arrow {
+    width: 2px;
+    height: 22px;
+    background: #30363d;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .arrow::after {
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    left: -4px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #30363d;
+  }
+
+  .block {
+    width: 100%;
+    border-radius: 8px;
+    padding: 11px 14px;
+    border: 1px solid #30363d;
+  }
+  .block-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .block-body {
+    font-size: 12px;
+    color: #c9d1d9;
+    line-height: 1.55;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    margin-top: 4px;
+  }
+  .kv-key {
+    color: #8b949e;
+    font-size: 11px;
+    white-space: nowrap;
+    padding-top: 1px;
+  }
+  .kv-val {
+    font-size: 11px;
+    color: #c9d1d9;
+    font-family: 'Consolas', 'Fira Code', monospace;
+  }
+  .kv-val em {
+    font-style: normal;
+    color: #e3b341;
+  }
+  .kv-val .dim { color: #484f58; }
+
+  /* tags */
+  .tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .t-always  { background: #0d2020; color: #39d353; }
+  .t-cond    { background: #1a1a1a; color: #8b949e; }
+  .t-llm     { background: #1f4d2a; color: #56d364; }
+  .t-owner   { background: #1a0d2e; color: #bc8cff; }
+  .t-regex   { background: #1a2436; color: #79c0ff; }
+  .t-fts     { background: #2d1a00; color: #f0883e; }
+  .t-vec     { background: #200d2d; color: #d2a8ff; }
+  .t-db      { background: #2d1f00; color: #e3b341; }
+
+  /* color themes */
+  .c-entry  { background: #0d2136; border-color: #388bfd; }
+  .c-entry  .block-title { color: #58a6ff; }
+  .c-queue  { background: #0d0d1a; border-color: #6e40c9; }
+  .c-queue  .block-title { color: #a371f7; }
+  .c-pre    { background: #0d1117; border-color: #30363d; border-style: dashed; }
+  .c-pre    .block-title { color: #8b949e; }
+  .c-small  { background: #0c1a0d; border-color: #3fb950; }
+  .c-small  .block-title { color: #56d364; }
+  .c-enrich { background: #100e00; border-color: #d29922; }
+  .c-enrich .block-title { color: #e3b341; }
+  .c-main   { background: #200d0d; border-color: #f85149; }
+  .c-main   .block-title { color: #ff7b72; }
+  .c-post   { background: #0a1a0a; border-color: #238636; }
+  .c-post   .block-title { color: #3fb950; }
+  .c-bg     { background: #0d1117; border-color: #30363d; border-style: dashed; }
+  .c-bg     .block-title { color: #8b949e; }
+  .c-ctx    { background: #111820; border-color: #388bfd44; }
+  .c-ctx    .block-title { color: #79c0ff; }
+
+  /* containers */
+  .container {
+    width: 100%;
+    border-radius: 10px;
+    padding: 14px 14px 10px 14px;
+    position: relative;
+  }
+  .container-label {
+    position: absolute;
+    top: -10px;
+    left: 14px;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+  .q-wrap {
+    border: 1px dashed #6e40c9;
+    background: #080814;
+  }
+  .q-wrap .container-label { background: #080814; color: #a371f7; }
+
+  .e-wrap {
+    border: 1px dashed #d29922;
+    background: #0c0900;
+    margin: 8px 0;
+  }
+  .e-wrap .container-label { background: #0c0900; color: #e3b341; }
+
+  .row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .row .block { flex: 1; }
+
+  .q-note {
+    font-size: 10px;
+    color: #6e40c9;
+    margin-bottom: 10px;
+  }
+
+  hr.div {
+    border: none;
+    border-top: 1px solid #21262d;
+    margin: 6px 0 10px 0;
+  }
+
+  /* inject list */
+  .inj {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    margin-top: 4px;
+  }
+  .inj li {
+    display: grid;
+    grid-template-columns: 18px auto 1fr;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 11.5px;
+  }
+  .inj-n  { color: #484f58; font-size: 10px; text-align: right; }
+  .inj-l  { color: #e3b341; font-weight: 700; white-space: nowrap; }
+  .inj-d  { color: #8b949e; }
+  .inj-d em { font-style: normal; color: #c9d1d9; }
+
+  /* legend */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 36px;
+    padding-top: 18px;
+    border-top: 1px solid #21262d;
+    max-width: 820px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #8b949e;
+  }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<h1>Joi — Query Ingestion Pipeline</h1>
+<p class="subtitle">Inbound message → enrichment → LLM → response &nbsp;·&nbsp; Wind is a separate diagram</p>
+
+<div class="pipeline">
+
+  <!-- ENTRY -->
+  <div class="block c-entry">
+    <div class="block-title">Signal Message Inbound <span class="tag t-always">always</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">endpoint</span><span class="kv-val">POST /api/v1/message/inbound</span>
+        <span class="kv-key">validates</span><span class="kv-val">HMAC (mesh layer) · type=text · non-empty · not duplicate</span>
+        <span class="kv-key">stores</span><span class="kv-val">inbound message to memory always</span>
+        <span class="kv-key">early exit</span><span class="kv-val">reactions (brief LLM) · non-text · store_only · group not addressed</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- PRE-QUEUE -->
+  <div class="block c-pre">
+    <div class="block-title">Pre-Queue: Special Commands <span class="tag t-cond">if keyword match</span> <span class="tag t-owner">owner · direct only</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">wind snooze</span><span class="kv-val"><em>quiet · shh · hush · snooze · mute · pause</em> → snooze Wind proactive messages · optional duration (e.g. "shh 2h")</span>
+        <span class="kv-key">wind wake</span><span class="kv-val"><em>wake · unsnooze · unmute · resume</em> → clear Wind snooze immediately</span>
+        <span class="kv-key">reminder snooze</span><span class="kv-val"><em>snooze</em> + reminder context → snooze active reminder</span>
+        <span class="kv-key">all</span><span class="kv-val">handled inline — no LLM, no queue, returns immediately</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- QUEUE WRAPPER -->
+  <div class="container q-wrap">
+    <span class="container-label">Message Queue — single serialized slot per message</span>
+    <div class="q-note">PRIORITY_OWNER=0 (owner) · PRIORITY_NORMAL=1 (others) · max 100 items · timeout = LLM_TIMEOUT + 30s (default 210s)</div>
+
+    <!-- typing -->
+    <div class="block c-queue" style="margin-bottom:8px;">
+      <div class="block-title">Typing Indicator <span class="tag t-always">always · fire-and-forget</span></div>
+      <div class="block-body">POST to mesh → Signal shows "typing…" · does not block queue</div>
+    </div>
+
+    <hr class="div">
+
+    <!-- small LLMs -->
+    <div class="row">
+      <div class="block c-small">
+        <div class="block-title">Fact Detection <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-cond">if keyword match</span></div>
+        <div class="block-body">
+          <div class="kv">
+            <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
+            <span class="kv-key">gate</span><span class="kv-val">keyword filter first — skips LLM if no trigger words</span>
+            <span class="kv-key">prompt</span><span class="kv-val">"Analyze this message: &quot;{user_text}&quot;"</span>
+            <span class="kv-key">output</span><span class="kv-val">{remember, category, key, value} · confidence=0.95</span>
+            <span class="kv-key">side-effect</span><span class="kv-val">stores fact to DB immediately</span>
+          </div>
+        </div>
+      </div>
+      <div class="block c-small">
+        <div class="block-title">User Mood Detection <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-always">every message</span></div>
+        <div class="block-body">
+          <div class="kv">
+            <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
+            <span class="kv-key">prompt</span><span class="kv-val">"Classify emotional state in: &quot;{user_text}&quot;"</span>
+            <span class="kv-key">output</span><span class="kv-val">{mood_state: joy|trust|…|neutral, intensity: 0.0–1.0}</span>
+            <span class="kv-key">jump rule</span><span class="kv-val">distance = |cat(new)−cat(old)| + (1 if state changed) · trigger ≥ 2</span>
+            <span class="kv-key">cats</span><span class="kv-val">&lt;0.4=0 · 0.4–0.7=1 · ≥0.7=2</span>
+            <span class="kv-key">side-effect</span><span class="kv-val">saves to WindState · jump → mood_jump_text flag</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="row">
+      <div class="block c-small">
+        <div class="block-title">Reschedule Intent <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-owner">owner · direct</span> <span class="tag t-regex">regex gate</span></div>
+        <div class="block-body">
+          <div class="kv">
+            <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> + current temporal facts list + current UTC time</span>
+            <span class="kv-key">output</span><span class="kv-val">{fact_id, ttl_hours} · ttl_hours: 1–8760 (1yr max)</span>
+            <span class="kv-key">side-effect</span><span class="kv-val">updates fact expiry in DB · no early return</span>
+          </div>
+        </div>
+      </div>
+      <div class="block c-small">
+        <div class="block-title">Reminder Command <span class="tag t-llm">LLM or regex</span> <span class="tag t-owner">owner · direct</span> <span class="tag t-regex">regex gate</span></div>
+        <div class="block-body">
+          <div class="kv">
+            <span class="kv-key">gate</span><span class="kv-val">\bremind\sme\b regex required</span>
+            <span class="kv-key">regex path</span><span class="kv-val"><em>≤25 words</em> · in Xm/Xh/Xd/tonight patterns · max: 168h / 10080m / 365d</span>
+            <span class="kv-key">LLM path</span><span class="kv-val"><em>&gt;25 words</em> · full user_text + local datetime</span>
+            <span class="kv-key">output</span><span class="kv-val">(due_at, title) → stored in reminder_manager · no early return</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <hr class="div">
+
+    <!-- context building -->
+    <div class="block c-ctx" style="margin-bottom:8px;">
+      <div class="block-title">Context Building <span class="tag t-always">always</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">messages loaded</span><span class="kv-val"><em>50</em> recent messages (CONTEXT_MESSAGE_COUNT · JOI_CONTEXT_MESSAGES)</span>
+          <span class="kv-key">FTS query</span><span class="kv-val">last <em>3</em> inbound turns + current message, space-joined (FTS_CONTEXT_MESSAGES)</span>
+          <span class="kv-key">FTS boost</span><span class="kv-val">heated convo: +<em>2</em> turns (→5 total) · hot convo: +<em>1</em> turn (→4 total)</span>
+          <span class="kv-key">selects</span><span class="kv-val">system prompt + model (default or per-conversation override) + knowledge scopes</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- enriched prompt container -->
+    <div class="container e-wrap">
+      <span class="container-label">_build_enriched_prompt() — system prompt assembly (injections in order)</span>
+      <ul class="inj">
+        <li>
+          <span class="inj-n">1</span>
+          <span class="inj-l">Base prompt</span>
+          <span class="inj-d">per-conversation system prompt file (or empty string)</span>
+        </li>
+        <li>
+          <span class="inj-n">2</span>
+          <span class="inj-l">Mood jump <span class="tag t-cond" style="font-size:10px;">if jump ≥ 2</span></span>
+          <span class="inj-d"><em>"User's mood shifted from {old_word} to {new_word}. React naturally — don't announce it."</em></span>
+        </li>
+        <li>
+          <span class="inj-n">3</span>
+          <span class="inj-l">Facts <span class="tag t-fts" style="font-size:10px;">FTS/BM25</span></span>
+          <span class="inj-d">important facts (limit <em>20</em>, always included) + FTS matches (limit <em>20</em>, deduped) · min confidence <em>0.6</em> · max <em>400 tokens</em> (~1600 chars)</span>
+        </li>
+        <li>
+          <span class="inj-n">4</span>
+          <span class="inj-l">Expired facts <span class="tag t-db" style="font-size:10px;">DB</span></span>
+          <span class="inj-d">temporal facts expired in last <em>7 days</em> · limit <em>20</em> · answers "what was my schedule yesterday?"</span>
+        </li>
+        <li>
+          <span class="inj-n">5</span>
+          <span class="inj-l">Summaries <span class="tag t-fts" style="font-size:10px;">FTS/BM25</span></span>
+          <span class="inj-d">query-relevant conversation summaries · limit <em>10</em> · window <em>100 days</em> · max <em>1500 tokens</em> (~6000 chars)</span>
+        </li>
+        <li>
+          <span class="inj-n">6</span>
+          <span class="inj-l">RAG knowledge <span class="tag t-vec" style="font-size:10px;">semantic</span> <span class="tag t-fts" style="font-size:10px;">FTS</span></span>
+          <span class="inj-d">semantic limit <em>10</em> (cosine ≥ <em>0.45</em>) + FTS limit <em>10</em> (BM25 ≥ <em>−0.5</em>) · deduped · scope-controlled · max <em>1500 tokens</em></span>
+        </li>
+        <li>
+          <span class="inj-n">7</span>
+          <span class="inj-l">Wind mood <span class="tag t-cond" style="font-size:10px;">if not neutral</span></span>
+          <span class="inj-d"><em>"Your current mood: {word}. Let this naturally color your tone — don't announce it."</em> (Joi's mood from WindState)</span>
+        </li>
+        <li>
+          <span class="inj-n">8</span>
+          <span class="inj-l">Date / time <span class="tag t-cond" style="font-size:10px;">if enabled</span></span>
+          <span class="inj-d"><em>"Current date and time: Wednesday, March 29, 2026, 14:30, Europe/Bratislava"</em></span>
+        </li>
+      </ul>
+    </div>
+
+    <!-- post-prompt -->
+    <div class="block" style="background:#0d1520; border-color:#388bfd55; margin-bottom:8px;">
+      <div class="block-title" style="color:#79c0ff;">Post-Prompt Additions <span class="tag t-owner">owner only</span> <span class="tag t-regex">regex gate</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">reminder ack</span><span class="kv-val">if reminder just set → appends <em>"Note: reminder '{title}' due in {label}."</em></span>
+          <span class="kv-key">reminder list</span><span class="kv-val">LLM check → if list query, injects pending reminders context</span>
+          <span class="kv-key">agenda set</span><span class="kv-val">LLM check → if agenda query, parses + stores multiple reminders</span>
+        </div>
+      </div>
+    </div>
+
+    <hr class="div">
+
+    <!-- main LLM -->
+    <div class="block c-main">
+      <div class="block-title">Main LLM Call — llm.chat() <span class="tag t-always">always</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">model</span><span class="kv-val">joi-personal (default) or per-conversation override</span>
+          <span class="kv-key">system</span><span class="kv-val">fully assembled enriched prompt (injections 1–8 + post-prompt)</span>
+          <span class="kv-key">messages</span><span class="kv-val">up to <em>50</em> recent turns in chat format (groups include sender prefix)</span>
+          <span class="kv-key">debug</span><span class="kv-val">BRAIN_DEBUG=1 → dumps full call to YAML file</span>
+        </div>
+      </div>
+    </div>
+
+    <hr class="div">
+
+    <!-- post LLM -->
+    <div class="row" style="margin-bottom:0;">
+      <div class="block c-post">
+        <div class="block-title">Output Validation <span class="tag t-always">always</span></div>
+        <div class="block-body">
+          <div class="kv">
+            <span class="kv-key">checks</span><span class="kv-val">length truncation · leak marker detection</span>
+            <span class="kv-key">format</span><span class="kv-val">**bold** → Unicode math bold for Signal</span>
+          </div>
+        </div>
+      </div>
+      <div class="block c-post">
+        <div class="block-title">Deferred Commit <span class="tag t-always">always</span></div>
+        <div class="block-body">
+          <div class="kv">
+            <span class="kv-key">checks</span><span class="kv-val">queue_msg.cancelled before send</span>
+            <span class="kv-key">on cancel</span><span class="kv-val">abort — prevents phantom sends after timeout</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /queue -->
+
+  <div class="arrow"></div>
+
+  <!-- SEND -->
+  <div class="block c-post">
+    <div class="block-title">Send to Mesh → Signal <span class="tag t-always">always</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">checks</span><span class="kv-val">outbound rate limit · response cooldown per conversation</span>
+        <span class="kv-key">endpoint</span><span class="kv-val">POST mesh /api/v1/message/outbound · HMAC signed</span>
+        <span class="kv-key">stores</span><span class="kv-val">outbound message to memory</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- CONSOLIDATION -->
+  <div class="block c-bg">
+    <div class="block-title">Background: Memory Consolidation <span class="tag t-cond">if message count ≥ 50</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">trigger</span><span class="kv-val">message window exceeds CONTEXT_MESSAGE_COUNT (<em>50</em>)</span>
+        <span class="kv-key">does</span><span class="kv-val">extracts facts from old batch · generates conversation summary · skips current_mood (tracked per-message in WindState)</span>
+        <span class="kv-key">cleanup</span><span class="kv-val">archives / deletes compacted messages</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /pipeline -->
+
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950;"></div>Small LLM (CURIOSITY_MODEL)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ff7b72;"></div>Main LLM (default model)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f0883e;"></div>FTS / BM25 retrieval</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#d2a8ff;"></div>Semantic vector search</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e3b341;"></div>Direct DB query</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#8b949e;"></div>Conditional / optional</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#a371f7;"></div>Queue boundary</div>
+</div>
+
+</body>
+</html>
