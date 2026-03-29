@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Joi — Feature Access Matrix</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    padding: 32px;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #58a6ff;
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    color: #8b949e;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  .defs {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+  .def {
+    font-size: 11px;
+    color: #8b949e;
+  }
+  .def strong { color: #c9d1d9; }
+
+  table {
+    width: 100%;
+    max-width: 860px;
+    border-collapse: collapse;
+  }
+
+  thead th {
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    border-bottom: 2px solid #21262d;
+    white-space: nowrap;
+  }
+  th.h-fn   { color: #8b949e; width: 38%; }
+  th.h-own  { color: #a371f7; }
+  th.h-usr  { color: #58a6ff; }
+  th.h-grp  { color: #e3b341; }
+
+  tbody tr {
+    border-bottom: 1px solid #161b22;
+  }
+  tbody tr:hover { background: #161b22; }
+
+  .section-row td {
+    padding: 14px 14px 4px 14px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #484f58;
+    border-bottom: none;
+  }
+
+  td {
+    padding: 7px 14px;
+    vertical-align: top;
+  }
+
+  .fn-name {
+    color: #c9d1d9;
+    font-weight: 600;
+    font-size: 12.5px;
+  }
+  .fn-detail {
+    color: #484f58;
+    font-size: 11px;
+    margin-top: 2px;
+  }
+
+  /* access cells */
+  .yes  { color: #3fb950; font-size: 16px; line-height: 1; }
+  .no   { color: #30363d; font-size: 16px; line-height: 1; }
+  .cond { color: #e3b341; font-size: 11px; font-weight: 600; }
+  .note { color: #8b949e; font-size: 11px; display: block; margin-top: 2px; }
+
+  td.c-own { border-left: 1px solid #21262d; }
+  td.c-grp { border-left: 1px solid #21262d; }
+</style>
+</head>
+<body>
+
+<h1>Joi — Feature Access Matrix</h1>
+<p class="subtitle">What each participant type can trigger</p>
+<div class="defs">
+  <div class="def"><strong>Owner</strong> — first entry in allowed_senders · direct conversation · is_owner=true</div>
+  <div class="def"><strong>User</strong> — allowed sender · direct conversation · is_owner=false</div>
+  <div class="def"><strong>Group</strong> — allowed sender · group conversation · must address Joi (@mention or name)</div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th class="h-fn">Feature</th>
+      <th class="h-own">Owner</th>
+      <th class="h-usr">User</th>
+      <th class="h-grp">Group</th>
+    </tr>
+  </thead>
+  <tbody>
+
+    <!-- MESSAGING -->
+    <tr class="section-row"><td colspan="4">Messaging</td></tr>
+
+    <tr>
+      <td><div class="fn-name">LLM Response</div><div class="fn-detail">Joi replies to the message</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="yes">✓</span></td>
+      <td class="c-grp"><span class="cond">if addressed</span><span class="note">@mention or name trigger</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Reaction Response</div><div class="fn-detail">Brief reply to emoji reaction</div></td>
+      <td class="c-own"><span class="cond">if db intact</span><span class="note">signal-cli db limitation</span></td>
+      <td><span class="cond">if db intact</span></td>
+      <td class="c-grp"><span class="cond">if db intact</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Store for Context</div><div class="fn-detail">Message saved but no response</div></td>
+      <td class="c-own"><span class="no">—</span><span class="note">always gets response</span></td>
+      <td><span class="no">—</span><span class="note">always gets response</span></td>
+      <td class="c-grp"><span class="cond">if not addressed</span><span class="note">group messages not to Joi</span></td>
+    </tr>
+
+    <!-- MEMORY -->
+    <tr class="section-row"><td colspan="4">Memory</td></tr>
+
+    <tr>
+      <td><div class="fn-name">Fact Detection</div><div class="fn-detail">"Remember that…" extraction</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="yes">✓</span></td>
+      <td class="c-grp"><span class="yes">✓</span><span class="note">key prefixed with sender name</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Reschedule Intent</div><div class="fn-detail">"Move that to next week"</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="no">✗</span></td>
+      <td class="c-grp"><span class="no">✗</span></td>
+    </tr>
+
+    <!-- REMINDERS -->
+    <tr class="section-row"><td colspan="4">Reminders</td></tr>
+
+    <tr>
+      <td><div class="fn-name">Set Reminder</div><div class="fn-detail">"Remind me to… in 2h"</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="no">✗</span></td>
+      <td class="c-grp"><span class="no">✗</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Reminder List / Agenda</div><div class="fn-detail">"What do I have today?"</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="no">✗</span></td>
+      <td class="c-grp"><span class="no">✗</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Reminder Snooze</div><div class="fn-detail">"Remind me again in 1h"</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="no">✗</span></td>
+      <td class="c-grp"><span class="no">✗</span></td>
+    </tr>
+
+    <!-- WIND -->
+    <tr class="section-row"><td colspan="4">Wind (Proactive Messaging)</td></tr>
+
+    <tr>
+      <td><div class="fn-name">Wind Snooze</div><div class="fn-detail">shh · quiet · hush · mute · pause</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="no">✗</span></td>
+      <td class="c-grp"><span class="no">✗</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Wind Wake</div><div class="fn-detail">wake · unsnooze · unmute · resume</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="no">✗</span></td>
+      <td class="c-grp"><span class="no">✗</span></td>
+    </tr>
+
+    <!-- MOOD -->
+    <tr class="section-row"><td colspan="4">Mood &amp; Context</td></tr>
+
+    <tr>
+      <td><div class="fn-name">User Mood Detection</div><div class="fn-detail">Per-message Plutchik classification</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="yes">✓</span></td>
+      <td class="c-grp"><span class="yes">✓</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Mood Jump Injection</div><div class="fn-detail">Prompt hint when mood shifts ≥2</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="yes">✓</span></td>
+      <td class="c-grp"><span class="yes">✓</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Wind Mood Injection</div><div class="fn-detail">Joi's own mood colors response tone</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="yes">✓</span></td>
+      <td class="c-grp"><span class="yes">✓</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Facts / Summaries / RAG</div><div class="fn-detail">Context enrichment in system prompt</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="yes">✓</span></td>
+      <td class="c-grp"><span class="yes">✓</span></td>
+    </tr>
+
+  </tbody>
+</table>
+
+</body>
+</html>
