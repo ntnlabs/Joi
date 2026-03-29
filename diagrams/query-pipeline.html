@@ -252,7 +252,7 @@
 
   <!-- PRE-QUEUE -->
   <div class="block c-pre">
-    <div class="block-title">Pre-Queue: Special Commands <span class="tag t-cond">if keyword match</span> <span class="tag t-owner">owner · direct only</span></div>
+    <div class="block-title">Pre-Queue: Special Commands <span class="tag t-cond">if keyword match</span> <span class="tag t-cond">direct only</span></div>
     <div class="block-body">
       <div class="kv">
         <span class="kv-key">wind snooze</span><span class="kv-val"><em>quiet · shh · hush · snooze · mute · pause</em> → snooze Wind proactive messages · optional duration (e.g. "shh 2h")</span>
@@ -309,7 +309,7 @@
 
     <div class="row">
       <div class="block c-small">
-        <div class="block-title">Reschedule Intent <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-owner">owner · direct</span> <span class="tag t-regex">regex gate</span></div>
+        <div class="block-title">Reschedule Intent <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-cond">direct</span> <span class="tag t-regex">regex gate</span></div>
         <div class="block-body">
           <div class="kv">
             <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> + current temporal facts list + current UTC time</span>
@@ -319,7 +319,7 @@
         </div>
       </div>
       <div class="block c-small">
-        <div class="block-title">Reminder Command <span class="tag t-llm">LLM or regex</span> <span class="tag t-owner">owner · direct</span> <span class="tag t-regex">regex gate</span></div>
+        <div class="block-title">Reminder Command <span class="tag t-llm">LLM or regex</span> <span class="tag t-cond">direct</span> <span class="tag t-regex">regex gate</span></div>
         <div class="block-body">
           <div class="kv">
             <span class="kv-key">gate</span><span class="kv-val">\bremind\sme\b regex required</span>
@@ -395,11 +395,11 @@
 
     <!-- post-prompt -->
     <div class="block" style="background:#0d1520; border-color:#388bfd55; margin-bottom:8px;">
-      <div class="block-title" style="color:#79c0ff;">Post-Prompt Additions <span class="tag t-owner">owner only</span> <span class="tag t-regex">regex gate</span></div>
+      <div class="block-title" style="color:#79c0ff;">Post-Prompt Additions <span class="tag t-cond">direct only</span> <span class="tag t-regex">regex gate</span></div>
       <div class="block-body">
         <div class="kv">
           <span class="kv-key">reminder ack</span><span class="kv-val">if reminder just set → appends <em>"Note: reminder '{title}' due in {label}."</em></span>
-          <span class="kv-key">reminder list</span><span class="kv-val">LLM check → if list query, injects pending reminders context</span>
+          <span class="kv-key">reminder list</span><span class="kv-val">LLM check → if list query, injects pending reminders · if past query (LLM check), injects pending + recently-fired instead</span>
           <span class="kv-key">agenda set</span><span class="kv-val">LLM check → if agenda query, parses + stores multiple reminders</span>
         </div>
       </div>
