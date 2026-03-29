@@ -220,7 +220,7 @@ class ReminderManager:
         conn.commit()
         logger.debug("Reminder cancelled", extra={"reminder_id": reminder_id})
 
-    def snooze(self, reminder_id: int, new_due_at: datetime) -> None:
+    def snooze(self, reminder_id: int, new_due_at: datetime, conversation_id: str) -> None:
         """
         Snooze a reminder: reschedule and increment snooze_count.
 
@@ -231,9 +231,9 @@ class ReminderManager:
             """
             UPDATE reminders
             SET due_at = ?, status = 'pending', snooze_count = snooze_count + 1
-            WHERE id = ?
+            WHERE id = ? AND conversation_id = ?
             """,
-            (_fmt_dt(new_due_at), reminder_id),
+            (_fmt_dt(new_due_at), reminder_id, conversation_id),
         )
         conn.commit()
         logger.debug("Reminder snoozed", extra={"reminder_id": reminder_id})

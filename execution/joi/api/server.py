@@ -1614,7 +1614,7 @@ def receive_message(msg: InboundMessage):
 
     # Wind snooze command: check BEFORE record_user_interaction so "shh" is not fed
     # to the engagement classifier as a topic response (would cause false deflections).
-    if msg.is_owner and msg.conversation.type == "direct" and user_text:
+    if msg.conversation.type == "direct" and user_text:
         snooze_reply = _handle_wind_snooze_command(user_text, msg.conversation.id)
         if snooze_reply:
             # Record interaction without message_text — resets unanswered counter
@@ -1637,7 +1637,7 @@ def receive_message(msg: InboundMessage):
     )
 
     # Reminder post-fire snooze: "remind me again in 1h"
-    if msg.is_owner and msg.conversation.type == "direct" and user_text:
+    if msg.conversation.type == "direct" and user_text:
         snooze_reminder_reply = _handle_reminder_snooze_command(user_text, msg.conversation.id)
         if snooze_reminder_reply:
             _send_to_mesh(
@@ -1764,13 +1764,13 @@ def receive_message(msg: InboundMessage):
         # Reschedule intent: owner can reschedule temporal facts via natural language.
         # Does not return early — Joi's normal LLM response confirms the action.
         # Runs inside the queue so the LLM extraction call is serialized with other LLM work.
-        if msg.is_owner and msg.conversation.type == "direct" and user_text:
+        if msg.conversation.type == "direct" and user_text:
             _handle_reschedule_intent(user_text, msg.conversation.id)
 
         # Reminder command: runs inside the queue so the LLM parsing call is serialized.
         # Does not return early — Joi's normal LLM response acknowledges the reminder.
         reminder_result = None
-        if msg.is_owner and msg.conversation.type == "direct" and user_text:
+        if msg.conversation.type == "direct" and user_text:
             reminder_result = _handle_reminder_command(user_text, msg.conversation.id)
 
         # Get per-conversation context size (or use global default)
@@ -1868,7 +1868,7 @@ def receive_message(msg: InboundMessage):
 
         # Reminder list / agenda-set: both gated by _REMINDER_LIST_TRIGGER.
         # Agenda-set check runs first; list-query is the fallback.
-        if not reminder_result and msg.is_owner and msg.conversation.type == "direct" and user_text:
+        if not reminder_result and msg.conversation.type == "direct" and user_text:
             if _REMINDER_LIST_TRIGGER.search(user_text):
                 if _is_agenda_set_query(user_text):
                     agenda_results = _handle_agenda_set(user_text, msg.conversation.id)
@@ -1878,8 +1878,11 @@ def receive_message(msg: InboundMessage):
                             f"\n\n{len(agenda_results)} reminder(s) were just set from the user's agenda:\n{lines}"
                         )
                 elif _is_reminder_list_query(user_text):
-                    enriched_prompt = (enriched_prompt or "") + \
-                        f"\n\n{_build_reminders_context(msg.conversation.id)}"
+                    if _is_past_reminder_query(user_text):
+                        ctx = _build_past_reminders_context(msg.conversation.id)
+                    else:
+                        ctx = _build_reminders_context(msg.conversation.id)
+                    enriched_prompt = (enriched_prompt or "") + f"\n\n{ctx}"
 
         # Generate response from LLM with conversation context
         model_source = get_model_source(msg.conversation.type, msg.conversation.id, msg.sender.transport_id)
@@ -2509,7 +2512,7 @@ def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional
     else:
         new_due = now + timedelta(hours=1)
 
-    reminder_manager.snooze(last.id, new_due)
+    reminder_manager.snooze(last.id, new_due, conversation_id)
 
     delta = new_due - now
     total_minutes = int(delta.total_seconds() / 60)
@@ -2586,8 +2589,38 @@ def _is_reminder_list_query(text: str) -> bool:
     return bool(result and result.get("list"))
 
 
+def _is_past_reminder_query(text: str) -> bool:
+    """Use LLM to confirm the message is asking about past/historical reminders."""
+    prompt = (
+        f'The user said: "{text}"\n\n'
+        "Is this asking about past, historical, or already-fired reminders "
+        "(e.g. 'what did I have last week', 'show me past reminders', "
+        "'what reminders fired yesterday')?\n"
+        'Respond with JSON only: {"past": true} or {"past": false}'
+    )
+    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    return bool(result and result.get("past"))
+
+
 def _build_reminders_context(conversation_id: str) -> str:
-    """Return formatted reminders (pending + recent fired) for LLM context injection."""
+    """Return formatted pending reminders for LLM context injection."""
+    reminders = reminder_manager.list_pending(conversation_id)
+    if not reminders:
+        return "The user has no pending reminders."
+    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+    lines = []
+    for r in reminders:
+        if r.due_at:
+            due_str = r.due_at.astimezone(tz).strftime("%a %b %d at %H:%M")
+        else:
+            due_str = "unknown time"
+        recur = f", repeating: {r.recurrence}" if r.recurrence else ""
+        lines.append(f'- "{r.title}" — {due_str}{recur}')
+    return "Pending reminders:\n" + "\n".join(lines)
+
+
+def _build_past_reminders_context(conversation_id: str) -> str:
+    """Return formatted pending + recently-fired reminders for past-query injection."""
     reminders = reminder_manager.list_recent(conversation_id, days=7)
     if not reminders:
         return "The user has no pending or recent reminders."
