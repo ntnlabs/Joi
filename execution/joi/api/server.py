@@ -431,6 +431,12 @@ _REMINDER_LIST_TRIGGER = re.compile(
     r"\b(remind(ers?)?|agenda|plan(s|ned)?|scheduled?|upcoming|calendar)\b",
     re.I,
 )
+_TEMPORAL_TASK_TRIGGER = re.compile(
+    r"\b(i\s+(need|have|should|must|got)\s+to\b|i\s+have\s+a\b|"
+    r"don'?t\s+forget\s+(i\b|to\b)|i\s+must\b|gotta\b|"
+    r"supposed\s+to\b|i'?m\s+supposed)\b",
+    re.I,
+)
 _REMINDER_TIME_VOCAB = (
     "Time word definitions (use these exact hours when resolving):\n"
     f"  early morning={REMINDER_EARLY_MORNING_HOUR:02d}:00,"
@@ -1708,23 +1714,11 @@ def receive_message(msg: InboundMessage):
         # Emit typing indicator immediately so user gets feedback before any LLM work
         _send_typing_indicator(msg)
 
-        # Check for "remember this" requests (only from allowed senders)
-        # Uses hybrid approach: keyword filter + LLM detection/extraction
-        # Note: This is inside the queue to ensure all LLM calls are serialized
+        # Cancelled check + heartbeat before any LLM work (reminders also call LLM)
         if not msg.store_only:
             if queue_msg.cancelled:
                 return InboundResponse(status="ok", message_id=msg.message_id)
             queue_msg.heartbeat()  # Signal still working
-            pending_fact = _detect_and_extract_fact(
-                user_text,
-                conversation_id=fact_key,
-                sender_id=msg.sender.transport_id,
-                sender_name=msg.sender.display_name or "",
-                is_group=(msg.conversation.type == "group"),
-                detected_at=msg.timestamp,
-            )
-            # Note: _detect_and_extract_fact already stores the fact, so for true deferred commit
-            # we'd need to refactor it. For now, heartbeat extends timeout to reduce partial state.
 
         # Mood jump detection: classify user mood and check for significant shift
         mood_jump_text = None
@@ -1767,11 +1761,28 @@ def receive_message(msg: InboundMessage):
         if msg.conversation.type == "direct" and user_text:
             _handle_reschedule_intent(user_text, msg.conversation.id)
 
-        # Reminder command: runs inside the queue so the LLM parsing call is serialized.
+        # Reminder command: explicit "remind me" path
         # Does not return early — Joi's normal LLM response acknowledges the reminder.
         reminder_result = None
         if msg.conversation.type == "direct" and user_text:
             reminder_result = _handle_reminder_command(user_text, msg.conversation.id)
+
+        # Implicit temporal task: catches "I need to X tonight" without "remind me"
+        if not reminder_result and msg.conversation.type == "direct" and user_text:
+            reminder_result = _handle_temporal_task(user_text, msg.conversation.id)
+
+        # Fact extraction: skip entirely if a reminder was just created.
+        # Note: _detect_and_extract_fact already stores the fact, so skipping it when
+        # a reminder fires prevents double-storing time-bound tasks as facts.
+        if not msg.store_only and not reminder_result:
+            pending_fact = _detect_and_extract_fact(
+                user_text,
+                conversation_id=fact_key,
+                sender_id=msg.sender.transport_id,
+                sender_name=msg.sender.display_name or "",
+                is_group=(msg.conversation.type == "group"),
+                detected_at=msg.timestamp,
+            )
 
         # Get per-conversation context size (or use global default)
         custom_context = get_context_for_conversation(
@@ -2821,6 +2832,54 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]
         label = f"{total_minutes // 60}h"
     else:
         label = f"{total_minutes}m"
+
+    return (title, label)
+
+
+def _handle_temporal_task(
+    text: str,
+    conversation_id: str,
+) -> Optional[tuple]:
+    """
+    Detect and create reminders for time-bound tasks expressed without "remind me".
+    e.g. "tonight I need to install a security camera"
+
+    Returns (title, label) on success, None if no time-bound task detected.
+    """
+    if not _TEMPORAL_TASK_TRIGGER.search(text):
+        return None
+
+    result = _parse_reminder_with_llm(text)
+    if not result:
+        return None
+
+    due_at, title = result
+    now = datetime.now(timezone.utc)
+    expires_at = now + timedelta(hours=24)
+    reminder_manager.add(conversation_id, title, due_at, expires_at=expires_at)
+
+    delta = due_at - now
+    total_minutes = int(delta.total_seconds() / 60)
+    if total_minutes < 60:
+        label = f"{total_minutes}m"
+    elif total_minutes < 1440:
+        label = f"{total_minutes // 60}h"
+    else:
+        label = f"{total_minutes // 1440}d"
+
+    if policy_manager.is_privacy_mode():
+        logger.info("Implicit reminder set [privacy mode]", extra={
+            "conversation_id": conversation_id,
+            "due_at": due_at.isoformat(),
+            "action": "reminder_add_implicit",
+        })
+    else:
+        logger.info("Implicit reminder set", extra={
+            "conversation_id": conversation_id,
+            "due_at": due_at.isoformat(),
+            "title": title,
+            "action": "reminder_add_implicit",
+        })
 
     return (title, label)
 
