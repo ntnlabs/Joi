@@ -4,7 +4,8 @@
 
 Reminders are deterministic, user-requested messages fired at a specific time.
 They are mode-agnostic: they work in both Companion and Business modes.
-The user creates a reminder explicitly ("remind me in 5m to check the oven");
+The user can create a reminder explicitly ("remind me in 5m to check the oven") or
+implicitly by expressing a time-bound task ("tonight I need to install a security camera");
 Joi fires it at the requested time and, for recurring reminders, reschedules automatically.
 
 ## Why Separate from Wind
@@ -92,23 +93,38 @@ No engagement tracking, no `mark_sent()`, no lifecycle rules, no Wind state upda
 
 ## User Command Syntax
 
+### Explicit ("remind me")
+
 ```
 remind me in 5m to check the oven       → fires in 5 minutes
 remind me in 2h to take meds            → fires in 2 hours
 remind me in 1d to call the bank        → fires in 1 day
 remind me tonight to call mom           → fires at 9pm local time
 remind me in 30m about the meeting      → fires in 30 minutes
+remind me at 3pm to submit the form     → fires at 15:00 local time
 ```
 
 Handled by `_handle_reminder_command()` in `server.py`.
 Guard: owner + direct message only (same as Wind snooze).
 Max word limit: 25 words (protects against accidental trigger on long messages).
+Primary path: LLM parser (`_parse_reminder_with_llm()`). Regex fallback for simple
+duration expressions (`_DURATION_HOURS`, `_DURATION_MINS`, `_DURATION_DAYS`, `_DURATION_TONIGHT`).
 
-Time expressions recognised (reused from Wind snooze):
-- `_DURATION_HOURS`: `5h`, `2 hours`
-- `_DURATION_MINS`: `30m`, `5 min`
-- `_DURATION_DAYS`: `1d`, `3 days`
-- `_DURATION_TONIGHT`: `tonight` → 9pm local time
+### Implicit (time-bound task intent)
+
+```
+tonight I need to install a security camera   → reminder at 9pm
+I have to call the bank before 5pm            → reminder at 4:30pm (or as parsed)
+don't forget to submit the form at 11:00      → reminder at 11:00
+I gotta pick up the kids at 3                 → reminder at 15:00
+```
+
+Handled by `_handle_temporal_task()` in `server.py`. Triggered by `_TEMPORAL_TASK_TRIGGER`
+regex (phrases: "I need to", "I have to", "I should/must/got to", "gotta", "don't forget to",
+"supposed to", "I'm supposed"). Falls through if `_parse_reminder_with_llm()` returns no
+time expression (e.g. "I need to learn Python" → no reminder, falls to fact extractor).
+
+Guard: owner + direct message only. No word limit (LLM parser handles it).
 
 ## Key Files
 
@@ -117,7 +133,7 @@ Time expressions recognised (reused from Wind snooze):
 | `execution/joi/reminders.py` | `ReminderManager` class + `Reminder` dataclass |
 | `execution/joi/memory/store.py` | `reminders` table in `SCHEMA_SQL` (v10) |
 | `execution/joi/api/scheduler.py` | `_check_reminders()` — fires due reminders; `_purge_old_reminders()` — daily cleanup |
-| `execution/joi/api/server.py` | `_handle_reminder_command()`, `_handle_reminder_snooze_command()`, `_generate_reminder_message()` |
+| `execution/joi/api/server.py` | `_handle_reminder_command()`, `_handle_temporal_task()`, `_handle_reminder_snooze_command()`, `_generate_reminder_message()` |
 
 ## Post-Fire Snooze
 
@@ -145,10 +161,20 @@ Retention controlled by `JOI_REMINDER_RETENTION_DAYS` in `/etc/default/joi-api`:
 - Set to `0` to keep forever (audit mode)
 - Pending reminders are never deleted
 
+## Processing Order in `process_with_llm()`
+
+Reminders run before fact extraction to prevent time-bound tasks from being mis-stored as facts:
+
+1. Cancelled check + heartbeat
+2. Mood detection
+3. `_handle_reschedule_intent()` — reschedule existing facts
+4. `_handle_reminder_command()` — explicit "remind me" path
+5. `_handle_temporal_task()` — implicit path (only if explicit didn't fire)
+6. `_detect_and_extract_fact()` — **skipped entirely if a reminder was created**
+
 ## Future / Out of Scope
 
 - **Listing reminders**: `/reminders` command to show pending list
 - **Cancellation command**: "cancel my oven reminder"
 - **Group support**: currently DM only
 - **Advanced recurrence**: "every Monday", "first of the month"
-- **`at` time expressions**: "remind me at 3pm" (not yet parsed)
