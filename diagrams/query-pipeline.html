@@ -279,30 +279,16 @@
     <hr class="div">
 
     <!-- small LLMs -->
-    <div class="row">
-      <div class="block c-small">
-        <div class="block-title">Fact Detection <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-cond">if keyword match</span></div>
-        <div class="block-body">
-          <div class="kv">
-            <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
-            <span class="kv-key">gate</span><span class="kv-val">keyword filter first — skips LLM if no trigger words</span>
-            <span class="kv-key">prompt</span><span class="kv-val">"Analyze this message: &quot;{user_text}&quot;"</span>
-            <span class="kv-key">output</span><span class="kv-val">{remember, category, key, value} · confidence=0.95</span>
-            <span class="kv-key">side-effect</span><span class="kv-val">stores fact to DB immediately</span>
-          </div>
-        </div>
-      </div>
-      <div class="block c-small">
-        <div class="block-title">User Mood Detection <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-always">every message</span></div>
-        <div class="block-body">
-          <div class="kv">
-            <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
-            <span class="kv-key">prompt</span><span class="kv-val">"Classify emotional state in: &quot;{user_text}&quot;"</span>
-            <span class="kv-key">output</span><span class="kv-val">{mood_state: joy|trust|…|neutral, intensity: 0.0–1.0}</span>
-            <span class="kv-key">jump rule</span><span class="kv-val">distance = |cat(new)−cat(old)| + (1 if state changed) · trigger ≥ 2</span>
-            <span class="kv-key">cats</span><span class="kv-val">&lt;0.4=0 · 0.4–0.7=1 · ≥0.7=2</span>
-            <span class="kv-key">side-effect</span><span class="kv-val">saves to WindState · jump → mood_jump_text flag</span>
-          </div>
+    <div class="block c-small" style="margin-bottom:8px;">
+      <div class="block-title">User Mood Detection <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-always">every message</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
+          <span class="kv-key">prompt</span><span class="kv-val">"Classify emotional state in: &quot;{user_text}&quot;"</span>
+          <span class="kv-key">output</span><span class="kv-val">{mood_state: joy|trust|…|neutral, intensity: 0.0–1.0}</span>
+          <span class="kv-key">jump rule</span><span class="kv-val">distance = |cat(new)−cat(old)| + (1 if state changed) · trigger ≥ 2</span>
+          <span class="kv-key">cats</span><span class="kv-val">&lt;0.4=0 · 0.4–0.7=1 · ≥0.7=2</span>
+          <span class="kv-key">side-effect</span><span class="kv-val">saves to WindState · jump → mood_jump_text flag</span>
         </div>
       </div>
     </div>
@@ -324,9 +310,34 @@
           <div class="kv">
             <span class="kv-key">gate</span><span class="kv-val">\bremind\sme\b regex required</span>
             <span class="kv-key">regex path</span><span class="kv-val"><em>≤25 words</em> · in Xm/Xh/Xd/tonight patterns · max: 168h / 10080m / 365d</span>
-            <span class="kv-key">LLM path</span><span class="kv-val"><em>&gt;25 words</em> · full user_text + local datetime</span>
-            <span class="kv-key">output</span><span class="kv-val">(due_at, title) → stored in reminder_manager · no early return</span>
+            <span class="kv-key">LLM path</span><span class="kv-val">primary · full user_text + local datetime</span>
+            <span class="kv-key">output</span><span class="kv-val">(due_at, title) → stored in reminder_manager · sets reminder_result</span>
           </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="block c-small" style="margin-bottom:8px;">
+      <div class="block-title">Implicit Temporal Task <span class="tag t-llm">LLM</span> <span class="tag t-cond">direct · only if no explicit reminder</span> <span class="tag t-regex">regex gate</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">gate</span><span class="kv-val">_TEMPORAL_TASK_TRIGGER — "I need to", "I have to", "gotta", "don't forget to", "supposed to", …</span>
+          <span class="kv-key">LLM path</span><span class="kv-val">_parse_reminder_with_llm() · returns SKIP if no time expression found</span>
+          <span class="kv-key">output</span><span class="kv-val">(due_at, title) → stored in reminder_manager · sets reminder_result · no early return</span>
+          <span class="kv-key">fallthrough</span><span class="kv-val">"I need to learn Python" (no time) → SKIP → falls to fact extractor</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="block c-small" style="margin-bottom:8px;">
+      <div class="block-title">Fact Detection <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-cond">if keyword match · skipped if reminder fired</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
+          <span class="kv-key">gate</span><span class="kv-val">keyword filter first — skips LLM if no trigger words · entirely skipped if reminder_result is set</span>
+          <span class="kv-key">prompt</span><span class="kv-val">"Analyze this message: &quot;{user_text}&quot;"</span>
+          <span class="kv-key">output</span><span class="kv-val">{remember, category, key, value} · confidence=0.95</span>
+          <span class="kv-key">side-effect</span><span class="kv-val">stores fact to DB immediately</span>
         </div>
       </div>
     </div>
