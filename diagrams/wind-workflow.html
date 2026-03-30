@@ -1,0 +1,630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Joi — Wind Proactive Messaging Workflow</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    padding: 32px;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #58a6ff;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: #8b949e;
+    font-size: 12px;
+    margin-bottom: 36px;
+  }
+
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    max-width: 860px;
+    margin: 0 auto;
+  }
+
+  .arrow {
+    width: 2px;
+    height: 22px;
+    background: #30363d;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .arrow::after {
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    left: -4px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #30363d;
+  }
+  .arrow-dim {
+    background: #21262d;
+  }
+  .arrow-dim::after {
+    border-top-color: #21262d;
+  }
+
+  .block {
+    width: 100%;
+    border-radius: 8px;
+    padding: 11px 14px;
+    border: 1px solid #30363d;
+  }
+  .block-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .block-body {
+    font-size: 12px;
+    color: #c9d1d9;
+    line-height: 1.55;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    margin-top: 4px;
+  }
+  .kv-key {
+    color: #8b949e;
+    font-size: 11px;
+    white-space: nowrap;
+    padding-top: 1px;
+  }
+  .kv-val {
+    font-size: 11px;
+    color: #c9d1d9;
+    font-family: 'Consolas', 'Fira Code', monospace;
+  }
+  .kv-val em {
+    font-style: normal;
+    color: #e3b341;
+  }
+  .kv-val .dim { color: #484f58; }
+  .kv-val .ok  { color: #39d353; }
+  .kv-val .bad { color: #f85149; }
+
+  /* tags */
+  .tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .t-always  { background: #0d2020; color: #39d353; }
+  .t-cond    { background: #1a1a1a; color: #8b949e; }
+  .t-llm     { background: #1f4d2a; color: #56d364; }
+  .t-db      { background: #2d1f00; color: #e3b341; }
+  .t-timer   { background: #1a1500; color: #d29922; }
+  .t-gate    { background: #1a0000; color: #f85149; }
+  .t-score   { background: #0d1a2d; color: #79c0ff; }
+  .t-nightly { background: #1a0d2e; color: #bc8cff; }
+  .t-mood    { background: #200d1a; color: #ff7b72; }
+
+  /* color themes */
+  .c-entry  { background: #0d2136; border-color: #388bfd; }
+  .c-entry  .block-title { color: #58a6ff; }
+  .c-gate   { background: #1a0000; border-color: #f8514966; }
+  .c-gate   .block-title { color: #f85149; }
+  .c-score  { background: #0d1a2d; border-color: #388bfd66; }
+  .c-score  .block-title { color: #79c0ff; }
+  .c-send   { background: #0c1a0d; border-color: #3fb950; }
+  .c-send   .block-title { color: #56d364; }
+  .c-llm    { background: #1f4d2a; border-color: #56d36466; }
+  .c-llm    .block-title { color: #39d353; }
+  .c-engage { background: #1a1500; border-color: #d2992266; }
+  .c-engage .block-title { color: #e3b341; }
+  .c-topic  { background: #0d0d1a; border-color: #6e40c9; }
+  .c-topic  .block-title { color: #a371f7; }
+  .c-nightly{ background: #0d0020; border-color: #6e40c966; }
+  .c-nightly .block-title { color: #bc8cff; }
+  .c-mood   { background: #1a0010; border-color: #ff7b7266; }
+  .c-mood   .block-title { color: #ff7b72; }
+  .c-user   { background: #0d1f1a; border-color: #39d35366; }
+  .c-user   .block-title { color: #3fb950; }
+
+  /* containers */
+  .container {
+    width: 100%;
+    border-radius: 10px;
+    padding: 14px 14px 10px 14px;
+    position: relative;
+  }
+  .container-label {
+    position: absolute;
+    top: -10px;
+    left: 14px;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+  }
+
+  .tick-wrap {
+    border: 1px dashed #388bfd55;
+    background: #080c14;
+  }
+  .tick-wrap .container-label { background: #080c14; color: #58a6ff; }
+
+  .engage-wrap {
+    border: 1px dashed #d2992255;
+    background: #0c0900;
+    margin: 8px 0;
+  }
+  .engage-wrap .container-label { background: #0c0900; color: #e3b341; }
+
+  .user-wrap {
+    border: 1px dashed #3fb95055;
+    background: #080e08;
+    margin: 8px 0;
+  }
+  .user-wrap .container-label { background: #080e08; color: #3fb950; }
+
+  .row {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .row .block { flex: 1; }
+
+  hr.div {
+    border: none;
+    border-top: 1px solid #21262d;
+    margin: 6px 0 10px 0;
+  }
+
+  .section-heading {
+    width: 100%;
+    max-width: 860px;
+    margin: 32px auto 14px auto;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #484f58;
+    border-bottom: 1px solid #21262d;
+    padding-bottom: 6px;
+  }
+
+  /* gate list */
+  .gates {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 5px;
+  }
+  .gates li {
+    display: grid;
+    grid-template-columns: 16px auto 1fr;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .gate-n  { color: #484f58; font-size: 10px; text-align: right; }
+  .gate-l  { color: #f85149; font-weight: 700; white-space: nowrap; }
+  .gate-d  { color: #8b949e; }
+  .gate-d em { font-style: normal; color: #c9d1d9; }
+
+  /* factor list */
+  .factors {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 5px;
+  }
+  .factors li {
+    display: grid;
+    grid-template-columns: 16px auto 1fr;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .factor-n { color: #484f58; font-size: 10px; text-align: right; }
+  .factor-l { color: #79c0ff; font-weight: 700; white-space: nowrap; }
+  .factor-d { color: #8b949e; }
+  .factor-d em { font-style: normal; color: #c9d1d9; }
+
+  /* legend */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 36px;
+    padding-top: 18px;
+    border-top: 1px solid #21262d;
+    max-width: 860px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #8b949e;
+  }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<h1>Joi — Wind Proactive Messaging Workflow</h1>
+<p class="subtitle">60-second tick · impulse scoring · engagement lifecycle · nightly housekeeping</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">Part 1 — 60-Second Scheduler Tick</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <!-- ENTRY: tick -->
+  <div class="block c-entry">
+    <div class="block-title">Scheduler Tick <span class="tag t-timer">every 60 s</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">source</span><span class="kv-val">daemon thread · <em>scheduler.py:_scheduler_loop()</em></span>
+        <span class="kv-key">startup delay</span><span class="kv-val">10 s grace period before first tick</span>
+        <span class="kv-key">also runs</span><span class="kv-val">config sync (every 10 ticks) · maintenance (hourly) · nightly tasks (24 h)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- TOPIC GENERATION -->
+  <div class="block c-topic">
+    <div class="block-title">Topic Generation <span class="tag t-cond">per conversation</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">ghost probes</span><span class="kv-val">re-probe deeply-rejected topic families after 60 days of silence</span>
+        <span class="kv-key">undertaker pokes</span><span class="kv-val">playful revival challenges for undertaker-flagged families</span>
+        <span class="kv-key">special dates</span><span class="kv-val">calendar-aware topics (upcoming events, anniversaries in facts)</span>
+        <span class="kv-key">spontaneous</span><span class="kv-val">autonomously generated curiosity questions from user facts</span>
+        <span class="kv-key">storage</span><span class="kv-val">written to <em>pending_topics</em> table · deduplicated before insert</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- IMPULSE CHECK WRAPPER -->
+  <div class="container tick-wrap">
+    <span class="container-label">Impulse Check — check_impulse_all() — per conversation in allowlist</span>
+
+    <div style="height:18px;"></div>
+
+    <!-- HARD GATES -->
+    <div class="block c-gate">
+      <div class="block-title">Hard Gates <span class="tag t-gate">fast-fail — any miss → skip</span></div>
+      <div class="block-body">
+        <ul class="gates">
+          <li><span class="gate-n">1</span><span class="gate-l">enabled</span><span class="gate-d">Wind globally enabled in config</span></li>
+          <li><span class="gate-n">2</span><span class="gate-l">allowlist</span><span class="gate-d">conversation is on the sender allowlist</span></li>
+          <li><span class="gate-n">3</span><span class="gate-l">not snoozed</span><span class="gate-d"><em>wind_snooze_until</em> is NULL or in the past</span></li>
+          <li><span class="gate-n">4</span><span class="gate-l">quiet hours</span><span class="gate-d">outside configured quiet window <em>(default 23:00–07:00 local)</em></span></li>
+          <li><span class="gate-n">5</span><span class="gate-l">cooldown</span><span class="gate-d">≥ <em>1 h</em> since last proactive sent</span></li>
+          <li><span class="gate-n">6</span><span class="gate-l">daily cap</span><span class="gate-d">&lt; <em>3</em> proactives sent in rolling 24 h window</span></li>
+          <li><span class="gate-n">7</span><span class="gate-l">unanswered</span><span class="gate-d">unanswered proactive streak &lt; <em>2</em> — stops spamming ignored conversations</span></li>
+          <li><span class="gate-n">8</span><span class="gate-l">silence</span><span class="gate-d">≥ <em>30 min</em> since last user message (or <em>1 h</em> for active/hot conversations)</span></li>
+          <li><span class="gate-n">9</span><span class="gate-l">not typing</span><span class="gate-d">no typing indicator received in past 60 s</span></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="arrow"></div>
+
+    <!-- IMPULSE SCORING -->
+    <div class="block c-score">
+      <div class="block-title">Impulse Score Calculation <span class="tag t-score">0.0 – 1.0</span> <span class="tag t-db">reads wind_state</span></div>
+      <div class="block-body">
+        <ul class="factors">
+          <li><span class="factor-n">+</span><span class="factor-l">base</span><span class="factor-d">0.10 — always included</span></li>
+          <li><span class="factor-n">+</span><span class="factor-l">silence</span><span class="factor-d">0 – 0.30 — rises with time since last user message, capped at 24 h</span></li>
+          <li><span class="factor-n">+</span><span class="factor-l">topic pressure</span><span class="factor-d">0 – 0.20 — pending topic queue depth, normalized 0–1</span></li>
+          <li><span class="factor-n">−</span><span class="factor-l">fatigue</span><span class="factor-d">up to −0.30 — reduced by recent proactives in the 24 h window</span></li>
+          <li><span class="factor-n">±</span><span class="factor-l">engagement</span><span class="factor-d">−0.20 to +0.20 — EMA of engagement quality, centered at 0.5</span></li>
+          <li><span class="factor-n">+</span><span class="factor-l">affinity</span><span class="factor-d">0 – 0.15 — <em>interest_weight</em> on the best topic's family</span></li>
+          <li><span class="factor-n">+</span><span class="factor-l">novelty</span><span class="factor-d">0 – 0.10 — bonus for topic families not yet explored</span></li>
+          <li><span class="factor-n">±</span><span class="factor-l">mood</span><span class="factor-d">±0.15 — Joi's Plutchik mood valence × intensity</span></li>
+        </ul>
+        <div style="margin-top:8px; font-size:11px; color:#484f58;">Score = clamp(sum of all factors, 0.0, 1.0)</div>
+      </div>
+    </div>
+
+    <div class="arrow"></div>
+
+    <!-- WINDMOOD ACCUMULATOR -->
+    <div class="block c-mood">
+      <div class="block-title">WindMood Accumulator <span class="tag t-mood">threshold drift + soft trigger</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">threshold drift</span><span class="kv-val">random walk ±0.01 per tick · mean-reverts toward baseline <em>0.60</em> · range [0.50, 0.70]</span>
+          <span class="kv-key">accumulation</span><span class="kv-val">score adds to <em>accumulated_impulse</em> each tick · resets to 0 after trigger</span>
+          <span class="kv-key">trigger check</span><span class="kv-val">if <em>accumulated_impulse ≥ current_threshold</em> → sigmoid probability → may fire</span>
+          <span class="kv-key">effect</span><span class="kv-val">natural variance — Wind doesn't fire on a fixed schedule; pressure builds then releases</span>
+          <span class="kv-key">persisted</span><span class="kv-val"><em>threshold_offset</em> and <em>accumulated_impulse</em> saved in wind_state each tick</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow"></div>
+
+    <!-- TOPIC SELECTION -->
+    <div class="block c-topic">
+      <div class="block-title">Topic Selection <span class="tag t-db">reads pending_topics + topic_feedback</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">query</span><span class="kv-val">status='pending' · not expired · due_at ≤ now · ordered by priority DESC, created_at ASC</span>
+          <span class="kv-key">skip if</span><span class="kv-val">family is on cooldown · family is undertaker-flagged · no viable topic exists → abort send</span>
+          <span class="kv-key">selected</span><span class="kv-val">highest-priority eligible topic passed to message generation</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow"></div>
+
+    <!-- DECISION LOG -->
+    <div class="block" style="background:#0d1117; border-color:#30363d; border-style:dashed;">
+      <div class="block-title" style="color:#8b949e;">Decision Logged <span class="tag t-always">every tick, every conversation</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">table</span><span class="kv-val"><em>wind_decision_log</em> — timestamp, eligible, gate_result (JSON), impulse_score, threshold, factors (JSON), decision, skip_reason</span>
+          <span class="kv-key">outcome</span><span class="kv-val"><span class="ok">should_send=true</span> → proceed to generation &nbsp;·&nbsp; <span class="bad">skip</span> → log reason and stop</span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /tick-wrap -->
+
+  <div class="arrow"></div>
+
+  <!-- MESSAGE GENERATION -->
+  <div class="block c-llm">
+    <div class="block-title">Proactive Message Generation <span class="tag t-llm">LLM · joi-engagement model</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">input</span><span class="kv-val">topic title · topic content · topic type · emotional_context · Joi mood state + intensity · user mood state · engagement score</span>
+        <span class="kv-key">context</span><span class="kv-val">recent conversation history compacted · per-conversation facts injected</span>
+        <span class="kv-key">output</span><span class="kv-val">natural language message text — 1–3 sentences</span>
+        <span class="kv-key">shadow mode</span><span class="kv-val">if shadow_mode=true: log decision only, do <em>not</em> call LLM, do not send</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- SEND -->
+  <div class="block c-send">
+    <div class="block-title">Send + Record <span class="tag t-always">always on generation success</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">send</span><span class="kv-val"><em>_send_to_mesh()</em> → Signal via Mesh VM</span>
+        <span class="kv-key">store</span><span class="kv-val">message written to <em>memory</em> table with outbound role</span>
+        <span class="kv-key">state update</span><span class="kv-val">proactive_fire_times[] appended · unanswered_proactive_count++ · last_proactive_sent_at updated</span>
+        <span class="kv-key">topic update</span><span class="kv-val">status → <em>awaiting_response</em> · sent_message_id stored for reply matching</span>
+        <span class="kv-key">log</span><span class="kv-val">decision='send' written to wind_decision_log with impulse_score and topic</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /pipeline -->
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">Part 2 — User Message Received (Engagement Evaluation)</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <div class="block c-user">
+    <div class="block-title">User Message Arrives <span class="tag t-always">server.py:on_message()</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">snooze check</span><span class="kv-val">"shh" → 8 h snooze · "shhh" → 24 h snooze · "wake/awake/clear" → clear snooze immediately</span>
+        <span class="kv-key">record interaction</span><span class="kv-val"><em>record_user_interaction()</em> — updates last_user_interaction_at · resets unanswered_proactive_count = 0 · updates convo_gap_ema</span>
+        <span class="kv-key">user mood</span><span class="kv-val">per-message mood classification → stored as user_mood_state + user_mood_intensity in wind_state</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <!-- ENGAGEMENT EVALUATION WRAPPER -->
+  <div class="container engage-wrap">
+    <span class="container-label">Engagement Evaluation — _evaluate_pending_topics() — for each awaiting_response topic</span>
+
+    <div style="height:18px;"></div>
+
+    <div class="row">
+      <div class="block c-engage">
+        <div class="block-title">Direct Reply Detection <span class="tag t-always">fast path · no LLM</span></div>
+        <div class="block-body">
+          <div class="kv">
+            <span class="kv-key">method</span><span class="kv-val">match Signal quote ID to <em>sent_message_id</em> stored on topic</span>
+            <span class="kv-key">result if match</span><span class="kv-val">outcome=<em>engaged</em> · confidence=1.0 · quality=0.8</span>
+          </div>
+        </div>
+      </div>
+      <div class="block c-llm">
+        <div class="block-title">LLM Engagement Classifier <span class="tag t-llm">joi-engagement model</span></div>
+        <div class="block-body">
+          <div class="kv">
+            <span class="kv-key">input</span><span class="kv-val">Wind message text · user response text</span>
+            <span class="kv-key">output</span><span class="kv-val"><em>outcome</em> (engaged / deflected / ignored) · confidence · quality</span>
+            <span class="kv-key">timeout</span><span class="kv-val">if 12 h pass with no response → outcome=<em>ignored</em> (set by scheduler timeout check)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow"></div>
+
+    <!-- OUTCOME APPLICATION -->
+    <div class="block c-engage">
+      <div class="block-title">Outcome Application <span class="tag t-db">writes topic_feedback + wind_state</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">topic</span><span class="kv-val">mark_outcome(topic_id, outcome) → status updated</span>
+          <span class="kv-key">engagement EMA</span><span class="kv-val">record_engagement() → engagement_score EMA updated in wind_state</span>
+          <span class="kv-key">family feedback</span><span class="kv-val">engagement_count / ignore_count / deflection_count incremented on topic_feedback row</span>
+          <span class="kv-key">mood update</span><span class="kv-val"><span class="ok">engaged → +0.06 intensity (toward joy)</span> · <span class="bad">ignored → −0.03</span> · <span class="bad">deflected → −0.06 (toward sadness)</span></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="arrow"></div>
+
+    <!-- LIFECYCLE RULES -->
+    <div class="block c-topic">
+      <div class="block-title">Lifecycle Rules <span class="tag t-cond">_apply_lifecycle_rules()</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">engaged</span><span class="kv-val">mark topic done → trigger outcome curiosity mining (below)</span>
+          <span class="kv-key">deflected</span><span class="kv-val">increment rejection_weight on family · set family cooldown · requeue topic for retry if retry_count &lt; max</span>
+          <span class="kv-key">ignored</span><span class="kv-val">increment rejection_weight · requeue if retry_count &lt; max · after limit → mark_dismissed</span>
+          <span class="kv-key">undertaker</span><span class="kv-val">if rejection_weight exceeds threshold → flag family as undertaker (permanently suppressed)</span>
+          <span class="kv-key">cooldown break</span><span class="kv-val">if user mentions a cooled-down topic family → reduce rejection_weight, clear cooldown</span>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /engage-wrap -->
+
+  <div class="arrow"></div>
+
+  <!-- OUTCOME CURIOSITY -->
+  <div class="block c-llm">
+    <div class="block-title">Outcome Curiosity Mining <span class="tag t-llm">2× LLM · joi-curiosity model</span> <span class="tag t-cond">engaged only</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">call 1 — summary</span><span class="kv-val">input: topic title + user response + history · output: narrative of what was resolved/decided/learned · stored as <em>wind_outcome</em> summary</span>
+        <span class="kv-key">call 2 — facts</span><span class="kv-val">input: topic + outcome summary + user response · output: JSON array of facts [{category, key, value}] · stored to <em>facts</em> table</span>
+        <span class="kv-key">emotional context</span><span class="kv-val">topics may carry an <em>emotional_context</em> field (how user felt) — injected into generation prompt for warm follow-up</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /pipeline -->
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">Part 3 — Nightly Housekeeping</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <div class="block c-nightly">
+    <div class="block-title">Nightly Tasks <span class="tag t-nightly">~24 h boundary · delayed until system quiet</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">deduplication</span><span class="kv-val">LLM pass over all pending topics per conversation · near-duplicate topics merged or discarded</span>
+        <span class="kv-key">mood rollup</span><span class="kv-val">Joi's mood intensity decayed by 15% toward middle — <em>intensity × 0.85 + 0.15 × 0.5</em> — prevents permanent extremes</span>
+        <span class="kv-key">feedback decay</span><span class="kv-val">rejection_weight and interest_weight on topic families gradually forgiven — prevents permanent blocks from old data</span>
+        <span class="kv-key">HMAC rotation</span><span class="kv-val">mesh authentication key rotated</span>
+        <span class="kv-key">maintenance</span><span class="kv-val">nonce cleanup · send-cache pruning · FTS index integrity check</span>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /pipeline -->
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">State Reference</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <div class="row">
+    <div class="block" style="background:#0d1117; border-color:#30363d;">
+      <div class="block-title" style="color:#8b949e;">wind_state <span class="tag t-db">per conversation · PRIMARY KEY = conversation_id</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">timing</span><span class="kv-val">last_user_interaction_at · last_proactive_sent_at · wind_snooze_until · convo_gap_ema_seconds</span>
+          <span class="kv-key">counters</span><span class="kv-val">unanswered_proactive_count · proactive_fire_times[] (rolling 24 h) · total_proactives_sent / engaged / ignored / deflected</span>
+          <span class="kv-key">quality</span><span class="kv-val">engagement_score (EMA) · mood_state (Plutchik) · mood_intensity · user_mood_state · user_mood_intensity</span>
+          <span class="kv-key">windmood</span><span class="kv-val">threshold_offset · accumulated_impulse</span>
+        </div>
+      </div>
+    </div>
+    <div class="block" style="background:#0d1117; border-color:#30363d;">
+      <div class="block-title" style="color:#8b949e;">pending_topics <span class="tag t-db">per conversation</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">identity</span><span class="kv-val">topic_type · title · content · priority · emotional_context</span>
+          <span class="kv-key">lifecycle</span><span class="kv-val">status: pending → awaiting_response → engaged / deflected / ignored / dismissed / expired</span>
+          <span class="kv-key">reply tracking</span><span class="kv-val">sent_message_id (for Signal quote ID match) · retry_count · due_at (backoff)</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="height:8px;"></div>
+
+  <div class="row">
+    <div class="block" style="background:#0d1117; border-color:#30363d;">
+      <div class="block-title" style="color:#8b949e;">topic_feedback <span class="tag t-db">per family, per conversation</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">weights</span><span class="kv-val">interest_weight · rejection_weight (both decay nightly)</span>
+          <span class="kv-key">counts</span><span class="kv-val">engagement_count · ignore_count · deflection_count</span>
+          <span class="kv-key">suppression</span><span class="kv-val">cooldown_until · undertaker flag (permanent)</span>
+        </div>
+      </div>
+    </div>
+    <div class="block" style="background:#0d1117; border-color:#30363d;">
+      <div class="block-title" style="color:#8b949e;">wind_decision_log <span class="tag t-db">append-only</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">every tick</span><span class="kv-val">timestamp · eligible · gate_result (JSON) · impulse_score · threshold · factors (JSON)</span>
+          <span class="kv-key">outcome</span><span class="kv-val">decision: send / skip / shadow_logged · skip_reason</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /pipeline -->
+
+
+<!-- LEGEND -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#f85149;"></div>Hard gate (fail → skip)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#79c0ff;"></div>Impulse scoring</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ff7b72;"></div>WindMood / mood state</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#a371f7;"></div>Topic queue</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#56d364;"></div>LLM call</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e3b341;"></div>Engagement outcome</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#bc8cff;"></div>Nightly housekeeping</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e3b341; opacity:0.4;"></div>DB table reference</div>
+</div>
+
+</body>
+</html>
