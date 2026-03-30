@@ -84,6 +84,27 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ⏳ Circuit breaker (120 LLM calls/hr) - inbound rate limiting may suffice
 - ⏳ Voice message transcription (Whisper)
 
+## Roadmap
+
+### Near-term
+
+- **Wind cron hint** — inject "no user present, do not ask questions" into Wind's proactive LLM call to prevent half-responses that trail off waiting for a reply
+- **Prompt injection scanning** — scan fact writes for invisible Unicode and injection patterns before committing to the facts table (user text → facts is an injection surface)
+- **Wind phase 4c remaining** — emotional follow-up, adaptive quiet hours
+- **Wind phase 4d** — daily mood momentum, day-of-week personality, 30-day cycle
+
+### Medium-term
+
+- **Background review agent** — after every N turns, a silent sub-call reviews the conversation and autonomously updates facts; no user curation required
+- **FTS5 session search** — index past conversations in SQLite FTS5; LLM can query them via a tool call when the user references past events ("like we discussed last month")
+- **System Channel integration**
+
+### Open design problems
+
+- **Important facts budget strategy** — `important=1` facts are currently always injected unconditionally; as the set grows they can push out FTS-matched facts entirely. Needs a proper multi-signal solution: tiered importance score, access frequency, category budgets. A simple heuristic (oldest N = core, newest N = fresh) doesn't scale. FTS5 session search (above) would provide the access-frequency signal needed to do this properly.
+
+See [`hermes-agent-ideas.md`](hermes-agent-ideas.md) for the full writeup on ideas sourced from [Nous Research's Hermes Agent](https://github.com/nousresearch/hermes-agent).
+
 ## Key Features
 
 - **Air-gapped**: Joi VM has no direct internet access
