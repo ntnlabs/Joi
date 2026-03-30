@@ -92,12 +92,21 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - **Prompt injection scanning** — scan fact writes for invisible Unicode and injection patterns before committing to the facts table (user text → facts is an injection surface)
 - **Wind phase 4c remaining** — emotional follow-up, adaptive quiet hours
 - **Wind phase 4d** — daily mood momentum, day-of-week personality, 30-day cycle
+- **Wind phase 5 remaining** — similar topic merge, topic priority decay, wake-up procedure
 
 ### Medium-term
 
+- **Vision model support** — image analysis via vision-capable model (moondream or similar); mesh forwards attachment, Joi analyses and responds, attachment deleted after processing
+- **Business mode: DM → group knowledge** — in companion mode a user's DMs only access their own facts; business mode would allow users to also query knowledge from groups they are active members of, with membership auto-expiring after configurable inactivity
 - **Background review agent** — after every N turns, a silent sub-call reviews the conversation and autonomously updates facts; no user curation required
 - **FTS5 session search** — index past conversations in SQLite FTS5; LLM can query them via a tool call when the user references past events ("like we discussed last month")
 - **System Channel integration**
+- **Voice message transcription** — Whisper integration for audio messages
+
+### Longer-term / infrastructure
+
+- **Async queuing for high volume** — decouple signal-cli I/O from the HTTP handler with a priority queue and backpressure handling; current single-threaded approach is sufficient for low volume
+- **Circuit breaker** — hard cap on LLM calls per hour (inbound rate limiting may already suffice)
 
 ### Open design problems
 
