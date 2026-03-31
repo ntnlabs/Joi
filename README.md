@@ -210,8 +210,6 @@ See [`hermes-agent-ideas.md`](hermes-agent-ideas.md) for the full writeup on ide
 | [reminder-engine.md](reminder-engine.md) | Reminder engine design |
 | [WIND-CONFIG.md](WIND-CONFIG.md) | Wind configuration reference & tuning guide |
 | [prompt-injection-defenses.md](prompt-injection-defenses.md) | Prompt injection mitigations |
-| [Plan.md](Plan.md) | Implementation plan |
-| [Alt-Plan.md](Alt-Plan.md) | Alternative implementation approach |
 
 ## Tech Stack (minimum)
 
