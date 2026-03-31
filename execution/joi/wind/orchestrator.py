@@ -8,7 +8,7 @@ import logging
 import os
 import random
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional, Tuple
 
 from .config import WindConfig
@@ -155,7 +155,7 @@ class WindOrchestrator:
              trigger_accumulated_impulse, threshold_offset, threshold)
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         # Calculate impulse
         result = self.impulse_engine.calculate_impulse(conversation_id, now)
@@ -258,7 +258,7 @@ class WindOrchestrator:
                      accumulated_impulse, threshold_offset, threshold)
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         if not self.config.enabled:
             logger.debug("Wind disabled, skipping check_impulse_all")
@@ -299,7 +299,7 @@ class WindOrchestrator:
             Caller (scheduler) handles actual sends for should_send=True.
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         if not self.config.enabled:
             return []
@@ -535,7 +535,7 @@ class WindOrchestrator:
             result = self.engagement_classifier.classify(
                 wind_message=wind_message,
                 wind_message_id=topic.sent_message_id,
-                mentioned_at=topic.mentioned_at or datetime.now(),
+                mentioned_at=topic.mentioned_at or datetime.now(timezone.utc),
                 user_response=None if directly_replied_topic_id else user_message,
                 user_response_reply_to=None,  # direct reply handled above
             )
@@ -753,7 +753,7 @@ class WindOrchestrator:
             if topic.retry_count < max_retries:
                 backoff_list = self.config.pursuit_backoff_hours if hasattr(self.config, 'pursuit_backoff_hours') else [4, 12, 24]
                 backoff_h = backoff_list[min(topic.retry_count, len(backoff_list) - 1)]
-                due_after = datetime.now() + timedelta(hours=backoff_h)
+                due_after = datetime.now(timezone.utc) + timedelta(hours=backoff_h)
                 self.topic_manager.requeue_for_retry(topic.id, due_after=due_after)
             else:
                 self.topic_manager.mark_expired(topic.id)
@@ -824,7 +824,7 @@ class WindOrchestrator:
     ) -> None:
         """Apply cooldown to a topic family with jitter."""
         import random
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         jitter = getattr(self.config, 'cooldown_jitter_days', 2)
         actual_days = max(1, days + random.randint(-jitter, jitter))
         cooldown_until = now + timedelta(days=actual_days)
@@ -842,7 +842,7 @@ class WindOrchestrator:
 
     def _defer_topic(self, topic_id: int, days: int) -> None:
         """Defer a topic's due_at by N days."""
-        new_due = datetime.now() + timedelta(days=days)
+        new_due = datetime.now(timezone.utc) + timedelta(days=days)
         self.topic_manager.defer_topic(topic_id, new_due)
         logger.info("Deferred topic", extra={
             "topic_id": topic_id,
@@ -883,7 +883,7 @@ class WindOrchestrator:
         probe per family per month is ever queued.
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         ghost_probe_days = getattr(self.config, 'ghost_probe_days', 60)
         ghost_probe_priority = getattr(self.config, 'ghost_probe_priority', 20)
@@ -922,7 +922,7 @@ class WindOrchestrator:
         Skips if no undertaker families exist or feature is disabled (undertaker_poke_days=0).
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         poke_days = getattr(self.config, 'undertaker_poke_days', 30)
         if poke_days <= 0 or not self.feedback_manager:
@@ -1024,7 +1024,7 @@ class WindOrchestrator:
         found in user facts. Runs each tick; novelty keys prevent duplicates.
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         if not self.memory:
             return
@@ -1106,7 +1106,7 @@ class WindOrchestrator:
            messages in chunks until caught up.
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         if not self._llm_client or not self._curiosity_model:
             return
@@ -1427,7 +1427,7 @@ class WindOrchestrator:
             Number of topics timed out
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         timed_out = 0
 

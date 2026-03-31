@@ -5,7 +5,7 @@ Wind state management for per-conversation proactive messaging state.
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional
 
 logger = logging.getLogger("joi.wind.state")
@@ -81,14 +81,16 @@ class WindState:
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO format datetime string, always returning a naive local datetime."""
+    """Parse ISO format datetime string, returning a UTC-aware datetime."""
     if not value:
         return None
     try:
         dt = datetime.fromisoformat(value)
-        if dt.tzinfo is not None:
-            # Convert aware datetime (e.g. old UTC-stored values) to naive local
-            dt = dt.astimezone().replace(tzinfo=None)
+        if dt.tzinfo is None:
+            # Legacy naive local value — treat as server local, convert to UTC
+            dt = dt.astimezone(timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
         return dt
     except (ValueError, TypeError):
         return None
@@ -214,7 +216,7 @@ class WindStateManager:
         Uses INSERT OR IGNORE for atomicity - avoids TOCTOU race where
         concurrent threads could both see "not exists" and both INSERT.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
 
         # Atomic insert - silently ignores if already exists
@@ -258,7 +260,7 @@ class WindStateManager:
         self.get_or_create_state(conversation_id)
 
         # Build SET clause
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         updates["updated_at"] = now
 
         set_clauses = []
@@ -301,7 +303,7 @@ class WindStateManager:
         Uses atomic SQL update to avoid read-modify-write race with
         record_user_interaction (which resets unanswered_proactive_count).
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         today_bucket = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
 
         # Ensure state exists (atomic)
@@ -364,7 +366,7 @@ class WindStateManager:
         - unanswered_proactive_count (reset to 0)
         - convo_gap_ema_seconds (EMA of inter-message gaps)
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         state = self.get_state(conversation_id)
 
         updates: dict = {
@@ -394,7 +396,7 @@ class WindStateManager:
         Updates:
         - last_outbound_at
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         self.update_state(
             conversation_id,
             last_outbound_at=now,
@@ -407,7 +409,7 @@ class WindStateManager:
         Updates:
         - last_impulse_check_at
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         self.update_state(
             conversation_id,
             last_impulse_check_at=now,
@@ -419,7 +421,7 @@ class WindStateManager:
 
         Called when day bucket changes.
         """
-        today_bucket = (datetime.now() - timedelta(hours=3)).strftime("%Y-%m-%d")
+        today_bucket = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%d")
         self.update_state(
             conversation_id,
             proactive_sent_today=0,
@@ -476,7 +478,7 @@ class WindStateManager:
                 SET threshold_offset = NULL, accumulated_impulse = 0.0, updated_at = ?
                 WHERE conversation_id = ?
                 """,
-                (_format_datetime(datetime.now()), conversation_id)
+                (_format_datetime(datetime.now(timezone.utc)), conversation_id)
             )
         else:
             cursor = conn.execute(
@@ -484,7 +486,7 @@ class WindStateManager:
                 UPDATE wind_state
                 SET threshold_offset = NULL, accumulated_impulse = 0.0, updated_at = ?
                 """,
-                (_format_datetime(datetime.now()),)
+                (_format_datetime(datetime.now(timezone.utc)),)
             )
 
         conn.commit()
@@ -536,7 +538,7 @@ class WindStateManager:
             quality: Response quality 0.0-1.0 (only meaningful for 'engaged')
             ema_alpha: EMA weight for new value (default 0.2 = slow adaptation)
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         self.get_or_create_state(conversation_id)
         conn = self._connect()
 
@@ -598,7 +600,7 @@ class WindStateManager:
                     conversation_id,
                     mood_intensity=new_intensity,
                     mood_state=new_mood_state,
-                    mood_updated_at=datetime.now().isoformat(),
+                    mood_updated_at=datetime.now(timezone.utc).isoformat(),
                 )
 
         # Log with fresh state
@@ -683,7 +685,7 @@ class WindStateManager:
             conversation_id,
             mood_state=state,
             mood_intensity=intensity,
-            mood_updated_at=datetime.now().isoformat(),
+            mood_updated_at=datetime.now(timezone.utc).isoformat(),
         )
         logger.info("Wind mood updated", extra={
             "conversation_id": conversation_id,
@@ -700,7 +702,7 @@ class WindStateManager:
             conversation_id,
             user_mood_state=state,
             user_mood_intensity=intensity,
-            user_mood_updated_at=datetime.now().isoformat(),
+            user_mood_updated_at=datetime.now(timezone.utc).isoformat(),
         )
         logger.debug("User mood updated", extra={
             "conversation_id": conversation_id,

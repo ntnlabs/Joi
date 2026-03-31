@@ -8,7 +8,7 @@ cooldowns, and engagement history. All tracking is per-conversation.
 import logging
 import random
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional
 
 logger = logging.getLogger("joi.wind.feedback")
@@ -23,11 +23,16 @@ DEFAULT_UNDERTAKER_THRESHOLD = 2.0  # rejection_weight to auto-promote to undert
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO format datetime string."""
+    """Parse ISO format datetime string, returning a UTC-aware datetime."""
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.astimezone(timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
     except (ValueError, TypeError):
         return None
 
@@ -146,7 +151,7 @@ class TopicFeedbackManager:
         if existing:
             return existing
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
         cursor = conn.execute(
             """
@@ -178,7 +183,7 @@ class TopicFeedbackManager:
             topic_family: Normalized topic family name
             quality: Engagement quality 0.0-1.0
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         self.get_or_create_feedback(conversation_id, topic_family)
 
         conn = self._connect()
@@ -211,7 +216,7 @@ class TopicFeedbackManager:
         topic_family: str,
     ) -> None:
         """Record that a topic in this family was ignored."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         self.get_or_create_feedback(conversation_id, topic_family)
 
         conn = self._connect()
@@ -244,7 +249,7 @@ class TopicFeedbackManager:
         topic_family: str,
     ) -> None:
         """Record that a topic in this family was deflected (explicit rejection)."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         self.get_or_create_feedback(conversation_id, topic_family)
 
         conn = self._connect()
@@ -286,7 +291,7 @@ class TopicFeedbackManager:
             # Apply jitter to cooldown duration (anti-periodicity)
             jitter = random.randint(-self._cooldown_jitter_days, self._cooldown_jitter_days)
             actual_days = max(1, self._cooldown_days + jitter)
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
             cooldown_until = now + timedelta(days=actual_days)
 
             # Check for undertaker promotion
@@ -327,7 +332,7 @@ class TopicFeedbackManager:
     ) -> bool:
         """Check if a topic family is currently in cooldown."""
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         feedback = self.get_feedback(conversation_id, topic_family)
         if not feedback:
@@ -374,7 +379,7 @@ class TopicFeedbackManager:
         Returns:
             Number of records updated
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
 
         # Decay formula: new_weight = old_weight * (1 - decay_rate)
@@ -428,7 +433,7 @@ class TopicFeedbackManager:
         cooldown_until: datetime,
     ) -> None:
         """Set an explicit cooldown_until on a topic family."""
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
         conn.execute(
             """
@@ -455,7 +460,7 @@ class TopicFeedbackManager:
         Returns:
             Number of records updated
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
 
         if topic_family:
@@ -533,7 +538,7 @@ class TopicFeedbackManager:
     ) -> List[TopicFeedback]:
         """Get all topic families currently in cooldown."""
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         conn = self._connect()
         cursor = conn.execute(
@@ -578,7 +583,7 @@ class TopicFeedbackManager:
 
         Called by lifecycle action 'undertaker_promote' when a ghost probe is deflected.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
         conn.execute(
             """
@@ -607,7 +612,7 @@ class TopicFeedbackManager:
         Reduces rejection_weight by 0.1 and clears the cooldown, allowing Wind
         to bring the topic back sooner. Does not affect undertaker families.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
         conn.execute(
             """
@@ -647,7 +652,7 @@ class TopicFeedbackManager:
 
         Called by lifecycle action 'restore_undertaker' when a poke topic is engaged.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
         conn.execute(
             """
