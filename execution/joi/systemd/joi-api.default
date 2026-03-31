@@ -144,6 +144,10 @@ JOI_TIMEZONE=Europe/Bratislava
 #JOI_REMINDER_EVENING_HOUR=19
 #JOI_REMINDER_TONIGHT_HOUR=21
 #JOI_REMINDER_LATE_NIGHT_HOUR=23
+# How long after a reminder fires that "snooze" still refers to it (minutes)
+#JOI_REMINDER_SNOOZE_WINDOW_MINUTES=45
+# Default snooze duration when no duration is specified (minutes)
+#JOI_REMINDER_SNOOZE_DEFAULT_MINUTES=30
 
 # --- Scheduler (Wind/Tasks) ---
 # Background scheduler for proactive messaging and reminders
