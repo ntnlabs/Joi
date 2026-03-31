@@ -430,7 +430,7 @@ _REMINDER_SNOOZE_TRIGGER = re.compile(
 _REMINDER_TRIGGER = re.compile(r"\bremind\s+me\b", re.I)
 _REMINDER_ABOUT   = re.compile(r"\b(?:to|about)\b", re.I)
 _REMINDER_LIST_TRIGGER = re.compile(
-    r"\b(remind(ers?)?|agenda|plan(s|ned)?|scheduled?|upcoming|calendar)\b",
+    r"\b(remind(ers?)?|agenda|scheduled?|upcoming|calendar)\b",
     re.I,
 )
 _TEMPORAL_TASK_TRIGGER = re.compile(
