@@ -423,7 +423,7 @@ _DURATION_TONIGHT   = re.compile(r"\btonight\b", re.I)
 
 # --- Reminder Post-Fire Snooze Patterns ---
 _REMINDER_SNOOZE_TRIGGER = re.compile(
-    r"\b(remind\s+me\s+again|snooze|later|remind\s+me\s+in)\b", re.I
+    r"\b(remind\s+me\s+again|snooze|remind\s+me\s+in)\b", re.I
 )
 
 # --- Reminder Command Patterns ---
@@ -1625,6 +1625,8 @@ def receive_message(msg: InboundMessage):
     if msg.conversation.type == "direct" and user_text:
         snooze_reminder_reply = _handle_reminder_snooze_command(user_text, msg.conversation.id)
         if snooze_reminder_reply:
+            # Reset Wind's silence timer without feeding "snooze" to engagement classifier
+            wind_orchestrator.record_user_interaction(msg.conversation.id)
             _send_to_mesh(
                 recipient_id="owner",
                 recipient_transport_id=msg.conversation.id,
@@ -2504,9 +2506,11 @@ def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional
     """
     Return a confirmation string if text is a post-fire reminder snooze, else None.
 
-    Only matches if a reminder fired recently (within 2h) — avoids stealing
-    new reminder creation requests like "remind me in 1h".
+    Only matches if a reminder fired within JOI_REMINDER_SNOOZE_WINDOW_MINUTES (default 45m)
+    — avoids stealing new reminder creation requests like "remind me in 1h".
     """
+    if len(text.split()) > 8:
+        return None
     if not _REMINDER_SNOOZE_TRIGGER.search(text):
         return None
 
