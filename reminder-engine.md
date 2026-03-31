@@ -183,14 +183,18 @@ Reminders run before fact extraction to prevent time-bound tasks from being mis-
 
 ## Implemented (previously listed as future)
 
-- **Listing reminders**: Triggered by natural-language queries matching `_REMINDER_LIST_TRIGGER`
-  (a regex in `server.py`). The handler calls `_build_reminders_context()` for pending reminders
-  or `_build_past_reminders_context()` for recently-fired ones, then passes the result as system
-  context so the LLM can reply with the user's reminder list. No slash-command required.
+- **Listing reminders** (DM only): Two-stage gating in `server.py`. First, a broad regex
+  pre-filter `_REMINDER_LIST_TRIGGER` (matches "remind", "agenda", "calendar", etc.) gates entry.
+  Then two LLM classifiers decide the path: `_is_agenda_set_query()` fires the agenda-set path if
+  true; otherwise `_is_reminder_list_query()` must return true before listing context is injected.
+  The pending vs. past branch is also LLM-driven via `_is_past_reminder_query()`. The handler calls
+  `_build_reminders_context()` or `_build_past_reminders_context()` accordingly, then passes the
+  result as system context so the LLM can reply with the user's reminder list. No slash-command
+  required.
 
 ## Future / Out of Scope
 
-- **Cancellation command**: "cancel my oven reminder" — `ReminderManager.cancel(reminder_id)`
+- **Cancellation command**: "cancel my oven reminder" — `reminder_manager.cancel(reminder_id)`
   exists in `reminders.py` (infrastructure is in place), but no chat-command handler is wired up
   in `server.py` yet.
 - **Group support**: currently DM only
