@@ -143,7 +143,6 @@ After a reminder fires, the user can snooze it by replying with natural language
 remind me again in 30 minutes
 remind me again in 2h
 snooze
-later
 ```
 
 Handled by `_handle_reminder_snooze_command()` in `server.py`.

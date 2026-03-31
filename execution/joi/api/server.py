@@ -423,7 +423,7 @@ _DURATION_TONIGHT   = re.compile(r"\btonight\b", re.I)
 
 # --- Reminder Post-Fire Snooze Patterns ---
 _REMINDER_SNOOZE_TRIGGER = re.compile(
-    r"\b(remind\s+me\s+again|snooze|remind\s+me\s+in)\b", re.I
+    r"\b(remind\s+me\s+again|snooze)\b", re.I
 )
 
 # --- Reminder Command Patterns ---
@@ -434,8 +434,8 @@ _REMINDER_LIST_TRIGGER = re.compile(
     re.I,
 )
 _TEMPORAL_TASK_TRIGGER = re.compile(
-    r"\b(i\s+(need|have|should|must|got)\s+to\b|i\s+have\s+a\b|"
-    r"don'?t\s+forget\s+(i\b|to\b)|i\s+must\b|gotta\b|"
+    r"\b(i\s+(need|have|should|must|got)\s+to\b|"
+    r"don'?t\s+forget\s+(i\b|to\b)|gotta\b|"
     r"supposed\s+to\b|i'?m\s+supposed)\b",
     re.I,
 )
@@ -2532,6 +2532,20 @@ def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional
 
     reminder_manager.snooze(last.id, new_due, conversation_id)
 
+    if policy_manager.is_privacy_mode():
+        logger.info("Reminder snoozed [privacy mode]", extra={
+            "conversation_id": conversation_id,
+            "new_due_at": new_due.isoformat(),
+            "action": "reminder_snooze",
+        })
+    else:
+        logger.info("Reminder snoozed", extra={
+            "conversation_id": conversation_id,
+            "new_due_at": new_due.isoformat(),
+            "title": last.title,
+            "action": "reminder_snooze",
+        })
+
     delta = new_due - now
     total_minutes = int(delta.total_seconds() / 60)
     if total_minutes >= 1440:
@@ -2737,10 +2751,16 @@ def _handle_agenda_set(text: str, conversation_id: str) -> Optional[List[tuple]]
         reminder_manager.add(conversation_id, title, due_at)
         due_local = due_at.astimezone(tz).strftime("%a %b %d at %H:%M")
         results.append((title, due_local))
-        logger.info("Agenda item added", extra={
-            "title": title, "due_at": due_at.isoformat(),
-            "conversation_id": conversation_id, "action": "agenda_item_add",
-        })
+        if policy_manager.is_privacy_mode():
+            logger.info("Agenda item added [privacy mode]", extra={
+                "due_at": due_at.isoformat(),
+                "conversation_id": conversation_id, "action": "agenda_item_add",
+            })
+        else:
+            logger.info("Agenda item added", extra={
+                "title": title, "due_at": due_at.isoformat(),
+                "conversation_id": conversation_id, "action": "agenda_item_add",
+            })
     return results
 
 
@@ -2759,7 +2779,7 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]
     if llm_result:
         due_at, title = llm_result
         now = datetime.now(timezone.utc)
-        expires_at = now + timedelta(hours=24)
+        expires_at = due_at + timedelta(hours=24)
         reminder_manager.add(
             conversation_id=conversation_id,
             title=title,
@@ -2775,12 +2795,19 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]
             label = f"{h}h {m}m" if m else f"{h}h"
         else:
             label = f"{total_minutes}m"
-        logger.info("Reminder set via LLM", extra={
-            "conversation_id": conversation_id,
-            "due_at": due_at.isoformat(),
-            "title": title,
-            "action": "reminder_add",
-        })
+        if policy_manager.is_privacy_mode():
+            logger.info("Reminder set via LLM [privacy mode]", extra={
+                "conversation_id": conversation_id,
+                "due_at": due_at.isoformat(),
+                "action": "reminder_add",
+            })
+        else:
+            logger.info("Reminder set via LLM", extra={
+                "conversation_id": conversation_id,
+                "due_at": due_at.isoformat(),
+                "title": title,
+                "action": "reminder_add",
+            })
         return (title, label)
 
     # --- Regex fallback: simple duration expressions ---
@@ -2822,8 +2849,7 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]
     if not title:
         return None
 
-    # Set reminder with 24h expiry for one-shots
-    expires_at = now + timedelta(hours=24)
+    expires_at = due_at + timedelta(hours=24)
     reminder_manager.add(
         conversation_id=conversation_id,
         title=title,
@@ -2839,6 +2865,20 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]
         label = f"{total_minutes // 60}h"
     else:
         label = f"{total_minutes}m"
+
+    if policy_manager.is_privacy_mode():
+        logger.info("Reminder set via regex [privacy mode]", extra={
+            "conversation_id": conversation_id,
+            "due_at": due_at.isoformat(),
+            "action": "reminder_add_regex",
+        })
+    else:
+        logger.info("Reminder set via regex", extra={
+            "conversation_id": conversation_id,
+            "due_at": due_at.isoformat(),
+            "title": title,
+            "action": "reminder_add_regex",
+        })
 
     return (title, label)
 
@@ -2862,11 +2902,11 @@ def _handle_temporal_task(
 
     due_at, title = result
     now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(hours=24)
+    expires_at = due_at + timedelta(hours=24)
     reminder_manager.add(conversation_id, title, due_at, expires_at=expires_at)
 
     delta = due_at - now
-    total_minutes = int(delta.total_seconds() / 60)
+    total_minutes = max(1, int(delta.total_seconds() / 60))
     if total_minutes < 60:
         label = f"{total_minutes}m"
     elif total_minutes < 1440:
