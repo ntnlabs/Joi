@@ -2,7 +2,7 @@
 
 > Focused design for Joi's proactive "Wind" behavior.
 > Version: 1.0 (Draft)
-> Last updated: 2026-03-13
+> Last updated: 2026-03-31
 
 ## Purpose
 
@@ -1306,7 +1306,7 @@ Success criteria:
 - [x] **Impulse factor**: engagement_score feeds into impulse calculation (weight 0.2)
 - [x] **Admin commands**: show-engagement, show-feedback, topic-history, clear-cooldowns
 
-### Phase 4b: Learning & Pursuit
+### Phase 4b: Learning & Pursuit ✓ *Complete (2026-03-31)*
 *Depends on: Phase 4a (needs engagement data)*
 
 > **Design note**: Phase 4a introduced downward pressure only (rejection_weight → cooldown/block).
@@ -1326,7 +1326,7 @@ Success criteria:
   - Decay rate slower than rejection (interest should persist longer than annoyance fades)
   - Recurring topics for high-affinity subjects — system learns what the user actually likes talking about
 
-### Phase 4c: Intelligence
+### Phase 4c: Intelligence (Partial)
 *Depends on: Phase 4b (benefits from affinity data)*
 
 **Requires: Low-priority background queue** (see Background Processing Architecture)
@@ -1337,16 +1337,22 @@ Success criteria:
   - Higher impulse to continue that thread
 - **Outcome curiosity**: LLM extracts future events ("meeting tomorrow")
   - Surface as curiosity topic when date arrives
-- **Tension extraction** (joi-tension model): mine unfinished threads from conversation
+- ✅ **Tension extraction** (joi-tension model): mine unfinished threads from conversation
   - Detect open questions, unresolved topics, pending plans
   - Auto-generate tension topics from conversation history
+- ✅ **Impulse/engagement feedback**: engagement outcomes feed into impulse and affinity scoring
+  - `record_engagement` updates topic state and feedback model
+  - Affinity/decay state machine: `mark_engaged`, `cooldown`, `retry` transitions
+- ✅ **Affinity/decay**: interest_weight and rejection_weight accumulate and decay
+  - Configurable `interest_decay_rate`; pursuit back-off via `pursuit_backoff_hours`
+  - `convert_affinity` converts discovery topics to affinity topics on engagement
 - **Curiosity/discovery** (joi-curiosity model): generate exploratory probes
   - Low-frequency probing for new interests
   - Convert successful discoveries to affinity topics
-- **Special dates**: birthdays, anniversaries from stored facts
-  - Trigger warm check-ins
-- **Spontaneous sharing**: Joi "discovers" something interesting to share
-  - From knowledge base, low frequency, high relevance
+- ✅ **Special dates**: birthdays, anniversaries from stored facts
+  - `_generate_special_date_topics` triggers warm check-ins
+- ✅ **Spontaneous sharing**: Joi "discovers" something interesting to share
+  - `_generate_spontaneous_topics` — from knowledge base, low frequency, high relevance
 - **Adaptive quiet hours**: learn activity patterns
   - Track when user typically responds
   - Shift quiet windows based on observed patterns
@@ -1375,7 +1381,7 @@ Extends WindMood with higher-level personality features that shape engagement ov
 
 Together, Phase 4a-4d transform Wind from "queue-based reminders" to "genuine companion initiative."
 
-### Phase 5: Queue Health & Resilience
+### Phase 5: Queue Health & Resilience (Partial)
 *Depends on: Phase 2 (live mode, topic queue)*
 
 Collects orphaned features — implemented or planned but not assigned to any phase. Focuses on keeping
