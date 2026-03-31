@@ -181,9 +181,17 @@ Reminders run before fact extraction to prevent time-bound tasks from being mis-
 5. `_handle_temporal_task()` — implicit path (only if explicit didn't fire)
 6. `_detect_and_extract_fact()` — **skipped entirely if a reminder was created**
 
+## Implemented (previously listed as future)
+
+- **Listing reminders**: Triggered by natural-language queries matching `_REMINDER_LIST_TRIGGER`
+  (a regex in `server.py`). The handler calls `_build_reminders_context()` for pending reminders
+  or `_build_past_reminders_context()` for recently-fired ones, then passes the result as system
+  context so the LLM can reply with the user's reminder list. No slash-command required.
+
 ## Future / Out of Scope
 
-- **Listing reminders**: `/reminders` command to show pending list
-- **Cancellation command**: "cancel my oven reminder"
+- **Cancellation command**: "cancel my oven reminder" — `ReminderManager.cancel(reminder_id)`
+  exists in `reminders.py` (infrastructure is in place), but no chat-command handler is wired up
+  in `server.py` yet.
 - **Group support**: currently DM only
 - **Advanced recurrence**: "every Monday", "first of the month"
