@@ -1313,11 +1313,11 @@ Success criteria:
 > Phase 4b adds the upward direction (interest_weight → affinity bonus). Together they make the
 > system symmetric: topics that bore or annoy fade away, topics that resonate come back more.
 
-- **Pursuit state machine**: bounded stubbornness, multi-attempt topics
+- ✅ **Pursuit state machine**: bounded stubbornness, multi-attempt topics
   - Track attempt count per topic
   - Configurable max attempts before giving up
   - Back-off timing between attempts
-- **Topic Affinity Model**: symmetric counterpart to rejection_weight accumulation
+- ✅ **Topic Affinity Model**: symmetric counterpart to rejection_weight accumulation
   - `interest_weight` (already in `topic_feedback` schema) accumulates on engagements
   - High `interest_weight` for a family → affinity bonus in topic selection or impulse scoring
   - Bonus is a lower effective barrier: high-affinity families get surfaced more readily
@@ -1337,7 +1337,7 @@ Success criteria:
   - Higher impulse to continue that thread
 - **Outcome curiosity**: LLM extracts future events ("meeting tomorrow")
   - Surface as curiosity topic when date arrives
-- ✅ **Tension extraction** (joi-tension model): mine unfinished threads from conversation
+- ✅ **Tension extraction** (joi-curiosity model): mine unfinished threads from conversation
   - Detect open questions, unresolved topics, pending plans
   - Auto-generate tension topics from conversation history
 - ✅ **Impulse/engagement feedback**: engagement outcomes feed into impulse and affinity scoring
