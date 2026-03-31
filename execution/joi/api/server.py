@@ -326,6 +326,8 @@ REMINDER_AFTERNOON_HOUR     = int(os.getenv("JOI_REMINDER_AFTERNOON_HOUR", "16")
 REMINDER_EVENING_HOUR       = int(os.getenv("JOI_REMINDER_EVENING_HOUR", "19"))
 REMINDER_TONIGHT_HOUR       = int(os.getenv("JOI_REMINDER_TONIGHT_HOUR", "21"))
 REMINDER_LATE_NIGHT_HOUR    = int(os.getenv("JOI_REMINDER_LATE_NIGHT_HOUR", "23"))
+REMINDER_SNOOZE_WINDOW_MINUTES  = int(os.getenv("JOI_REMINDER_SNOOZE_WINDOW_MINUTES", "45"))
+REMINDER_SNOOZE_DEFAULT_MINUTES = int(os.getenv("JOI_REMINDER_SNOOZE_DEFAULT_MINUTES", "30"))
 
 # Brain debug - write full LLM call payload to YAML files
 BRAIN_DEBUG = os.getenv("JOI_BRAIN_DEBUG", "0") == "1"
@@ -1618,6 +1620,20 @@ def receive_message(msg: InboundMessage):
         })
         return InboundResponse(status="ok", message_id=msg.message_id)
 
+    # Reminder post-fire snooze: runs first so "snooze" is not stolen by Wind snooze.
+    # Guard (get_last_fired within window) ensures it returns None when nothing fired recently.
+    if msg.conversation.type == "direct" and user_text:
+        snooze_reminder_reply = _handle_reminder_snooze_command(user_text, msg.conversation.id)
+        if snooze_reminder_reply:
+            _send_to_mesh(
+                recipient_id="owner",
+                recipient_transport_id=msg.conversation.id,
+                conversation=msg.conversation,
+                text=snooze_reminder_reply,
+                reply_to=msg.message_id,
+            )
+            return InboundResponse(status="ok", message_id=msg.message_id)
+
     # Wind snooze command: check BEFORE record_user_interaction so "shh" is not fed
     # to the engagement classifier as a topic response (would cause false deflections).
     if msg.conversation.type == "direct" and user_text:
@@ -1641,19 +1657,6 @@ def receive_message(msg: InboundMessage):
         message_text=user_text,
         reply_to_id=quote_reply_to_id,
     )
-
-    # Reminder post-fire snooze: "remind me again in 1h"
-    if msg.conversation.type == "direct" and user_text:
-        snooze_reminder_reply = _handle_reminder_snooze_command(user_text, msg.conversation.id)
-        if snooze_reminder_reply:
-            _send_to_mesh(
-                recipient_id="owner",
-                recipient_transport_id=msg.conversation.id,
-                conversation=msg.conversation,
-                text=snooze_reminder_reply,
-                reply_to=msg.message_id,
-            )
-            return InboundResponse(status="ok", message_id=msg.message_id)
 
     # All facts (explicit and inferred) use conversation_id as key
     # - DMs: phone number (per-user scope)
@@ -2510,7 +2513,7 @@ def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional
     last = reminder_manager.get_last_fired(conversation_id)
     if not last or last.fired_at is None:
         return None
-    if (datetime.now(timezone.utc) - last.fired_at).total_seconds() > 7200:
+    if (datetime.now(timezone.utc) - last.fired_at).total_seconds() > REMINDER_SNOOZE_WINDOW_MINUTES * 60:
         return None
 
     now = datetime.now(timezone.utc)
@@ -2521,7 +2524,7 @@ def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional
     elif m := _DURATION_DAYS.search(text):
         new_due = now + timedelta(days=min(int(m.group(1)), 7))
     else:
-        new_due = now + timedelta(hours=1)
+        new_due = now + timedelta(minutes=REMINDER_SNOOZE_DEFAULT_MINUTES)
 
     reminder_manager.snooze(last.id, new_due, conversation_id)
 

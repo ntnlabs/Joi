@@ -146,9 +146,19 @@ snooze
 later
 ```
 
-Handled by `_handle_reminder_snooze_command()` in `server.py`. Guard: only triggers if a
-reminder fired within the last 2 hours — prevents stealing new reminder creation requests
-like "remind me in 1h". Default snooze (no duration specified): 1 hour.
+Handled by `_handle_reminder_snooze_command()` in `server.py`.
+
+**Execution order**: reminder snooze runs *before* Wind snooze in the pre-queue handler.
+Both use the word "snooze" — without this ordering, Wind snooze would steal it.
+The `get_last_fired` guard makes the swap safe: if no reminder fired recently, reminder
+snooze returns `None` and Wind snooze handles it normally.
+
+**Window**: only triggers if a reminder fired within `JOI_REMINDER_SNOOZE_WINDOW_MINUTES`
+(default **45 minutes**). Prevents stealing new reminder creation requests like "remind me in 1h"
+that happen well after the last reminder fired.
+
+**Default duration**: when no duration is specified ("snooze" / "later"), snoozes for
+`JOI_REMINDER_SNOOZE_DEFAULT_MINUTES` (default **30 minutes**).
 
 Confirmation: `Reminder snoozed for 30m. I'll remind you about "check the oven" then.`
 

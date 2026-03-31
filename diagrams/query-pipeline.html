@@ -255,9 +255,9 @@
     <div class="block-title">Pre-Queue: Special Commands <span class="tag t-cond">if keyword match</span> <span class="tag t-cond">direct only</span></div>
     <div class="block-body">
       <div class="kv">
-        <span class="kv-key">wind snooze</span><span class="kv-val"><em>quiet · shh · hush · snooze · mute · pause</em> → snooze Wind proactive messages · optional duration (e.g. "shh 2h")</span>
+        <span class="kv-key">reminder snooze</span><span class="kv-val"><em>snooze · later · remind me again</em> → snooze active reminder · runs first · guard: fired within 45m (JOI_REMINDER_SNOOZE_WINDOW_MINUTES) · default: 30m (JOI_REMINDER_SNOOZE_DEFAULT_MINUTES)</span>
+        <span class="kv-key">wind snooze</span><span class="kv-val"><em>quiet · shh · hush · snooze · mute · pause</em> → snooze Wind proactive messages · optional duration (e.g. "shh 2h") · only runs if reminder snooze returned None</span>
         <span class="kv-key">wind wake</span><span class="kv-val"><em>wake · unsnooze · unmute · resume</em> → clear Wind snooze immediately</span>
-        <span class="kv-key">reminder snooze</span><span class="kv-val"><em>snooze</em> + reminder context → snooze active reminder</span>
         <span class="kv-key">all</span><span class="kv-val">handled inline — no LLM, no queue, returns immediately</span>
       </div>
     </div>
