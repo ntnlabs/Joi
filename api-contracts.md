@@ -418,6 +418,10 @@ Local-only endpoints (127.0.0.1) for administration.
 | `/admin/security/kill-switch` | POST | Local | Enable/disable kill switch (`?active=true/false`) |
 | `/admin/rag/scopes` | GET | Local | List all knowledge scopes with chunk counts |
 | `/admin/rag/search` | GET | Local | Test RAG search (`?q=query&scope=optional`) |
+| `/admin/fts/status` | GET | Local | FTS index integrity check (counts per table, in-sync status) |
+| `/admin/fts/rebuild` | POST | Local | Rebuild FTS indexes (`?index=<name>` for specific, omit for all) |
+| `/admin/routing/status` | GET | Local | Show routing config (enabled, default backend, rule count) |
+| `/admin/routing/toggle` | POST | Local | Enable/disable routing (`?enabled=true/false`) |
 
 ### API Endpoints
 
