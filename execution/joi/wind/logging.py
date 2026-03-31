@@ -5,7 +5,7 @@ Wind decision logging for observability.
 import json
 import logging
 from dataclasses import dataclass, asdict
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger("joi.wind.logging")
@@ -102,7 +102,7 @@ class WindDecisionLogger:
         Returns:
             Log entry ID
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
 
         # Serialize dicts to JSON
@@ -235,7 +235,7 @@ class WindDecisionLogger:
 
         # Calculate cutoff
         from datetime import timedelta
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         if conversation_id:
             cursor = conn.execute(
@@ -284,7 +284,7 @@ class WindDecisionLogger:
             Number of logs deleted
         """
         from datetime import timedelta
-        cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         conn = self._connect()
         cursor = conn.execute(

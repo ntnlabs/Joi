@@ -11,7 +11,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Callable
 
 logger = logging.getLogger("joi.wind.engagement")
@@ -160,7 +160,7 @@ class EngagementClassifier:
             EngagementResult if timed out, None if still within timeout period
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         timeout_threshold = mentioned_at + timedelta(hours=self._timeout_hours)
 
@@ -207,7 +207,7 @@ class EngagementClassifier:
             EngagementResult if classification determined, None if still waiting
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         # 1. Check for direct reply
         if user_response and user_response_reply_to:

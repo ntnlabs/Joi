@@ -8,7 +8,7 @@ import logging
 import math
 import random
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
@@ -106,7 +106,7 @@ class ImpulseEngine:
         Returns GateResult with pass/fail status and details.
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         gates: Dict[str, bool] = {}
 
@@ -205,8 +205,9 @@ class ImpulseEngine:
 
     def _check_not_quiet_hours(self, now: datetime) -> bool:
         """Check if we're outside quiet hours."""
-        # Wind uses naive local datetimes throughout; now.hour is already local time.
-        hour = now.hour
+        tz = ZoneInfo(self.config.timezone)
+        local_now = now.astimezone(tz)
+        hour = local_now.hour
         start = self.config.quiet_hours_start
         end = self.config.quiet_hours_end
 
@@ -271,7 +272,7 @@ class ImpulseEngine:
         - Soft probability for final trigger decision
         """
         if now is None:
-            now = datetime.now()
+            now = datetime.now(timezone.utc)
 
         # Check hard gates first
         gate_result = self.check_gates(conversation_id, now)

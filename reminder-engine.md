@@ -156,7 +156,7 @@ snooze returns `None` and Wind snooze handles it normally.
 (default **45 minutes**). Prevents stealing new reminder creation requests like "remind me in 1h"
 that happen well after the last reminder fired.
 
-**Default duration**: when no duration is specified ("snooze" / "later"), snoozes for
+**Default duration**: when no duration is specified (just "snooze"), snoozes for
 `JOI_REMINDER_SNOOZE_DEFAULT_MINUTES` (default **30 minutes**).
 
 Confirmation: `Reminder snoozed for 30m. I'll remind you about "check the oven" then.`

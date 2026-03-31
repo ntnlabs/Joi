@@ -4,7 +4,7 @@ Topic management for Wind proactive messaging.
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 logger = logging.getLogger("joi.wind.topics")
@@ -40,11 +40,16 @@ class PendingTopic:
 
 
 def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO format datetime string."""
+    """Parse ISO format datetime string, returning a UTC-aware datetime."""
     if not value:
         return None
     try:
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo is None:
+            dt = dt.astimezone(timezone.utc)
+        else:
+            dt = dt.astimezone(timezone.utc)
+        return dt
     except (ValueError, TypeError):
         return None
 
@@ -119,7 +124,7 @@ class TopicManager:
         Returns only non-expired topics with status='pending'.
         """
         conn = self._connect()
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
 
         cursor = conn.execute(
             """
@@ -190,7 +195,7 @@ class TopicManager:
         Returns:
             Topic ID
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
 
         # Check for existing topic by novelty_key (any status)
@@ -290,7 +295,7 @@ class TopicManager:
 
         Updates status to 'mentioned' and sets mentioned_at.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
         conn.execute(
             """
@@ -338,7 +343,7 @@ class TopicManager:
         Returns:
             Number of topics expired
         """
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         conn = self._connect()
         cursor = conn.execute(
             """
@@ -391,7 +396,7 @@ class TopicManager:
     def count_pending(self, conversation_id: str) -> int:
         """Count pending topics for a conversation."""
         conn = self._connect()
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         cursor = conn.execute(
             """
             SELECT COUNT(*) FROM pending_topics
@@ -406,7 +411,7 @@ class TopicManager:
     def count_pending_by_type(self, conversation_id: str, topic_type: str) -> int:
         """Count active (pending or awaiting_response) topics of a specific type for a conversation."""
         conn = self._connect()
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         cursor = conn.execute(
             """
             SELECT COUNT(*) FROM pending_topics
@@ -472,7 +477,7 @@ class TopicManager:
         Updates status to 'awaiting_response' and stores the message_id
         for later correlation with user responses.
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
         conn.execute(
             """
@@ -502,7 +507,7 @@ class TopicManager:
             outcome: One of 'engaged', 'ignored', 'deflected'
             final_status: Final status (default: 'mentioned' for engaged, keep current for others)
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
 
         # Determine final status based on outcome if not specified
@@ -539,7 +544,7 @@ class TopicManager:
             topic_id: Topic to requeue
             due_after: If set, topic won't surface until this time (pursuit back-off)
         """
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         conn = self._connect()
 
         # Get current topic to check retry count
