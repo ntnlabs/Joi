@@ -201,6 +201,17 @@ Ghost probe lifecycle:
 
 ---
 
+## Environment Variables
+
+These variables configure Wind behaviour at the process level (set in `joi-api.default`, not in `mesh-policy.json`).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `JOI_WIND_OUTCOME_TTL_DAYS` | `90` | How long wind topic outcome summaries stay active for deduplication (days). Resolved outcome summaries older than this are excluded when building the topic-selection context. |
+| `JOI_WIND_OUTCOME_HISTORY_DAYS` | `180` | How far back to search conversation history when generating topic outcome summaries (days). Controls the RAG window used to enrich outcome narratives. |
+
+---
+
 ## Example Configs
 
 ### Active companion (evening/night, responsive)
