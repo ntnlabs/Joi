@@ -919,6 +919,9 @@ class MemoryStore:
             conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_updated_at TEXT DEFAULT NULL")
             conn.commit()
 
+        # Migration v13 (cont.): notes table is created via SCHEMA_SQL (CREATE TABLE IF NOT EXISTS)
+        # No ALTER TABLE needed — new table always created on startup if missing.
+
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
 
@@ -1019,7 +1022,7 @@ class MemoryStore:
         )
         conn.commit()
         note_id = cursor.lastrowid or 0
-        logger.info("Note added", extra={
+        logger.debug("Note added", extra={
             "note_id": note_id,
             "conversation_id": conversation_id,
             "action": "note_add",
@@ -1089,7 +1092,7 @@ class MemoryStore:
             (now_ms, note_id),
         )
         conn.commit()
-        logger.info("Note archived", extra={"note_id": note_id, "action": "note_archive"})
+        logger.debug("Note archived", extra={"note_id": note_id, "action": "note_archive"})
 
     def list_notes(self, conversation_id: str) -> list:
         """Return all active notes for a conversation, newest first."""

@@ -2387,7 +2387,8 @@ def _build_enriched_prompt(
             parts.append("\n\n" + note_ctx)
         else:
             # Hint mode: search notes against user message, inject brief hint if match found
-            if user_message and not policy_manager.is_privacy_mode():
+            # Notes are DM-only, so skip hint for group conversations.
+            if user_message and not policy_manager.is_privacy_mode() and conversation_id and conversation_id.startswith("+"):
                 try:
                     matching_notes = note_manager.search(conversation_id, user_message, limit=1)
                     if matching_notes:
