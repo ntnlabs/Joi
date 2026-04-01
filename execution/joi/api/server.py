@@ -2382,9 +2382,12 @@ def _build_enriched_prompt(
         except Exception:
             tz = ZoneInfo("UTC")
         now = datetime.now(tz)
-        # Format: "Wednesday, February 26, 2026, 14:30, Europe/Bratislava"
-        human_datetime = now.strftime('%A, %B %d, %Y, %H:%M') + f", {TIME_AWARENESS_TIMEZONE}"
-        parts.append(f"\n\nCurrent date and time: {human_datetime}")
+        human_datetime = now.strftime('%A, %B %-d, %Y, %H:%M')
+        datetime_hint = (
+            f"Right now it's {human_datetime}. "
+            "Don't acknowledge or announce this — just let it naturally shape your responses."
+        )
+        parts.insert(1, "\n\n" + datetime_hint)
 
     return "".join(parts)
 
