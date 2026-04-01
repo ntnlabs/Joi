@@ -1797,7 +1797,7 @@ def receive_message(msg: InboundMessage):
                 return InboundResponse(status="ok", message_id=msg.message_id)
             note_handled = _handle_note_command(user_text, msg.conversation.id)
 
-        # Fact extraction: skip entirely if a reminder was just created.
+        # Fact extraction: skip if a reminder was just created or a note was handled.
         # Note: _detect_and_extract_fact already stores the fact, so skipping it when
         # a reminder fires prevents double-storing time-bound tasks as facts.
         if not msg.store_only and queue_msg.cancelled:
