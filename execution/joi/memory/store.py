@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -952,6 +952,7 @@ class MemoryStore:
             ("user_facts_fts", "user_facts", None),
             ("summaries_fts", "context_summaries", None),
             ("knowledge_fts", "knowledge_chunks", None),
+            ("notes_fts", "notes", None),
         ]
 
         for fts_table, main_table, where_clause in fts_configs:
@@ -1027,7 +1028,7 @@ class MemoryStore:
 
     def get_note_by_title(self, conversation_id: str, title: str) -> Optional[dict]:
         """
-        Find active note by title (case-insensitive LIKE match).
+        Find active note by title (case-insensitive partial/substring match).
         Returns a row dict or None.
         """
         conn = self._connect()
@@ -1111,7 +1112,6 @@ class MemoryStore:
         """
         import struct
         import math
-        import re as _re
 
         seen_ids: set = set()
         results = []
@@ -1146,8 +1146,10 @@ class MemoryStore:
 
         # --- FTS5 fallback ---
         if len(results) < limit:
-            all_words = _re.findall(r'\w+', query)
-            words = [w for w in all_words if len(w) > 1]
+            all_words = re.findall(r'\w+', query)
+            words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 1]
+            if not words:
+                words = all_words  # Fall back to full list so FTS still runs
             if words:
                 fts_query = " OR ".join(f'"{w}"' for w in words[:20])
                 try:
@@ -1188,7 +1190,6 @@ class MemoryStore:
 
     def get_due_note_reminders(self) -> list:
         """Return all non-archived notes whose remind_at <= now (ISO8601 UTC comparison)."""
-        from datetime import datetime, timezone
         now_iso = datetime.now(timezone.utc).isoformat()
         conn = self._connect()
         cursor = conn.execute(
@@ -1224,12 +1225,12 @@ class MemoryStore:
         Rebuild a specific FTS index.
 
         Args:
-            index_name: One of 'user_facts_fts', 'summaries_fts', 'knowledge_fts'
+            index_name: One of 'user_facts_fts', 'summaries_fts', 'knowledge_fts', 'notes_fts'
 
         Returns:
             (success, message)
         """
-        valid_indexes = ["user_facts_fts", "summaries_fts", "knowledge_fts"]
+        valid_indexes = ["user_facts_fts", "summaries_fts", "knowledge_fts", "notes_fts"]
         if index_name not in valid_indexes:
             return False, f"Invalid index name. Must be one of: {valid_indexes}"
 
@@ -1257,7 +1258,7 @@ class MemoryStore:
         Returns dict with results for each index.
         """
         results = {}
-        for index_name in ["user_facts_fts", "summaries_fts", "knowledge_fts"]:
+        for index_name in ["user_facts_fts", "summaries_fts", "knowledge_fts", "notes_fts"]:
             success, message = self.rebuild_fts_index(index_name)
             results[index_name] = {"success": success, "message": message}
         return results
