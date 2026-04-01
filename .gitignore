@@ -1,6 +1,9 @@
 # Local tool config
 .claude/
 
+# Superpowers / planning docs (local only)
+docs/
+
 # Personal/private files
 CLAUDE.md
 values.md
