@@ -66,6 +66,7 @@ from wind.state import _mood_word, _MOOD_VALENCE
 
 # Import Reminder subsystem
 from reminders import ReminderManager
+from notes import NoteManager
 
 logger = logging.getLogger("joi.api")
 
@@ -402,6 +403,7 @@ wind_orchestrator = WindOrchestrator(
 )
 
 reminder_manager = ReminderManager(db_connection_factory=memory._connect)
+note_manager = NoteManager(memory_store=memory)
 
 # Initialize memory consolidator
 consolidator = MemoryConsolidator(
@@ -437,6 +439,12 @@ _TEMPORAL_TASK_TRIGGER = re.compile(
     r"\b(i\s+(need|have|should|must|got)\s+to\b|"
     r"don'?t\s+forget\s+(i\b|to\b)|gotta\b|"
     r"supposed\s+to\b|i'?m\s+supposed)\b",
+    re.I,
+)
+
+# Notes: pre-filter before LLM parsing
+_NOTE_TRIGGER = re.compile(
+    r"\b(note|notes|jot|jotted|wrote down|write down|my note|note called|note named|note about)\b",
     re.I,
 )
 _REMINDER_TIME_VOCAB = (
@@ -1782,12 +1790,19 @@ def receive_message(msg: InboundMessage):
                 return InboundResponse(status="ok", message_id=msg.message_id)
             reminder_result = _handle_temporal_task(user_text, msg.conversation.id)
 
+        # Note commands: owner + DM only, runs after reminders, before fact extraction.
+        note_handled = False
+        if is_owner and msg.conversation.type == "direct" and user_text:
+            if not msg.store_only and queue_msg.cancelled:
+                return InboundResponse(status="ok", message_id=msg.message_id)
+            note_handled = _handle_note_command(user_text, msg.conversation.id)
+
         # Fact extraction: skip entirely if a reminder was just created.
         # Note: _detect_and_extract_fact already stores the fact, so skipping it when
         # a reminder fires prevents double-storing time-bound tasks as facts.
         if not msg.store_only and queue_msg.cancelled:
             return InboundResponse(status="ok", message_id=msg.message_id)
-        if not msg.store_only and not reminder_result:
+        if not msg.store_only and not reminder_result and not note_handled:
             pending_fact = _detect_and_extract_fact(
                 user_text,
                 conversation_id=fact_key,
