@@ -2386,7 +2386,7 @@ def _build_enriched_prompt(
             parts.append("\n\n" + note_ctx)
         else:
             # Hint mode: search notes against user message, inject brief hint if match found
-            if user_message:
+            if user_message and not policy_manager.is_privacy_mode():
                 try:
                     matching_notes = note_manager.search(conversation_id, user_message, limit=1)
                     if matching_notes:
@@ -3030,8 +3030,6 @@ def _parse_note_with_llm(text: str, intent: str) -> Optional[dict]:
     For 'retrieve'|'delete': {"title": str}
     For 'set_reminder': {"title": str, "remind_at": str}  (ISO8601 UTC)
     """
-    from zoneinfo import ZoneInfo
-
     now_utc = datetime.now(timezone.utc)
     now_local = now_utc.astimezone(ZoneInfo(TIME_AWARENESS_TIMEZONE))
     tz_abbr = now_local.strftime("%Z") or "local"
@@ -3099,7 +3097,6 @@ def _parse_note_with_llm(text: str, intent: str) -> Optional[dict]:
     if intent == "set_reminder":
         # Convert local time components to UTC ISO string
         try:
-            from zoneinfo import ZoneInfo
             tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
             remind_dt = datetime(
                 year=int(result["year"]),
@@ -3172,6 +3169,7 @@ def _handle_note_command(text: str, conversation_id: str) -> bool:
     elif intent == "set_reminder":
         return _handle_note_set_reminder(text, conversation_id)
 
+    logger.warning("Note command: unhandled intent", extra={"text_preview": text[:50]})
     return False
 
 
@@ -3254,7 +3252,7 @@ def _handle_note_list(conversation_id: str) -> bool:
         return True
     lines = []
     for n in notes:
-        created = datetime.fromtimestamp(n.created_at / 1000).strftime("%b %d, %Y")
+        created = datetime.fromtimestamp(n.created_at / 1000, tz=ZoneInfo(TIME_AWARENESS_TIMEZONE)).strftime("%b %d, %Y")
         remind_str = f" [reminder: {n.remind_at[:10]}]" if n.remind_at else ""
         lines.append(f'- "{n.title}" (created {created}){remind_str}')
     _inject_note_context(conversation_id, "User's notes:\n" + "\n".join(lines))
@@ -3275,8 +3273,8 @@ def _handle_note_retrieve(text: str, conversation_id: str) -> bool:
         _inject_note_context(conversation_id, f'No note found matching "{title}".')
         return True  # Handled — LLM will tell user note doesn't exist
 
-    created = datetime.fromtimestamp(note.created_at / 1000).strftime("%b %d, %Y at %H:%M")
-    updated = datetime.fromtimestamp(note.updated_at / 1000).strftime("%b %d, %Y at %H:%M")
+    created = datetime.fromtimestamp(note.created_at / 1000, tz=ZoneInfo(TIME_AWARENESS_TIMEZONE)).strftime("%b %d, %Y at %H:%M")
+    updated = datetime.fromtimestamp(note.updated_at / 1000, tz=ZoneInfo(TIME_AWARENESS_TIMEZONE)).strftime("%b %d, %Y at %H:%M")
     remind_str = f"\nReminder set: {note.remind_at}" if note.remind_at else ""
     context = (
         f'Note "{note.title}" (created {created}, updated {updated}){remind_str}:\n'
@@ -3325,7 +3323,6 @@ def _handle_note_set_reminder(text: str, conversation_id: str) -> bool:
 
 
 # Note context injection: stored per-call in a thread-local so _build_enriched_prompt can pick it up.
-import threading
 _note_context_local = threading.local()
 
 
