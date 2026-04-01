@@ -632,7 +632,7 @@ class Scheduler:
 
                 preview = note.content[:100] + ("..." if len(note.content) > 100 else "")
                 message_text = f"A note you flagged: **{note.title}**"
-                if preview:
+                if preview and not self._policy_manager.is_privacy_mode():
                     message_text += f" — {preview}"
 
                 conv_type = "direct"
@@ -648,17 +648,16 @@ class Scheduler:
                 )
 
                 if success:
-                    import uuid
-                    import time as _time
-                    message_id = str(uuid.uuid4())
-                    self._memory.store_message(
-                        message_id=message_id,
-                        direction="outbound",
-                        content_type="text",
-                        content_text=f"[JOI-NOTE-REMINDER] {message_text}",
-                        timestamp=int(_time.time() * 1000),
-                        conversation_id=note.conversation_id,
-                    )
+                    if self._memory:
+                        message_id = str(uuid.uuid4())
+                        self._memory.store_message(
+                            message_id=message_id,
+                            direction="outbound",
+                            content_type="text",
+                            content_text=f"[JOI-NOTE-REMINDER] {message_text}",
+                            timestamp=int(time.time() * 1000),
+                            conversation_id=note.conversation_id,
+                        )
                     self._note_manager.clear_remind_at(note.id)
                     logger.info("Note reminder sent", extra={
                         "note_id": note.id,
