@@ -57,6 +57,7 @@ class Scheduler:
         self._cleanup_send_caches: Optional[Callable] = None
         self._InboundConversation = None
         self._reminder_manager = None
+        self._note_manager = None
         self._message_queue = None
 
     def set_dependencies(
@@ -78,6 +79,7 @@ class Scheduler:
         cleanup_send_caches: Callable,
         InboundConversation,
         reminder_manager,
+        note_manager=None,
         message_queue=None,
     ):
         """Set dependencies after construction to avoid circular imports."""
@@ -98,6 +100,7 @@ class Scheduler:
         self._run_auto_ingestion = run_auto_ingestion
         self._InboundConversation = InboundConversation
         self._reminder_manager = reminder_manager
+        self._note_manager = note_manager
         self._message_queue = message_queue
 
     def start(self):
@@ -217,6 +220,9 @@ class Scheduler:
 
         # Check for due reminders every tick
         self._check_reminders()
+
+        # Check for due note reminders every tick
+        self._check_note_reminders()
 
     def _check_tamper(self):
         """Check for config file tampering. Shuts down service if detected."""
@@ -602,6 +608,73 @@ class Scheduler:
             except Exception as e:
                 logger.error("Scheduler: reminder processing failed", extra={
                     "reminder_id": reminder.id,
+                    "error": str(e),
+                }, exc_info=True)
+
+    def _check_note_reminders(self):
+        """Check for notes with a past remind_at and send soft notifications."""
+        if not self._note_manager:
+            return
+        try:
+            due_notes = self._note_manager.get_due_reminders()
+        except Exception as e:
+            logger.error("Scheduler: failed to fetch due note reminders", extra={"error": str(e)}, exc_info=True)
+            return
+
+        for note in due_notes:
+            try:
+                # Only DM sends
+                is_group = not note.conversation_id.startswith("+")
+                if is_group:
+                    logger.warning("Note reminder: group sends not yet supported", extra={"note_id": note.id})
+                    self._note_manager.clear_remind_at(note.id)
+                    continue
+
+                preview = note.content[:100] + ("..." if len(note.content) > 100 else "")
+                message_text = f"A note you flagged: **{note.title}**"
+                if preview:
+                    message_text += f" — {preview}"
+
+                conv_type = "direct"
+                conversation = self._InboundConversation(type=conv_type, id=note.conversation_id)
+
+                success = self._send_to_mesh(
+                    recipient_id="owner",
+                    recipient_transport_id=note.conversation_id,
+                    conversation=conversation,
+                    text=message_text,
+                    reply_to=None,
+                    is_critical=False,
+                )
+
+                if success:
+                    import uuid
+                    import time as _time
+                    message_id = str(uuid.uuid4())
+                    self._memory.store_message(
+                        message_id=message_id,
+                        direction="outbound",
+                        content_type="text",
+                        content_text=f"[JOI-NOTE-REMINDER] {message_text}",
+                        timestamp=int(_time.time() * 1000),
+                        conversation_id=note.conversation_id,
+                    )
+                    self._note_manager.clear_remind_at(note.id)
+                    logger.info("Note reminder sent", extra={
+                        "note_id": note.id,
+                        "conversation_id": note.conversation_id,
+                        "action": "note_reminder_sent",
+                    })
+                else:
+                    logger.error("Note reminder: failed to send", extra={
+                        "note_id": note.id,
+                        "conversation_id": note.conversation_id,
+                        "action": "note_reminder_send_fail",
+                    })
+
+            except Exception as e:
+                logger.error("Scheduler: note reminder processing failed", extra={
+                    "note_id": note.id,
                     "error": str(e),
                 }, exc_info=True)
 

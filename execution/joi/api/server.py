@@ -1274,6 +1274,7 @@ def startup_event():
             cleanup_send_caches=_cleanup_send_caches,
             InboundConversation=InboundConversation,
             reminder_manager=reminder_manager,
+            note_manager=note_manager,
             message_queue=message_queue,
         )
         scheduler.start()
