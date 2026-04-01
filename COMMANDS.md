@@ -52,6 +52,107 @@ Facts prefixed with `always remember` / `never forget` or in personal categories
 
 ---
 
+## Reminders (owner, DM only)
+
+Joi creates reminders from natural language. No special syntax required.
+
+**Trigger phrases:**
+
+- `remind me` / `remind me in` / `remind me at` / `remind me tonight`
+
+**Examples:**
+
+```
+remind me in 5m to check the oven        → fires in 5 minutes
+remind me in 2h to take meds             → fires in 2 hours
+remind me at 3pm to submit the form      → fires at 15:00 local time
+remind me tonight to call mom            → fires at 9pm local time
+```
+
+**Implicit (no "remind me"):**
+
+```
+tonight I need to install a security camera    → reminder at 9pm
+I have to call the bank before 5pm            → reminder at 4:30pm
+```
+
+**After a reminder fires, you can snooze it:**
+
+```
+remind me again in 30 minutes
+snooze
+```
+
+**Listing reminders:**
+
+```
+what reminders do I have?
+what's on my agenda?
+show me my upcoming reminders
+```
+
+---
+
+## Notes (owner, DM only)
+
+Personal named notes — longer-form text, searchable, editable.
+
+**Create:**
+
+```
+take a note: trip ideas / Vienna in spring, budget €500
+note this: call dentist before end of month
+write a note called "book list": starts with Dune
+```
+
+**Create with a reminder:**
+
+```
+note this for Friday: submit expense report
+```
+
+**Append to a note:**
+
+```
+add "also bring umbrella" to my trip ideas note
+```
+
+**Replace a note's content:**
+
+```
+update my trip ideas note: go to Vienna in June instead
+```
+
+**List notes:**
+
+```
+what notes do I have?
+show my notes
+```
+
+**Read a note:**
+
+```
+show me my trip ideas note
+what did I write about Vienna?
+open note "book list"
+```
+
+**Delete a note:**
+
+```
+delete my trip ideas note
+remove the book list note
+```
+
+**Add a reminder to an existing note:**
+
+```
+remind me about my trip ideas note on Friday
+```
+
+---
+
 ## Group Addressing
 
 In group chats, Joi only responds when directly addressed:
