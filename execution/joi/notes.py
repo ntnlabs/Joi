@@ -79,7 +79,9 @@ class NoteManager:
         Returns:
             Note ID
         """
-        return self._store.add_note(conversation_id, title, content, remind_at)
+        note_id = self._store.add_note(conversation_id, title, content, remind_at)
+        logger.info("Note added", extra={"note_id": note_id, "conversation_id": conversation_id, "action": "note_add"})
+        return note_id
 
     def get_by_title(self, conversation_id: str, title: str) -> Optional[Note]:
         """Find active note by title (fuzzy LIKE match). Returns None if not found."""
@@ -97,6 +99,7 @@ class NoteManager:
     def archive(self, note_id: int) -> None:
         """Soft-delete a note."""
         self._store.archive_note(note_id)
+        logger.debug("Note archived", extra={"note_id": note_id, "action": "note_archive"})
 
     def list_active(self, conversation_id: str) -> List[Note]:
         """List all active notes for a conversation, newest first."""
@@ -117,3 +120,4 @@ class NoteManager:
     def clear_remind_at(self, note_id: int) -> None:
         """Clear remind_at after it fires."""
         self._store.clear_note_remind_at(note_id)
+        logger.debug("Note remind_at cleared", extra={"note_id": note_id, "action": "note_remind_cleared"})
