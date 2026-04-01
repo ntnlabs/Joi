@@ -2382,7 +2382,7 @@ def _build_enriched_prompt(
         except Exception:
             tz = ZoneInfo("UTC")
         now = datetime.now(tz)
-        human_datetime = now.strftime('%A, %B %-d, %Y, %H:%M')
+        human_datetime = now.strftime('%A, %B %-d, %Y, %-I:%M %p')
         datetime_hint = (
             f"Right now it's {human_datetime}. "
             "Don't acknowledge or announce this — just let it naturally shape your responses."
