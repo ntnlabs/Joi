@@ -143,7 +143,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 # SQL for creating tables
 SCHEMA_SQL = f"""
@@ -436,6 +436,44 @@ END;
 CREATE TRIGGER IF NOT EXISTS summaries_au AFTER UPDATE ON context_summaries BEGIN
     INSERT INTO summaries_fts(summaries_fts, rowid, summary_text) VALUES('delete', old.id, old.summary_text);
     INSERT INTO summaries_fts(rowid, summary_text) VALUES (new.id, new.summary_text);
+END;
+
+-- Notes table (user-created named notes with optional soft reminder)
+CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL DEFAULT '',
+    embedding BLOB,
+    remind_at TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    archived INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_notes_conv ON notes (conversation_id, archived);
+CREATE INDEX IF NOT EXISTS idx_notes_remind ON notes (remind_at)
+    WHERE remind_at IS NOT NULL AND archived = 0;
+
+-- FTS5 for notes (indexes title and content)
+CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
+    title,
+    content,
+    content=notes,
+    content_rowid=id
+);
+
+CREATE TRIGGER IF NOT EXISTS notes_ai AFTER INSERT ON notes BEGIN
+    INSERT INTO notes_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS notes_ad AFTER DELETE ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
+    INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
+    INSERT INTO notes_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
 END;
 """
 
@@ -957,6 +995,215 @@ class MemoryStore:
         except sqlite3.OperationalError as e:
             logger.error("Failed to rebuild FTS index", extra={"index": index_name, "error": str(e)})
             return False
+
+    # --- Note Operations ---
+
+    def add_note(
+        self,
+        conversation_id: str,
+        title: str,
+        content: str,
+        remind_at: Optional[str] = None,
+    ) -> int:
+        """Insert a new note. Returns the new note id."""
+        now_ms = int(time.time() * 1000)
+        conn = self._connect()
+        embedding = self._get_embedding(title + "\n\n" + content)
+        cursor = conn.execute(
+            """
+            INSERT INTO notes (conversation_id, title, content, embedding, remind_at, created_at, updated_at, archived)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+            """,
+            (conversation_id, title, content, embedding, remind_at, now_ms, now_ms),
+        )
+        conn.commit()
+        note_id = cursor.lastrowid or 0
+        logger.info("Note added", extra={
+            "note_id": note_id,
+            "conversation_id": conversation_id,
+            "action": "note_add",
+        })
+        return note_id
+
+    def get_note_by_title(self, conversation_id: str, title: str) -> Optional[dict]:
+        """
+        Find active note by title (case-insensitive LIKE match).
+        Returns a row dict or None.
+        """
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT id, conversation_id, title, content, embedding, remind_at, created_at, updated_at, archived
+            FROM notes
+            WHERE conversation_id = ? AND LOWER(title) LIKE LOWER(?) AND archived = 0
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (conversation_id, f"%{title}%"),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+    def append_note_content(self, note_id: int, text: str) -> None:
+        """Append text to a note's content and recompute embedding."""
+        now_ms = int(time.time() * 1000)
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT title, content FROM notes WHERE id = ?", (note_id,)
+        ).fetchone()
+        if not row:
+            return
+        new_content = row["content"] + ("\n" if row["content"] else "") + text
+        embedding = self._get_embedding(row["title"] + "\n\n" + new_content)
+        conn.execute(
+            "UPDATE notes SET content = ?, embedding = ?, updated_at = ? WHERE id = ?",
+            (new_content, embedding, now_ms, note_id),
+        )
+        conn.commit()
+        logger.info("Note appended", extra={"note_id": note_id, "action": "note_append"})
+
+    def replace_note_content(self, note_id: int, new_content: str) -> None:
+        """Replace note content entirely and recompute embedding."""
+        now_ms = int(time.time() * 1000)
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT title FROM notes WHERE id = ?", (note_id,)
+        ).fetchone()
+        if not row:
+            return
+        embedding = self._get_embedding(row["title"] + "\n\n" + new_content)
+        conn.execute(
+            "UPDATE notes SET content = ?, embedding = ?, updated_at = ? WHERE id = ?",
+            (new_content, embedding, now_ms, note_id),
+        )
+        conn.commit()
+        logger.info("Note replaced", extra={"note_id": note_id, "action": "note_replace"})
+
+    def archive_note(self, note_id: int) -> None:
+        """Soft-delete a note by setting archived=1."""
+        now_ms = int(time.time() * 1000)
+        conn = self._connect()
+        conn.execute(
+            "UPDATE notes SET archived = 1, updated_at = ? WHERE id = ?",
+            (now_ms, note_id),
+        )
+        conn.commit()
+        logger.info("Note archived", extra={"note_id": note_id, "action": "note_archive"})
+
+    def list_notes(self, conversation_id: str) -> list:
+        """Return all active notes for a conversation, newest first."""
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT id, conversation_id, title, content, embedding, remind_at, created_at, updated_at, archived
+            FROM notes
+            WHERE conversation_id = ? AND archived = 0
+            ORDER BY updated_at DESC
+            """,
+            (conversation_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def search_notes(self, conversation_id: str, query: str, limit: int = 5) -> list:
+        """
+        Search notes using semantic similarity (if embedding model configured) with
+        FTS5 fallback. Returns a list of row dicts, deduplicated, best matches first.
+        """
+        import struct
+        import math
+        import re as _re
+
+        seen_ids: set = set()
+        results = []
+
+        # --- Semantic search ---
+        query_embedding = self._get_embedding(query)
+        if query_embedding is not None:
+            n_dims = len(query_embedding) // 4
+            query_vec = struct.unpack(f"{n_dims}f", query_embedding)
+            mag_q = math.sqrt(sum(x * x for x in query_vec))
+            conn = self._connect()
+            rows = conn.execute(
+                """
+                SELECT id, conversation_id, title, content, embedding, remind_at, created_at, updated_at, archived
+                FROM notes
+                WHERE conversation_id = ? AND archived = 0 AND embedding IS NOT NULL
+                """,
+                (conversation_id,),
+            ).fetchall()
+            scored = []
+            for row in rows:
+                blob = row["embedding"]
+                chunk_vec = struct.unpack(f"{len(blob) // 4}f", blob)
+                dot = sum(a * b for a, b in zip(query_vec, chunk_vec))
+                mag_c = math.sqrt(sum(x * x for x in chunk_vec))
+                score = dot / (mag_q * mag_c) if mag_q and mag_c else 0.0
+                scored.append((score, row))
+            scored.sort(key=lambda x: x[0], reverse=True)
+            for _, row in scored[:limit]:
+                seen_ids.add(row["id"])
+                results.append(dict(row))
+
+        # --- FTS5 fallback ---
+        if len(results) < limit:
+            all_words = _re.findall(r'\w+', query)
+            words = [w for w in all_words if len(w) > 1]
+            if words:
+                fts_query = " OR ".join(f'"{w}"' for w in words[:20])
+                try:
+                    conn = self._connect()
+                    fts_rows = conn.execute(
+                        """
+                        SELECT n.id, n.conversation_id, n.title, n.content, n.embedding,
+                               n.remind_at, n.created_at, n.updated_at, n.archived
+                        FROM notes_fts
+                        JOIN notes n ON notes_fts.rowid = n.id
+                        WHERE notes_fts MATCH ? AND n.conversation_id = ? AND n.archived = 0
+                        ORDER BY rank
+                        LIMIT ?
+                        """,
+                        (fts_query, conversation_id, limit),
+                    ).fetchall()
+                    for row in fts_rows:
+                        if row["id"] not in seen_ids:
+                            seen_ids.add(row["id"])
+                            results.append(dict(row))
+                            if len(results) >= limit:
+                                break
+                except Exception as e:
+                    logger.warning("Notes FTS search failed", extra={"error": str(e)})
+
+        return results[:limit]
+
+    def set_note_remind_at(self, note_id: int, remind_at: Optional[str]) -> None:
+        """Set or clear the remind_at timestamp for a note (ISO8601 UTC string or None)."""
+        now_ms = int(time.time() * 1000)
+        conn = self._connect()
+        conn.execute(
+            "UPDATE notes SET remind_at = ?, updated_at = ? WHERE id = ?",
+            (remind_at, now_ms, note_id),
+        )
+        conn.commit()
+        logger.info("Note remind_at set", extra={"note_id": note_id, "remind_at": remind_at, "action": "note_remind_set"})
+
+    def get_due_note_reminders(self) -> list:
+        """Return all non-archived notes whose remind_at <= now (ISO8601 UTC comparison)."""
+        from datetime import datetime, timezone
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            SELECT id, conversation_id, title, content, embedding, remind_at, created_at, updated_at, archived
+            FROM notes
+            WHERE remind_at IS NOT NULL AND remind_at <= ? AND archived = 0
+            """,
+            (now_iso,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def clear_note_remind_at(self, note_id: int) -> None:
+        """Clear remind_at after it fires (one-time only)."""
+        self.set_note_remind_at(note_id, None)
 
     def check_fts_integrity(self) -> dict:
         """
