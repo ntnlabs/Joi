@@ -151,6 +151,17 @@ remove the book list note
 remind me about my trip ideas note on Friday
 ```
 
+**Admin (joi-admin):**
+
+```
+joi-admin notes list                      # list all notes in DB
+joi-admin notes list --conversation +123  # notes for one conversation
+joi-admin notes list --archived           # include archived notes
+joi-admin notes show <id>                 # show full content of a note
+joi-admin notes delete <id>              # soft-delete a note
+joi-admin notes delete-all               # archive all notes
+```
+
 ---
 
 ## Group Addressing
