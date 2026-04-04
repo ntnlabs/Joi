@@ -1786,7 +1786,8 @@ def receive_message(msg: InboundMessage):
             reminder_result = _handle_reminder_command(user_text, msg.conversation.id)
 
         # Implicit temporal task: catches "I need to X tonight" without "remind me"
-        if not reminder_result and msg.conversation.type == "direct" and user_text:
+        # Skip if message is about notes — note handler covers set_reminder intent.
+        if not reminder_result and msg.conversation.type == "direct" and user_text and not _NOTE_TRIGGER.search(user_text):
             if not msg.store_only and queue_msg.cancelled:
                 return InboundResponse(status="ok", message_id=msg.message_id)
             reminder_result = _handle_temporal_task(user_text, msg.conversation.id)
@@ -3094,6 +3095,8 @@ def _parse_note_with_llm(text: str, intent: str) -> Optional[dict]:
         return None
 
     result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    if not result:
+        result = _llm_detect(prompt, model=CURIOSITY_MODEL)  # one retry on parse failure
     if not result:
         return None
 
