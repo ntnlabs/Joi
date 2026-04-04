@@ -3094,9 +3094,9 @@ def _parse_note_with_llm(text: str, intent: str) -> Optional[dict]:
         return None
 
     _expected_key = "title" if intent != "create" else "content"
-    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
-    if not result or _expected_key not in result:
-        result = _llm_detect(prompt, model=CURIOSITY_MODEL)  # one retry on bad/missing key
+    result = _llm_detect(prompt)  # use main model — CURIOSITY_MODEL too weak for title extraction
+    if not result or not result.get(_expected_key):
+        result = _llm_detect(prompt)  # one retry on bad/missing key
     if not result:
         return None
 
