@@ -3269,9 +3269,11 @@ def _handle_note_list(conversation_id: str) -> bool:
 def _handle_note_retrieve(text: str, conversation_id: str) -> bool:
     """Inject full note content for explicit retrieval. Returns True if found."""
     result = _parse_note_with_llm(text, "retrieve")
+    logger.debug("Note retrieve LLM result", extra={"result": result})
     if not result:
         return False
     title = str(result.get("title", "")).strip()
+    logger.debug("Note retrieve title", extra={"title": title, "conversation_id": conversation_id})
     if not title:
         return False
 
@@ -3338,18 +3340,27 @@ def _inject_note_context(conversation_id: str, context: str) -> None:
     """Store note context for pickup by _build_enriched_prompt in the same request."""
     _note_context_local.context = context
     _note_context_local.conversation_id = conversation_id
+    logger.debug("Note context injected", extra={
+        "conversation_id": conversation_id,
+        "context_len": len(context),
+        "thread_id": threading.current_thread().ident,
+    })
 
 
 def _pop_note_context(conversation_id: str) -> Optional[str]:
     """Retrieve and clear the pending note context for this request."""
-    if (
-        getattr(_note_context_local, "conversation_id", None) == conversation_id
-        and getattr(_note_context_local, "context", None) is not None
-    ):
-        ctx = _note_context_local.context
+    stored_conv = getattr(_note_context_local, "conversation_id", None)
+    stored_ctx = getattr(_note_context_local, "context", None)
+    logger.debug("Note context pop", extra={
+        "requested_conv": conversation_id,
+        "stored_conv": stored_conv,
+        "has_context": stored_ctx is not None,
+        "thread_id": threading.current_thread().ident,
+    })
+    if stored_conv == conversation_id and stored_ctx is not None:
         _note_context_local.context = None
         _note_context_local.conversation_id = None
-        return ctx
+        return stored_ctx
     return None
 
 
