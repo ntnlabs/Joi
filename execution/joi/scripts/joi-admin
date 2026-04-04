@@ -191,6 +191,24 @@ REMINDERS EXAMPLES:
     joi-admin reminders clear                   # Delete all reminders
     joi-admin reminders clear --conversation +123        # Delete for one conversation
 
+NOTES USAGE:
+    joi-admin notes <SUBCOMMAND> [OPTIONS]
+
+NOTES SUBCOMMANDS:
+    list [--conversation ID] [--archived]       List notes (active by default)
+    show <id>                                   Show full note content and metadata
+    delete <id>                                 Soft-delete (archive) a note
+    delete-all [--conversation ID]              Archive all notes (with confirmation)
+
+NOTES EXAMPLES:
+    joi-admin notes list                        # All active notes
+    joi-admin notes list --archived             # Include archived notes
+    joi-admin notes list --conversation +123    # Notes for one conversation
+    joi-admin notes show 5                      # Show full note #5
+    joi-admin notes delete 5                    # Archive note #5
+    joi-admin notes delete-all                  # Archive all notes
+    joi-admin notes delete-all --conversation +123
+
 WIND USAGE:
     joi-admin wind <SUBCOMMAND> [OPTIONS]
 
@@ -3308,6 +3326,261 @@ HELP
     esac
 }
 
+cmd_notes() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    local subcommand="${1:-}"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin notes <list|show|delete|delete-all> [OPTIONS]"
+    shift || true
+
+    case "$subcommand" in
+        list)
+            local conversation="" include_archived="0"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation) conversation="$2"; shift 2 ;;
+                    --archived)     include_archived="1"; shift ;;
+                    --help|-h)
+                        echo "Usage: joi-admin notes list [--conversation ID] [--archived]"
+                        exit 0
+                        ;;
+                    *) error "Unknown option for 'notes list': $1" ;;
+                esac
+            done
+
+            PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+            JOI_MEMORY_DB="$MEMORY_DB" \
+            JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+            JOI_NOTE_CONV="$conversation" \
+            JOI_NOTE_ARCHIVED="$include_archived" \
+            python3 <<'PY'
+import os, sys
+from datetime import datetime, timezone
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    conv = os.environ.get("JOI_NOTE_CONV", "")
+    include_archived = os.environ.get("JOI_NOTE_ARCHIVED", "0") == "1"
+
+    where = []
+    params = []
+    if not include_archived:
+        where.append("archived = 0")
+    if conv:
+        where.append("conversation_id = ?")
+        params.append(conv)
+    sql = "SELECT id, conversation_id, title, updated_at, remind_at, archived FROM notes"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY updated_at DESC"
+
+    rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        print("(no notes found)")
+        sys.exit(0)
+
+    header = f"{'ID':>4}  {'Conversation':<20}  {'Title':<30}  {'Updated':<19}  {'Remind':^10}  Arch"
+    print(header)
+    print("-" * len(header))
+    for row in rows:
+        note_id, conv_id, title, updated_at, remind_at, archived = row
+        updated_str = datetime.fromtimestamp(updated_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        remind_str = remind_at[:10] if remind_at else "-"
+        arch_str = "1" if archived else "0"
+        print(f"{note_id:>4}  {conv_id[:20]:<20}  {title[:30]:<30}  {updated_str:<19}  {remind_str:^10}  {arch_str}")
+except Exception as e:
+    print(f"Error: {e}", file=sys.stderr); sys.exit(1)
+PY
+            ;;
+
+        show)
+            local note_id="${1:-}"
+            [[ -z "$note_id" ]] && error "Usage: joi-admin notes show <id>"
+            [[ ! "$note_id" =~ ^[0-9]+$ ]] && error "Note ID must be a number"
+
+            PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+            JOI_MEMORY_DB="$MEMORY_DB" \
+            JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+            JOI_NOTE_ID="$note_id" \
+            python3 <<'PY'
+import os, sys
+from datetime import datetime, timezone
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    note_id = int(os.environ["JOI_NOTE_ID"])
+    row = conn.execute(
+        "SELECT id, conversation_id, title, content, remind_at, created_at, updated_at, archived FROM notes WHERE id = ?",
+        (note_id,)
+    ).fetchone()
+    if not row:
+        print(f"(note not found: id={note_id})")
+        sys.exit(0)
+    note_id, conv_id, title, content, remind_at, created_at, updated_at, archived = row
+    created_str = datetime.fromtimestamp(created_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    updated_str = datetime.fromtimestamp(updated_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    arch_str = "Yes" if archived else "No"
+    print(f"{'ID:':<14}{note_id}")
+    print(f"{'Conversation:':<14}{conv_id}")
+    print(f"{'Title:':<14}{title}")
+    print(f"{'Created:':<14}{created_str}")
+    print(f"{'Updated:':<14}{updated_str}")
+    print(f"{'Remind at:':<14}{remind_at if remind_at else '-'}")
+    print(f"{'Archived:':<14}{arch_str}")
+    print(f"Content:")
+    for line in content.splitlines():
+        print(f"  {line}")
+    if not content:
+        print("  (empty)")
+except Exception as e:
+    print(f"Error: {e}", file=sys.stderr); sys.exit(1)
+PY
+            ;;
+
+        delete)
+            local note_id="${1:-}"
+            [[ -z "$note_id" ]] && error "Usage: joi-admin notes delete <id>"
+            [[ ! "$note_id" =~ ^[0-9]+$ ]] && error "Note ID must be a number"
+
+            local note_title
+            note_title=$(PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+                JOI_MEMORY_DB="$MEMORY_DB" \
+                JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+                JOI_NOTE_ID="$note_id" \
+                python3 <<'PY'
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    row = conn.execute("SELECT title FROM notes WHERE id = ?", (int(os.environ["JOI_NOTE_ID"]),)).fetchone()
+    print(row[0] if row else "")
+except Exception as e:
+    print(f"error: {e}", file=sys.stderr); sys.exit(1)
+PY
+            )
+            [[ -z "$note_title" ]] && error "Note #$note_id not found"
+
+            echo -n "Archive note #$note_id: \"$note_title\"? [y/N] "
+            read -r REPLY
+            if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+                JOI_MEMORY_DB="$MEMORY_DB" \
+                JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+                JOI_NOTE_ID="$note_id" \
+                python3 <<'PY'
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    store.archive_note(int(os.environ["JOI_NOTE_ID"]))
+except Exception as e:
+    print(f"error: {e}", file=sys.stderr); sys.exit(1)
+PY
+                info "Note #$note_id archived."
+            else
+                info "Aborted."
+            fi
+            ;;
+
+        delete-all)
+            local conversation=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation) conversation="$2"; shift 2 ;;
+                    --help|-h)
+                        echo "Usage: joi-admin notes delete-all [--conversation ID]"
+                        exit 0
+                        ;;
+                    *) error "Unknown option for 'notes delete-all': $1" ;;
+                esac
+            done
+
+            local count
+            count=$(PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+                JOI_MEMORY_DB="$MEMORY_DB" \
+                JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+                JOI_NOTE_CONV="$conversation" \
+                python3 <<'PY'
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    conv = os.environ.get("JOI_NOTE_CONV", "")
+    if conv:
+        row = conn.execute("SELECT COUNT(*) FROM notes WHERE archived=0 AND conversation_id=?", (conv,)).fetchone()
+    else:
+        row = conn.execute("SELECT COUNT(*) FROM notes WHERE archived=0").fetchone()
+    print(row[0])
+except Exception as e:
+    print(f"error: {e}", file=sys.stderr); sys.exit(1)
+PY
+            )
+
+            local scope_msg="all conversations"
+            [[ -n "$conversation" ]] && scope_msg="conversation $conversation"
+            echo -n "Archive $count active notes ($scope_msg)? [y/N] "
+            read -r REPLY
+            if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+                JOI_MEMORY_DB="$MEMORY_DB" \
+                JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+                JOI_NOTE_CONV="$conversation" \
+                python3 <<'PY'
+import os, sys, time
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    conv = os.environ.get("JOI_NOTE_CONV", "")
+    now_ms = int(time.time() * 1000)
+    if conv:
+        conn.execute("UPDATE notes SET archived=1, updated_at=? WHERE archived=0 AND conversation_id=?", (now_ms, conv))
+    else:
+        conn.execute("UPDATE notes SET archived=1, updated_at=? WHERE archived=0", (now_ms,))
+    conn.commit()
+except Exception as e:
+    print(f"error: {e}", file=sys.stderr); sys.exit(1)
+PY
+                info "Archived $count notes."
+            else
+                info "Aborted."
+            fi
+            ;;
+
+        --help|-h)
+            echo "Usage: joi-admin notes <list|show|delete|delete-all> [OPTIONS]"
+            exit 0
+            ;;
+        *)
+            error "Unknown notes subcommand: $subcommand"
+            ;;
+    esac
+}
+
 # Nuke command - drop all tables
 cmd_nuke() {
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -3497,6 +3770,10 @@ main() {
         reminders)
             check_root
             cmd_reminders "$@"
+            ;;
+        notes)
+            check_root
+            cmd_notes "$@"
             ;;
         rag)
             check_root
