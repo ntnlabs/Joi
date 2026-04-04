@@ -3156,7 +3156,7 @@ def _handle_note_command(text: str, conversation_id: str) -> bool:
         intent = "delete"
     elif any(w in text_lower for w in ("list", "what notes", "show my notes", "my notes", "all notes")):
         intent = "list"
-    elif any(w in text_lower for w in ("show", "read", "open", "what did i write", "see note")):
+    elif any(w in text_lower for w in ("show", "read", "open", "what did i write", "see note", "see", "view", "tell me about", "what's in", "what is in")):
         intent = "retrieve"
     elif any(w in text_lower for w in ("take a note", "create a note", "note this", "note down", "write a note", "jot")):
         intent = "create"
