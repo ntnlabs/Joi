@@ -3141,9 +3141,7 @@ def _handle_note_command(text: str, conversation_id: str) -> bool:
       6. retrieve      ("show me note X", "what did I write about X")
       7. create        ("take a note", "note this")
     """
-    logger.debug("Note command: entered", extra={"text_preview": text[:60]})
     if not _NOTE_TRIGGER.search(text):
-        logger.debug("Note command: trigger miss", extra={"text_preview": text[:60]})
         return False
 
     # Classify intent
@@ -3167,8 +3165,6 @@ def _handle_note_command(text: str, conversation_id: str) -> bool:
         # Default: try to retrieve. _parse_note_with_llm returns SKIP if it can't
         # find a specific note title, so false positives just waste one small LLM call.
         intent = "retrieve"
-
-    logger.debug("Note command: intent classified", extra={"intent": intent})
 
     if intent == "list":
         return _handle_note_list(conversation_id)
