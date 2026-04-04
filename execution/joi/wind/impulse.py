@@ -230,12 +230,21 @@ class ImpulseEngine:
         return elapsed >= self.config.min_cooldown_minutes * 60
 
     def _check_daily_cap(self, state: Optional[WindState], now: datetime) -> bool:
-        """Check if rolling 24h fire count is below cap."""
+        """Check if rolling 24h fire count is below cap, boosted by conversation pace."""
         if not state:
             return True
         cutoff = now - timedelta(hours=24)
         recent = [t for t in state.proactive_fire_times if t > cutoff]
-        return len(recent) < self.config.daily_cap
+
+        effective_cap = self.config.daily_cap
+        ema = state.convo_gap_ema_seconds
+        if ema is not None:
+            if ema <= self.config.daily_cap_boost_active_minutes * 60:
+                effective_cap += 2
+            elif ema <= self.config.daily_cap_boost_moderate_minutes * 60:
+                effective_cap += 1
+
+        return len(recent) < effective_cap
 
     def _check_silence(self, state: Optional[WindState], now: datetime) -> bool:
         """Check if sufficient silence since last user interaction.
