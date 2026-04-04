@@ -672,53 +672,6 @@ class WindOrchestrator:
             logger.debug("Topic outcome summary failed", extra={
                 "topic_id": topic.id, "error": str(exc),
             })
-            return  # Don't attempt fact extraction if summary failed
-
-        # --- Call 2: structured fact extraction ---
-        fact_prompt = (
-            f"A conversation topic was just resolved.\n\n"
-            f"Topic: {topic.title}\n"
-            f"Outcome: {summary_text}\n"
-            f"User's response: {user_message}\n\n"
-            "Extract any concrete, reusable facts about the user that emerged. "
-            "Categories: personal, preference, technical, schedule, health, other.\n"
-            'Output JSON array: [{"category": "technical", "key": "proxmox_luks_status", "value": "implemented and working"}]\n'
-            "If no facts apply, output exactly: []"
-        )
-        try:
-            fact_resp = self._llm_client.generate(fact_prompt, model=self._curiosity_model)
-            if not fact_resp or fact_resp.error or not fact_resp.text:
-                return
-            raw = fact_resp.text.strip()
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-            facts = json.loads(raw)
-            count = 0
-            for f in facts:
-                if not isinstance(f, dict):
-                    continue
-                cat = str(f.get("category", "other"))[:50]
-                fkey = str(f.get("key", ""))[:100]
-                fval = str(f.get("value", ""))[:500]
-                if fkey and fval:
-                    self.memory.store_fact(
-                        category=cat,
-                        key=fkey,
-                        value=fval,
-                        confidence=0.75,
-                        source="wind",
-                        conversation_id=topic.conversation_id,
-                    )
-                    count += 1
-            logger.info("Extracted topic outcome facts", extra={
-                "topic_id": topic.id, "count": count,
-            })
-        except Exception as exc:
-            logger.debug("Topic outcome fact extraction failed", extra={
-                "topic_id": topic.id, "error": str(exc),
-            })
 
     def _apply_lifecycle_rules(
         self,
