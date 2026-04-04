@@ -3156,13 +3156,14 @@ def _handle_note_command(text: str, conversation_id: str) -> bool:
         intent = "delete"
     elif any(w in text_lower for w in ("list", "what notes", "show my notes", "my notes", "all notes")):
         intent = "list"
-    elif any(w in text_lower for w in ("show", "read", "open", "what did i write", "see note", "see", "view", "tell me about", "what's in", "what is in")):
+    elif any(w in text_lower for w in ("show", "read", "open", "what did i write", "see note")):
         intent = "retrieve"
     elif any(w in text_lower for w in ("take a note", "create a note", "note this", "note down", "write a note", "jot")):
         intent = "create"
     else:
-        logger.debug("Note command: no intent matched", extra={"text_preview": text[:60]})
-        return False
+        # Default: try to retrieve. _parse_note_with_llm returns SKIP if it can't
+        # find a specific note title, so false positives just waste one small LLM call.
+        intent = "retrieve"
 
     logger.debug("Note command: intent classified", extra={"intent": intent})
 
