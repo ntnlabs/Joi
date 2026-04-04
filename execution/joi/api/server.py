@@ -3075,6 +3075,7 @@ def _parse_note_with_llm(text: str, intent: str) -> Optional[dict]:
             f"Extract the note title the user is referring to for a {intent} operation.\n"
             'Respond with JSON only:\n'
             '{"title": "note name"}\n'
+            "- title: the note name only — do NOT include the word 'note' or 'notes' in the title\n"
             "- For a list request with no specific note, use title = \"\"\n"
             "If this is not a note request, respond with exactly: SKIP"
         )
@@ -3116,6 +3117,10 @@ def _parse_note_with_llm(text: str, intent: str) -> Optional[dict]:
         except (KeyError, ValueError, TypeError) as e:
             logger.warning("Note reminder LLM parse error", extra={"error": str(e)})
             return None
+
+    # Strip trailing "note"/"notes" from title field — LLMs often include it
+    if result and "title" in result and isinstance(result["title"], str):
+        result["title"] = re.sub(r"\s+notes?\s*$", "", result["title"], flags=re.I).strip()
 
     return result
 
