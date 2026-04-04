@@ -3262,7 +3262,7 @@ def _handle_note_list(conversation_id: str) -> bool:
         created = datetime.fromtimestamp(n.created_at / 1000, tz=ZoneInfo(TIME_AWARENESS_TIMEZONE)).strftime("%b %d, %Y")
         remind_str = f" [reminder: {n.remind_at[:10]}]" if n.remind_at else ""
         lines.append(f'- "{n.title}" (created {created}){remind_str}')
-    _inject_note_context(conversation_id, "User's notes:\n" + "\n".join(lines))
+    _inject_note_context(conversation_id, "The user asked for their notes list. Present this list to them:\n" + "\n".join(lines))
     return True
 
 
@@ -3284,6 +3284,7 @@ def _handle_note_retrieve(text: str, conversation_id: str) -> bool:
     updated = datetime.fromtimestamp(note.updated_at / 1000, tz=ZoneInfo(TIME_AWARENESS_TIMEZONE)).strftime("%b %d, %Y at %H:%M")
     remind_str = f"\nReminder set: {note.remind_at}" if note.remind_at else ""
     context = (
+        f'The user asked to see their note. Show them the full content below — do not summarize, do not paraphrase.\n'
         f'Note "{note.title}" (created {created}, updated {updated}){remind_str}:\n'
         f'"""\n{note.content}\n"""'
     )
