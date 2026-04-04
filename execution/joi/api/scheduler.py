@@ -5,7 +5,7 @@ import os
 import time
 import threading
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 
 logger = logging.getLogger("joi.api.scheduler")
@@ -583,12 +583,12 @@ class Scheduler:
                     if self._wind_orchestrator:
                         state = self._wind_orchestrator.state_manager.get_state(reminder.conversation_id)
                         if state and state.last_proactive_sent_at:
-                            elapsed_min = (datetime.now() - state.last_proactive_sent_at).total_seconds() / 60
+                            elapsed_min = (datetime.now(timezone.utc) - state.last_proactive_sent_at).total_seconds() / 60
                             if elapsed_min < 30:
                                 cooldown_min = self._wind_orchestrator.config.min_cooldown_minutes
                                 self._wind_orchestrator.state_manager.update_state(
                                     reminder.conversation_id,
-                                    last_proactive_sent_at=datetime.now() - timedelta(minutes=cooldown_min - 30),
+                                    last_proactive_sent_at=datetime.now(timezone.utc) - timedelta(minutes=cooldown_min - 30),
                                 )
 
                     logger.info("Reminder sent", extra={
@@ -715,7 +715,7 @@ class Scheduler:
         if not config.allowlist:
             return True
         threshold_s = config.daily_tasks_silence_minutes * 60
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         for conv_id in config.allowlist:
             state = self._wind_orchestrator.state_manager.get_state(conv_id)
             if state and state.last_user_interaction_at:
