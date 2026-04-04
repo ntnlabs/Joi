@@ -19,6 +19,8 @@ class WindConfig:
     quiet_hours_end: int = 7  # 07:00 local time
     min_cooldown_minutes: int = 60   # 1 hour between proactives
     daily_cap: int = 3  # Max proactive messages per day
+    daily_cap_boost_moderate_minutes: int = 60  # EMA below this → cap +1
+    daily_cap_boost_active_minutes: int = 15    # EMA below this → cap +2
     max_unanswered_streak: int = 2  # Stop after N unanswered proactives
     min_silence_minutes: int = 30   # 30 min since last user msg
 
@@ -101,6 +103,8 @@ class WindConfig:
             quiet_hours_end=data.get("quiet_hours_end", 7),
             min_cooldown_minutes=data.get("min_cooldown_minutes", 60),
             daily_cap=data.get("daily_cap", 3),
+            daily_cap_boost_moderate_minutes=data.get("daily_cap_boost_moderate_minutes", 60),
+            daily_cap_boost_active_minutes=data.get("daily_cap_boost_active_minutes", 15),
             max_unanswered_streak=data.get("max_unanswered_streak", 2),
             min_silence_minutes=data.get("min_silence_minutes", 30),
             active_convo_gap_minutes=data.get("active_convo_gap_minutes", 2),
@@ -147,6 +151,8 @@ class WindConfig:
             "quiet_hours_end": self.quiet_hours_end,
             "min_cooldown_minutes": self.min_cooldown_minutes,
             "daily_cap": self.daily_cap,
+            "daily_cap_boost_moderate_minutes": self.daily_cap_boost_moderate_minutes,
+            "daily_cap_boost_active_minutes": self.daily_cap_boost_active_minutes,
             "max_unanswered_streak": self.max_unanswered_streak,
             "min_silence_minutes": self.min_silence_minutes,
             "active_convo_gap_minutes": self.active_convo_gap_minutes,
