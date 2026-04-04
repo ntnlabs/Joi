@@ -3138,7 +3138,9 @@ def _handle_note_command(text: str, conversation_id: str) -> bool:
       6. retrieve      ("show me note X", "what did I write about X")
       7. create        ("take a note", "note this")
     """
+    logger.debug("Note command: entered", extra={"text_preview": text[:60]})
     if not _NOTE_TRIGGER.search(text):
+        logger.debug("Note command: trigger miss", extra={"text_preview": text[:60]})
         return False
 
     # Classify intent
@@ -3159,7 +3161,10 @@ def _handle_note_command(text: str, conversation_id: str) -> bool:
     elif any(w in text_lower for w in ("take a note", "create a note", "note this", "note down", "write a note", "jot")):
         intent = "create"
     else:
+        logger.debug("Note command: no intent matched", extra={"text_preview": text[:60]})
         return False
+
+    logger.debug("Note command: intent classified", extra={"intent": intent})
 
     if intent == "list":
         return _handle_note_list(conversation_id)
