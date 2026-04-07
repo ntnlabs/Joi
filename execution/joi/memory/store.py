@@ -902,22 +902,26 @@ class MemoryStore:
                 conn.commit()
 
         # Migration v12: rolling 24h fire timestamps for sliding window cap
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
-        if "proactive_fire_times_json" not in cols:
-            logger.info("Migration v12: Adding 'proactive_fire_times_json' column to wind_state table")
-            conn.execute(
-                "ALTER TABLE wind_state ADD COLUMN proactive_fire_times_json TEXT DEFAULT NULL"
-            )
-            conn.commit()
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='wind_state'")
+        if cursor.fetchone():
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+            if "proactive_fire_times_json" not in cols:
+                logger.info("Migration v12: Adding 'proactive_fire_times_json' column to wind_state table")
+                conn.execute(
+                    "ALTER TABLE wind_state ADD COLUMN proactive_fire_times_json TEXT DEFAULT NULL"
+                )
+                conn.commit()
 
         # Migration v13: user mood tracking columns
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
-        if "user_mood_state" not in cols:
-            logger.info("Migration v13: Adding user mood columns to wind_state table")
-            conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_state TEXT DEFAULT 'neutral'")
-            conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_intensity REAL DEFAULT 0.5")
-            conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_updated_at TEXT DEFAULT NULL")
-            conn.commit()
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='wind_state'")
+        if cursor.fetchone():
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+            if "user_mood_state" not in cols:
+                logger.info("Migration v13: Adding user mood columns to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_state TEXT DEFAULT 'neutral'")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_intensity REAL DEFAULT 0.5")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN user_mood_updated_at TEXT DEFAULT NULL")
+                conn.commit()
 
         # Migration v13 (cont.): notes table is created via SCHEMA_SQL (CREATE TABLE IF NOT EXISTS)
         # No ALTER TABLE needed — new table always created on startup if missing.
