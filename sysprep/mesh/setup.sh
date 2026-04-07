@@ -149,7 +149,8 @@ echo "[5/5] Configuring NTP client (chrony)..."
 ufw allow out 80/tcp
 
 apt-get update
-apt-get install -y chrony python3-json-logger
+apt-get install -y chrony
+pip3 install python-json-logger --break-system-packages
 
 # Close HTTP egress again; later updates are controlled via update.sh.
 printf 'y\n' | ufw delete allow out 80/tcp >/dev/null 2>&1 || true
