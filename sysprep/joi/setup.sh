@@ -192,6 +192,15 @@ systemctl enable chrony
 systemctl restart chrony
 
 ###########################################
+# SYSTEMD SERVICE
+###########################################
+echo ""
+echo "[+] Installing joi-api systemd service..."
+ln -sf /opt/Joi/execution/joi/systemd/joi-api.service /etc/systemd/system/joi-api.service
+systemctl daemon-reload
+systemctl enable joi-api
+
+###########################################
 # DONE
 ###########################################
 echo ""
