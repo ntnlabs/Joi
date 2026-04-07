@@ -51,6 +51,8 @@ COMMANDS:
     purge       Purge memory data and/or regenerate keys
     facts       Inspect and delete stored user facts
     reminders   Inspect and clear reminders
+    notes       Inspect and manage user notes
+    tasks       Inspect and manage task lists
     rag         Inspect and manage RAG knowledge sources/scopes
     summaries   Read-only context summary inspection
     fts         Check and rebuild FTS (full-text search) indexes
@@ -67,7 +69,8 @@ DATA FLAGS (what to delete):
     --contexts          Delete messages and context summaries
     --facts             Delete learned user facts
     --knowledge         Delete RAG knowledge chunks
-    --all-data          All of the above (contexts + facts + knowledge)
+    --tasks             Delete task items
+    --all-data          All of the above (contexts + facts + knowledge + tasks)
 
 RESET FLAGS:
     --reset-counters    Reset AUTOINCREMENT counters (sqlite_sequence) for
@@ -208,6 +211,25 @@ NOTES EXAMPLES:
     joi-admin notes delete 5                    # Archive note #5
     joi-admin notes delete-all                  # Archive all notes
     joi-admin notes delete-all --conversation +123
+
+TASKS USAGE:
+    joi-admin tasks <SUBCOMMAND> [OPTIONS]
+
+TASKS SUBCOMMANDS:
+    list [--conversation ID] [--list NAME] [--done] [--archived]  List task items
+    show <id>                                   Show task metadata
+    delete <id>                                 Soft-delete (archive) a task item
+    delete-all [--conversation ID] [--list NAME]  Archive items (with confirmation)
+
+TASKS EXAMPLES:
+    joi-admin tasks list                        # All active undone tasks
+    joi-admin tasks list --done                 # Include done items
+    joi-admin tasks list --list grocery         # Items in grocery list only
+    joi-admin tasks list --conversation +123    # Tasks for one conversation
+    joi-admin tasks show 7                      # Show task #7 metadata
+    joi-admin tasks delete 7                    # Archive task #7
+    joi-admin tasks delete-all --list grocery   # Archive entire grocery list
+    joi-admin tasks delete-all --conversation +123
 
 WIND USAGE:
     joi-admin wind <SUBCOMMAND> [OPTIONS]
@@ -2430,11 +2452,42 @@ HELP
     esac
 }
 
+# Purge task items
+purge_tasks() {
+    local conversation="$1"
+
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        warn "Memory database not found: $MEMORY_DB"
+        return
+    fi
+
+    PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+    JOI_MEMORY_DB="$MEMORY_DB" \
+    JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+    JOI_TASK_CONV="$conversation" \
+    python3 <<'PY'
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conv = os.environ.get("JOI_TASK_CONV", "")
+    count = store.hard_delete_tasks(conv if conv else None)
+    scope = f"conversation {conv}" if conv else "ALL conversations"
+    print(f"Deleted {count} task items ({scope})")
+except Exception as e:
+    print(f"error: {e}", file=sys.stderr); sys.exit(1)
+PY
+}
+
 # Main purge command
 cmd_purge() {
     local do_contexts=false
     local do_facts=false
     local do_knowledge=false
+    local do_tasks=false
     local do_reset_counters=false
     local do_vacuum=false
     local do_hmac=false
@@ -2457,10 +2510,15 @@ cmd_purge() {
                 do_knowledge=true
                 shift
                 ;;
+            --tasks)
+                do_tasks=true
+                shift
+                ;;
             --all-data)
                 do_contexts=true
                 do_facts=true
                 do_knowledge=true
+                do_tasks=true
                 shift
                 ;;
             --reset-counters)
@@ -2511,7 +2569,7 @@ cmd_purge() {
     done
 
     # Check if anything to do
-    if ! $do_contexts && ! $do_facts && ! $do_knowledge && ! $do_hmac && ! $do_nebula_keys && ! $do_nebula_ca && ! $do_reset_counters && ! $do_vacuum; then
+    if ! $do_contexts && ! $do_facts && ! $do_knowledge && ! $do_tasks && ! $do_hmac && ! $do_nebula_keys && ! $do_nebula_ca && ! $do_reset_counters && ! $do_vacuum; then
         echo "No purge flags specified. Nothing to do."
         echo ""
         echo "Run 'joi-admin purge --help' for usage."
@@ -2549,6 +2607,7 @@ cmd_purge() {
     $do_contexts && echo "  - Contexts (messages, summaries)"
     $do_facts && echo "  - User facts"
     $do_knowledge && echo "  - Knowledge chunks"
+    $do_tasks && echo "  - Task items"
     $do_reset_counters && echo "  - Reset AUTOINCREMENT counters"
     $do_vacuum && echo "  - VACUUM memory database"
     $do_hmac && echo "  - HMAC key (regenerate)"
@@ -2593,6 +2652,7 @@ cmd_purge() {
     $do_contexts && purge_contexts "$conversation"
     $do_facts && purge_facts "$conversation"
     $do_knowledge && purge_knowledge
+    $do_tasks && purge_tasks "$conversation"
     $do_reset_counters && reset_autoincrement_counters
     $do_vacuum && vacuum_memory_db
 
@@ -3581,6 +3641,283 @@ PY
     esac
 }
 
+cmd_tasks() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    local subcommand="${1:-}"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin tasks <list|show|delete|delete-all> [OPTIONS]"
+    shift || true
+
+    case "$subcommand" in
+        list)
+            local conversation="" list_name="" include_done="0" include_archived="0"
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation) conversation="$2"; shift 2 ;;
+                    --list)         list_name="$2"; shift 2 ;;
+                    --done)         include_done="1"; shift ;;
+                    --archived)     include_archived="1"; shift ;;
+                    --help|-h)
+                        echo "Usage: joi-admin tasks list [--conversation ID] [--list NAME] [--done] [--archived]"
+                        exit 0
+                        ;;
+                    *) error "Unknown option for 'tasks list': $1" ;;
+                esac
+            done
+
+            PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+            JOI_MEMORY_DB="$MEMORY_DB" \
+            JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+            JOI_TASK_CONV="$conversation" \
+            JOI_TASK_LIST="$list_name" \
+            JOI_TASK_DONE="$include_done" \
+            JOI_TASK_ARCHIVED="$include_archived" \
+            python3 <<'PY'
+import os, sys
+from datetime import datetime, timezone
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    conv = os.environ.get("JOI_TASK_CONV", "")
+    list_name = os.environ.get("JOI_TASK_LIST", "")
+    include_done = os.environ.get("JOI_TASK_DONE", "0") == "1"
+    include_archived = os.environ.get("JOI_TASK_ARCHIVED", "0") == "1"
+
+    where = []
+    params = []
+    if not include_archived:
+        where.append("archived = 0")
+    if not include_done:
+        where.append("done = 0")
+    if conv:
+        where.append("conversation_id = ?")
+        params.append(conv)
+    if list_name:
+        where.append("list_name = ?")
+        params.append(list_name.strip().lower())
+    sql = "SELECT id, conversation_id, list_name, item_text, done, created_at, archived FROM tasks"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY list_name ASC, created_at ASC"
+
+    rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        print("(no tasks found)")
+        sys.exit(0)
+
+    header = f"{'ID':>4}  {'Conversation':<20}  {'List':<15}  {'Done':^4}  {'Item':<40}  {'Created':<19}  Arch"
+    print(header)
+    print("-" * len(header))
+    for row in rows:
+        task_id, conv_id, lname, item, done, created_at, archived = row
+        created_str = datetime.fromtimestamp(created_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        done_str = "yes" if done else "no"
+        arch_str = "1" if archived else "0"
+        print(f"{task_id:>4}  {conv_id[:20]:<20}  {lname[:15]:<15}  {done_str:^4}  {item[:40]:<40}  {created_str:<19}  {arch_str}")
+except Exception as e:
+    print(f"Error: {e}", file=sys.stderr); sys.exit(1)
+PY
+            ;;
+
+        show)
+            local task_id="${1:-}"
+            [[ -z "$task_id" ]] && error "Usage: joi-admin tasks show <id>"
+            [[ ! "$task_id" =~ ^[0-9]+$ ]] && error "Task ID must be a number"
+
+            PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+            JOI_MEMORY_DB="$MEMORY_DB" \
+            JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+            JOI_TASK_ID="$task_id" \
+            python3 <<'PY'
+import os, sys
+from datetime import datetime, timezone
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    task_id = int(os.environ["JOI_TASK_ID"])
+    row = conn.execute(
+        "SELECT id, conversation_id, list_name, item_text, done, created_at, done_at, archived FROM tasks WHERE id = ?",
+        (task_id,)
+    ).fetchone()
+    if not row:
+        print(f"(task not found: id={task_id})")
+        sys.exit(0)
+    tid, conv_id, lname, item, done, created_at, done_at, archived = row
+    created_str = datetime.fromtimestamp(created_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    done_str = datetime.fromtimestamp(done_at / 1000, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC") if done_at else "-"
+    arch_str = "Yes" if archived else "No"
+    print(f"{'ID:':<14}{tid}")
+    print(f"{'Conversation:':<14}{conv_id}")
+    print(f"{'List:':<14}{lname}")
+    print(f"{'Item:':<14}{item}")
+    print(f"{'Done:':<14}{'Yes' if done else 'No'}")
+    print(f"{'Done at:':<14}{done_str}")
+    print(f"{'Created:':<14}{created_str}")
+    print(f"{'Archived:':<14}{arch_str}")
+except Exception as e:
+    print(f"Error: {e}", file=sys.stderr); sys.exit(1)
+PY
+            ;;
+
+        delete)
+            local task_id="${1:-}"
+            [[ -z "$task_id" ]] && error "Usage: joi-admin tasks delete <id>"
+            [[ ! "$task_id" =~ ^[0-9]+$ ]] && error "Task ID must be a number"
+
+            local task_item
+            task_item=$(PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+                JOI_MEMORY_DB="$MEMORY_DB" \
+                JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+                JOI_TASK_ID="$task_id" \
+                python3 <<'PY'
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    row = conn.execute("SELECT item_text FROM tasks WHERE id = ?", (int(os.environ["JOI_TASK_ID"]),)).fetchone()
+    print(row[0] if row else "")
+except Exception as e:
+    print(f"error: {e}", file=sys.stderr); sys.exit(1)
+PY
+            )
+            [[ -z "$task_item" ]] && error "Task #$task_id not found"
+
+            echo -n "Archive task #$task_id: \"$task_item\"? [y/N] "
+            read -r REPLY
+            if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+                JOI_MEMORY_DB="$MEMORY_DB" \
+                JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+                JOI_TASK_ID="$task_id" \
+                python3 <<'PY'
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    store.archive_task(int(os.environ["JOI_TASK_ID"]))
+except Exception as e:
+    print(f"error: {e}", file=sys.stderr); sys.exit(1)
+PY
+                info "Task #$task_id archived."
+            else
+                info "Aborted."
+            fi
+            ;;
+
+        delete-all)
+            local conversation="" list_name=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --conversation) conversation="$2"; shift 2 ;;
+                    --list)         list_name="$2"; shift 2 ;;
+                    --help|-h)
+                        echo "Usage: joi-admin tasks delete-all [--conversation ID] [--list NAME]"
+                        exit 0
+                        ;;
+                    *) error "Unknown option for 'tasks delete-all': $1" ;;
+                esac
+            done
+
+            local count
+            count=$(PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+                JOI_MEMORY_DB="$MEMORY_DB" \
+                JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+                JOI_TASK_CONV="$conversation" \
+                JOI_TASK_LIST="$list_name" \
+                python3 <<'PY'
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    conv = os.environ.get("JOI_TASK_CONV", "")
+    lname = os.environ.get("JOI_TASK_LIST", "").strip().lower()
+    where = ["archived = 0"]
+    params = []
+    if conv:
+        where.append("conversation_id = ?")
+        params.append(conv)
+    if lname:
+        where.append("list_name = ?")
+        params.append(lname)
+    row = conn.execute(f"SELECT COUNT(*) FROM tasks WHERE {' AND '.join(where)}", params).fetchone()
+    print(row[0])
+except Exception as e:
+    print(f"error: {e}", file=sys.stderr); sys.exit(1)
+PY
+            )
+
+            local scope_msg="all conversations"
+            [[ -n "$conversation" ]] && scope_msg="conversation $conversation"
+            [[ -n "$list_name" ]] && scope_msg="$scope_msg, list \"$list_name\""
+            echo -n "Archive $count active task items ($scope_msg)? [y/N] "
+            read -r REPLY
+            if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+                PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+                JOI_MEMORY_DB="$MEMORY_DB" \
+                JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+                JOI_TASK_CONV="$conversation" \
+                JOI_TASK_LIST="$list_name" \
+                python3 <<'PY'
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}", file=sys.stderr); sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    conv = os.environ.get("JOI_TASK_CONV", "")
+    lname = os.environ.get("JOI_TASK_LIST", "").strip().lower()
+    where = ["archived = 0"]
+    params = []
+    if conv:
+        where.append("conversation_id = ?")
+        params.append(conv)
+    if lname:
+        where.append("list_name = ?")
+        params.append(lname)
+    conn.execute(f"UPDATE tasks SET archived = 1 WHERE {' AND '.join(where)}", params)
+    conn.commit()
+except Exception as e:
+    print(f"error: {e}", file=sys.stderr); sys.exit(1)
+PY
+                info "Archived $count task items."
+            else
+                info "Aborted."
+            fi
+            ;;
+
+        --help|-h)
+            echo "Usage: joi-admin tasks <list|show|delete|delete-all> [OPTIONS]"
+            exit 0
+            ;;
+        *)
+            error "Unknown tasks subcommand: $subcommand"
+            ;;
+    esac
+}
+
 # Nuke command - drop all tables
 cmd_nuke() {
     if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
@@ -3774,6 +4111,10 @@ main() {
         notes)
             check_root
             cmd_notes "$@"
+            ;;
+        tasks)
+            check_root
+            cmd_tasks "$@"
             ;;
         rag)
             check_root
