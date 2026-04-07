@@ -173,6 +173,15 @@ systemctl enable chrony
 systemctl restart chrony
 
 ###########################################
+# SYSTEMD SERVICE
+###########################################
+echo ""
+echo "[+] Installing mesh-signal-worker systemd service..."
+ln -sf /opt/Joi/execution/mesh/proxy/systemd/mesh-signal-worker.service /etc/systemd/system/mesh-signal-worker.service
+systemctl daemon-reload
+systemctl enable mesh-signal-worker
+
+###########################################
 # DONE
 ###########################################
 echo ""
