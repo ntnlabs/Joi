@@ -172,6 +172,7 @@ echo "[5/5] Configuring NTP client (chrony)..."
 
 apt-get update
 apt-get install -y chrony
+pip3 install python-json-logger --break-system-packages
 
 cat > /etc/chrony/chrony.conf << EOF
 # Use internal NTP server

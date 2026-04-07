@@ -14,21 +14,24 @@ import os
 import sys
 from datetime import datetime, timezone
 
-from pythonjsonlogger import jsonlogger
+def _make_json_formatter():
+    """Build CustomJsonFormatter lazily so pythonjsonlogger is only imported when needed."""
+    from pythonjsonlogger import jsonlogger
 
+    class CustomJsonFormatter(jsonlogger.JsonFormatter):
+        """Custom JSON formatter with standard fields."""
 
-class CustomJsonFormatter(jsonlogger.JsonFormatter):
-    """Custom JSON formatter with standard fields."""
+        def add_fields(self, log_record, record, message_dict):
+            super().add_fields(log_record, record, message_dict)
+            log_record['level'] = record.levelname
+            log_record['logger'] = record.name
+            log_record['timestamp'] = datetime.now(timezone.utc).isoformat()
 
-    def add_fields(self, log_record, record, message_dict):
-        super().add_fields(log_record, record, message_dict)
-        log_record['level'] = record.levelname
-        log_record['logger'] = record.name
-        log_record['timestamp'] = datetime.now(timezone.utc).isoformat()
+            # Add source location for errors
+            if record.levelno >= logging.WARNING:
+                log_record['source'] = f"{record.filename}:{record.lineno}"
 
-        # Add source location for errors
-        if record.levelno >= logging.WARNING:
-            log_record['source'] = f"{record.filename}:{record.lineno}"
+    return CustomJsonFormatter
 
 
 class CustomTextFormatter(logging.Formatter):
@@ -75,7 +78,7 @@ def configure_logging(level: str = None, use_json: bool = None):
     handler = logging.StreamHandler(sys.stdout)
 
     if use_json:
-        formatter = CustomJsonFormatter(
+        formatter = _make_json_formatter()(
             '%(timestamp)s %(level)s %(logger)s %(message)s'
         )
     else:
