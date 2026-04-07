@@ -20,6 +20,11 @@ disable_rules() {
     printf 'y\n' | ufw delete allow out 53/udp >/dev/null 2>&1 || true
 }
 
+pip_install() {
+    echo "Installing Python dependencies..."
+    pip3 install -r /opt/Joi/execution/joi/requirements.txt --break-system-packages
+}
+
 case "$1" in
     --enable)
         enable_rules
@@ -30,10 +35,17 @@ case "$1" in
         disable_rules
         echo "Done."
         ;;
+    --pip)
+        enable_rules
+        pip_install
+        disable_rules
+        echo "Done. Remember to --disable on gateway/hopper too."
+        ;;
     --run)
-        echo "Enabling updates, running apt, then disabling..."
+        echo "Enabling updates, running apt + pip, then disabling..."
         enable_rules
         apt update && apt upgrade -y
+        pip_install
         disable_rules
         echo "Done. Remember to --disable on gateway/hopper too."
         ;;
@@ -42,11 +54,12 @@ case "$1" in
         ufw status verbose
         ;;
     *)
-        echo "Usage: $0 --enable | --disable | --run | --status"
+        echo "Usage: $0 --enable | --disable | --pip | --run | --status"
         echo ""
         echo "  --enable   Allow HTTP/HTTPS/DNS (UDP only) outbound for apt"
         echo "  --disable  Remove outbound rules"
-        echo "  --run      Enable, update, upgrade, disable (all-in-one)"
+        echo "  --pip      Install/update Python dependencies (opens/closes egress)"
+        echo "  --run      Enable, update apt + pip, disable (all-in-one)"
         echo "  --status   Show UFW status"
         echo ""
         echo "NOTE: Gateway/hopper must also have updates enabled!"
