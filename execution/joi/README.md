@@ -74,8 +74,8 @@ See [ENV-REFERENCE.md](../../ENV-REFERENCE.md) for complete documentation.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_COMPACT_BATCH_SIZE` | 20 | Messages to compact when context exceeded (10 <= x < context/2) |
-| `JOI_CONSOLIDATION_ARCHIVE` | 0 | Set to 1 to archive instead of delete |
 | `JOI_CONSOLIDATION_MODEL` | (none) | Optional model for fact extraction (low temp recommended) |
+| `JOI_MESSAGE_RETENTION_DAYS` | 0 | Days before fully-processed messages are hard-deleted (0 = keep forever, max 90) |
 
 ### RAG
 | Variable | Default | Description |

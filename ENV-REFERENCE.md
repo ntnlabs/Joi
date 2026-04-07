@@ -70,8 +70,8 @@ Prompts directory structure:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_COMPACT_BATCH_SIZE` | `20` | Messages to compact when context overflows |
-| `JOI_CONSOLIDATION_ARCHIVE` | `0` | Set to `1` to archive instead of delete on compaction |
 | `JOI_CONSOLIDATION_MODEL` | (unset) | Optional separate model for consolidation (e.g. `joi-consolidator`) |
+| `JOI_MESSAGE_RETENTION_DAYS` | `0` | Days before fully-processed messages are hard-deleted (0 = keep forever, max 90) |
 
 ### Wind Engagement
 
