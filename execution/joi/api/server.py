@@ -1619,9 +1619,9 @@ def receive_message(msg: InboundMessage):
     if not user_text:
         return InboundResponse(status="ok", message_id=msg.message_id)
 
-    # Compact command: owner + DM only. Intercepted before store_message so neither
+    # Compact command: any DM. Intercepted before store_message so neither
     # the command nor the confirmation enter conversation history or LLM context.
-    if is_owner and msg.conversation.type == "direct":
+    if msg.conversation.type == "direct":
         if _COMPACT_TRIGGER.match(user_text):
             _pending_compact[msg.conversation.id] = True
             _send_to_mesh(
