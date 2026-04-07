@@ -143,7 +143,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 # SQL for creating tables
 SCHEMA_SQL = f"""
@@ -475,6 +475,20 @@ CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
     INSERT INTO notes_fts(notes_fts, rowid, title, content) VALUES('delete', old.id, old.title, old.content);
     INSERT INTO notes_fts(rowid, title, content) VALUES (new.id, new.title, new.content);
 END;
+
+-- Tasks table (named checkable lists, per-conversation)
+CREATE TABLE IF NOT EXISTS tasks (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT    NOT NULL,
+    list_name       TEXT    NOT NULL,
+    item_text       TEXT    NOT NULL,
+    done            INTEGER NOT NULL DEFAULT 0,
+    created_at      INTEGER NOT NULL,
+    done_at         INTEGER,
+    archived        INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_conversation_list ON tasks (conversation_id, list_name, archived);
 """
 
 
@@ -926,6 +940,9 @@ class MemoryStore:
         # Migration v13 (cont.): notes table is created via SCHEMA_SQL (CREATE TABLE IF NOT EXISTS)
         # No ALTER TABLE needed — new table always created on startup if missing.
 
+        # Migration v14: tasks table is created via SCHEMA_SQL (CREATE TABLE IF NOT EXISTS)
+        # No ALTER TABLE needed — new table always created on startup if missing.
+
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
 
@@ -1212,6 +1229,119 @@ class MemoryStore:
     def clear_note_remind_at(self, note_id: int) -> None:
         """Clear remind_at after it fires (one-time only)."""
         self.set_note_remind_at(note_id, None)
+
+    # --- Task Operations ---
+
+    @staticmethod
+    def _normalize_list_name(name: str) -> str:
+        return name.strip().lower()
+
+    def add_task(self, conversation_id: str, list_name: str, item_text: str) -> int:
+        """Insert a new task item. Returns the new task id."""
+        now_ms = int(time.time() * 1000)
+        list_name = self._normalize_list_name(list_name)
+        conn = self._connect()
+        cursor = conn.execute(
+            """
+            INSERT INTO tasks (conversation_id, list_name, item_text, done, created_at, archived)
+            VALUES (?, ?, ?, 0, ?, 0)
+            """,
+            (conversation_id, list_name, item_text.strip(), now_ms),
+        )
+        conn.commit()
+        task_id = cursor.lastrowid or 0
+        logger.debug("Task added", extra={
+            "task_id": task_id,
+            "conversation_id": conversation_id,
+            "list_name": list_name,
+            "action": "task_add",
+        })
+        return task_id
+
+    def get_tasks(self, conversation_id: str, list_name: str, include_archived: bool = False) -> list:
+        """Return tasks for a list, ordered by created_at."""
+        list_name = self._normalize_list_name(list_name)
+        conn = self._connect()
+        where = "conversation_id = ? AND list_name = ?"
+        params: list = [conversation_id, list_name]
+        if not include_archived:
+            where += " AND archived = 0"
+        cursor = conn.execute(
+            f"SELECT id, conversation_id, list_name, item_text, done, created_at, done_at, archived"
+            f" FROM tasks WHERE {where} ORDER BY created_at ASC",
+            params,
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+    def get_task_lists(self, conversation_id: str) -> list:
+        """Return distinct active list names for a conversation, alphabetically."""
+        conn = self._connect()
+        cursor = conn.execute(
+            "SELECT DISTINCT list_name FROM tasks"
+            " WHERE conversation_id = ? AND archived = 0"
+            " ORDER BY list_name ASC",
+            (conversation_id,),
+        )
+        return [row[0] for row in cursor.fetchall()]
+
+    def mark_task_done(self, task_id: int) -> None:
+        """Mark a task item as done."""
+        now_ms = int(time.time() * 1000)
+        conn = self._connect()
+        conn.execute(
+            "UPDATE tasks SET done = 1, done_at = ? WHERE id = ?",
+            (now_ms, task_id),
+        )
+        conn.commit()
+        logger.debug("Task marked done", extra={"task_id": task_id, "action": "task_done"})
+
+    def reopen_task(self, task_id: int) -> None:
+        """Reopen a done task item."""
+        conn = self._connect()
+        conn.execute(
+            "UPDATE tasks SET done = 0, done_at = NULL WHERE id = ?",
+            (task_id,),
+        )
+        conn.commit()
+        logger.debug("Task reopened", extra={"task_id": task_id, "action": "task_reopen"})
+
+    def archive_task(self, task_id: int) -> None:
+        """Soft-delete a single task item."""
+        conn = self._connect()
+        conn.execute("UPDATE tasks SET archived = 1 WHERE id = ?", (task_id,))
+        conn.commit()
+        logger.debug("Task archived", extra={"task_id": task_id, "action": "task_archive"})
+
+    def archive_task_list(self, conversation_id: str, list_name: str) -> int:
+        """Soft-delete all items in a list. Returns count archived."""
+        list_name = self._normalize_list_name(list_name)
+        conn = self._connect()
+        cursor = conn.execute(
+            "UPDATE tasks SET archived = 1"
+            " WHERE conversation_id = ? AND list_name = ? AND archived = 0",
+            (conversation_id, list_name),
+        )
+        conn.commit()
+        count = cursor.rowcount
+        logger.info("Task list archived", extra={
+            "conversation_id": conversation_id,
+            "list_name": list_name,
+            "count": count,
+            "action": "task_list_archive",
+        })
+        return count
+
+    def hard_delete_tasks(self, conversation_id: Optional[str] = None) -> int:
+        """Hard-delete task rows. If conversation_id given, scoped to that conversation."""
+        conn = self._connect()
+        if conversation_id:
+            cursor = conn.execute(
+                "DELETE FROM tasks WHERE conversation_id = ?", (conversation_id,)
+            )
+        else:
+            cursor = conn.execute("DELETE FROM tasks")
+        conn.commit()
+        return cursor.rowcount
 
     def check_fts_integrity(self) -> dict:
         """
