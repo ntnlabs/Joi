@@ -150,7 +150,7 @@ ufw allow out 80/tcp
 
 apt-get update
 apt-get install -y chrony
-pip3 install -r /opt/Joi/execution/mesh/proxy/requirements.txt --break-system-packages
+pip3 install -r /opt/Joi/sysprep/mesh/requirements.txt --break-system-packages
 
 # Close HTTP egress again; later updates are controlled via update.sh.
 printf 'y\n' | ufw delete allow out 80/tcp >/dev/null 2>&1 || true
