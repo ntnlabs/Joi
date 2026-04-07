@@ -150,7 +150,7 @@ ufw allow out 80/tcp
 
 apt-get update
 apt-get install -y chrony
-pip3 install python-json-logger waitress --break-system-packages
+pip3 install python-json-logger waitress flask --break-system-packages
 
 # Close HTTP egress again; later updates are controlled via update.sh.
 printf 'y\n' | ufw delete allow out 80/tcp >/dev/null 2>&1 || true
