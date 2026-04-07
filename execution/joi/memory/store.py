@@ -2420,8 +2420,11 @@ class MemoryStore:
 
         A message qualifies when:
           - archived = 1 (compaction has run)
-          - timestamp < last_tension_mined_message_ts for its conversation,
-            OR no wind_state row exists (Wind not enabled for that conversation)
+          - no wind_state row exists for the conversation (Wind not enabled), OR
+          - timestamp < last_tension_mined_message_ts (Wind has mined past this message)
+
+        A wind_state row with last_tension_mined_message_ts IS NULL means Wind is
+        configured but has never run — messages are NOT eligible for deletion yet.
         """
         conn = self._connect()
         conn.execute(
@@ -2433,7 +2436,6 @@ class MemoryStore:
                 WHERE m.archived = 1
                   AND m.timestamp < ?
                   AND (ws.conversation_id IS NULL
-                       OR ws.last_tension_mined_message_ts IS NULL
                        OR m.timestamp < ws.last_tension_mined_message_ts)
             )
             """,
@@ -2448,7 +2450,6 @@ class MemoryStore:
                 WHERE m.archived = 1
                   AND m.timestamp < ?
                   AND (ws.conversation_id IS NULL
-                       OR ws.last_tension_mined_message_ts IS NULL
                        OR m.timestamp < ws.last_tension_mined_message_ts)
             )
             """,

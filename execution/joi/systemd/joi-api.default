@@ -60,12 +60,13 @@ JOI_REQUIRE_ENCRYPTED_DB=1
 # When messages exceed context size, compact oldest N messages
 # Constraint: 10 <= batch < context // 2
 #JOI_COMPACT_BATCH_SIZE=20
-# Time-based message purge. 0 = disabled (default — messages kept forever).
-# When set, fully-processed messages (compacted + Wind-mined) older than
-# this many days are deleted. Max 90 days.
-#JOI_MESSAGE_RETENTION_DAYS=0
 # Optional: separate model for consolidation (low temperature recommended)
 #JOI_CONSOLIDATION_MODEL=joi-consolidator
+
+# --- Message Retention ---
+# Time-based purge of fully-processed messages (compacted + Wind-mined).
+# 0 = disabled (default — messages kept forever). Max 90 days.
+#JOI_MESSAGE_RETENTION_DAYS=0
 
 # --- Wind Engagement ---
 # Model for classifying user responses to proactive messages

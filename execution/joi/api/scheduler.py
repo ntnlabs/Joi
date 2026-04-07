@@ -355,7 +355,7 @@ class Scheduler:
     def _purge_old_messages(self):
         """Hard-delete fully-processed messages older than JOI_MESSAGE_RETENTION_DAYS (0=disabled)."""
         raw = int(os.getenv("JOI_MESSAGE_RETENTION_DAYS", "0"))
-        retention_days = 0 if raw == 0 else min(90, raw)
+        retention_days = 0 if raw <= 0 else min(90, raw)
         if not retention_days:
             return
         cutoff_ms = int((time.time() - retention_days * 86400) * 1000)
@@ -716,7 +716,6 @@ class Scheduler:
                 conversation_id=conversation_id,
                 context_messages=0,  # Not used when compact_all=True
                 compact_batch_size=0,  # Not used when compact_all=True
-                archive_instead_of_delete=False,
                 compact_all=True,
             )
         except Exception as e:
