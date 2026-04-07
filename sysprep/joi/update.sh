@@ -22,7 +22,7 @@ disable_rules() {
 
 pip_install() {
     echo "Installing Python dependencies..."
-    pip3 install -r /opt/Joi/execution/joi/requirements.txt --break-system-packages
+    pip3 install -r /opt/Joi/sysprep/joi/requirements.txt --break-system-packages
 }
 
 case "$1" in

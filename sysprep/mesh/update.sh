@@ -19,7 +19,7 @@ disable_rules() {
 
 pip_install() {
     echo "Installing Python dependencies..."
-    pip3 install -r /opt/Joi/execution/mesh/proxy/requirements.txt --break-system-packages
+    pip3 install -r /opt/Joi/sysprep/mesh/requirements.txt --break-system-packages
 }
 
 case "$1" in
