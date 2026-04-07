@@ -3,6 +3,9 @@ set -e
 
 cd "$(dirname "$0")"
 
+EXECUTION_DIR="$(cd .. && pwd)"
+export PYTHONPATH="$EXECUTION_DIR${PYTHONPATH:+:$PYTHONPATH}"
+
 # Default settings (override via environment)
 export JOI_BIND_HOST="${JOI_BIND_HOST:-0.0.0.0}"
 export JOI_BIND_PORT="${JOI_BIND_PORT:-8443}"
