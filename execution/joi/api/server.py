@@ -3211,7 +3211,7 @@ def _handle_note_create(text: str, conversation_id: str) -> bool:
 
 
 def _handle_note_append(text: str, conversation_id: str) -> bool:
-    """Append text to an existing note. Returns True if appended."""
+    """Append text to an existing note. Returns True if handled (including not-found)."""
     result = _parse_note_with_llm(text, "append")
     if not result:
         return False
@@ -3223,7 +3223,8 @@ def _handle_note_append(text: str, conversation_id: str) -> bool:
     note = note_manager.get_by_title(conversation_id, title)
     if not note:
         logger.info("Note append: note not found", extra={"title": title, "conversation_id": conversation_id})
-        return False
+        _inject_note_context(conversation_id, f'No active note found matching "{title}". Tell the user the note was not found and ask them to verify the note name.')
+        return True  # Handled — LLM will inform user
 
     note_manager.append(note.id, append_text)
     logger.info("Note appended", extra={"note_id": note.id, "action": "note_append"})
@@ -3231,7 +3232,7 @@ def _handle_note_append(text: str, conversation_id: str) -> bool:
 
 
 def _handle_note_replace(text: str, conversation_id: str) -> bool:
-    """Replace note content. Returns True if replaced."""
+    """Replace note content. Returns True if handled (including not-found)."""
     result = _parse_note_with_llm(text, "replace")
     if not result:
         return False
@@ -3242,7 +3243,9 @@ def _handle_note_replace(text: str, conversation_id: str) -> bool:
 
     note = note_manager.get_by_title(conversation_id, title)
     if not note:
-        return False
+        logger.info("Note replace: note not found", extra={"title": title, "conversation_id": conversation_id})
+        _inject_note_context(conversation_id, f'No active note found matching "{title}". Tell the user the note was not found and ask them to verify the note name.')
+        return True  # Handled — LLM will inform user
 
     note_manager.replace(note.id, new_content)
     logger.info("Note replaced", extra={"note_id": note.id, "action": "note_replace"})
@@ -3297,7 +3300,7 @@ def _handle_note_retrieve(text: str, conversation_id: str) -> bool:
 
 
 def _handle_note_delete(text: str, conversation_id: str) -> bool:
-    """Archive a note. Returns True if archived."""
+    """Archive a note. Returns True if handled (including not-found)."""
     result = _parse_note_with_llm(text, "delete")
     if not result:
         return False
@@ -3307,7 +3310,9 @@ def _handle_note_delete(text: str, conversation_id: str) -> bool:
 
     note = note_manager.get_by_title(conversation_id, title)
     if not note:
-        return False
+        logger.info("Note delete: note not found", extra={"title": title, "conversation_id": conversation_id})
+        _inject_note_context(conversation_id, f'No active note found matching "{title}". Tell the user the note was not found.')
+        return True  # Handled — LLM will inform user
 
     note_manager.archive(note.id)
     logger.info("Note deleted", extra={"note_id": note.id, "action": "note_delete"})
@@ -3326,7 +3331,9 @@ def _handle_note_set_reminder(text: str, conversation_id: str) -> bool:
 
     note = note_manager.get_by_title(conversation_id, title)
     if not note:
-        return False
+        logger.info("Note set_reminder: note not found", extra={"title": title, "conversation_id": conversation_id})
+        _inject_note_context(conversation_id, f'No active note found matching "{title}". Tell the user the note was not found.')
+        return True  # Handled — LLM will inform user
 
     note_manager.set_remind_at(note.id, remind_at)
     logger.info("Note reminder set", extra={"note_id": note.id, "remind_at": remind_at, "action": "note_remind_set"})
