@@ -10,6 +10,7 @@ Group=joi
 # Change this if the path to the Joi git checkout is different.
 WorkingDirectory=/opt/Joi/execution/joi
 EnvironmentFile=-/etc/default/joi-api
+Environment=PYTHONPATH=/opt/Joi/execution
 ExecStart=/usr/bin/python3 -m api.server
 Restart=always
 RestartSec=3
