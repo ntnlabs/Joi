@@ -286,7 +286,6 @@ CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "50"))
 # Memory consolidation settings (count-based compaction)
 # When message_count > CONTEXT_MESSAGE_COUNT, compact oldest COMPACT_BATCH_SIZE messages
 COMPACT_BATCH_SIZE = int(os.getenv("JOI_COMPACT_BATCH_SIZE", "20"))
-CONSOLIDATION_ARCHIVE = os.getenv("JOI_CONSOLIDATION_ARCHIVE", "0") == "1"  # Default: delete
 CONSOLIDATION_MODEL = os.getenv("JOI_CONSOLIDATION_MODEL")  # Optional: separate model for compaction
 CURIOSITY_MODEL = os.getenv("JOI_CURIOSITY_MODEL") or None  # Used for structured intent detection
 
@@ -2436,16 +2435,13 @@ def _maybe_run_consolidation(conversation_id: Optional[str] = None) -> None:
         result = consolidator.run_consolidation(
             context_messages=CONTEXT_MESSAGE_COUNT,
             compact_batch_size=COMPACT_BATCH_SIZE,
-            archive_instead_of_delete=CONSOLIDATION_ARCHIVE,
             conversation_id=conversation_id,
         )
         if result["ran"]:
-            action = "archived" if CONSOLIDATION_ARCHIVE else "deleted"
             logger.info(
-                "Memory compaction: facts=%d, summarized=%d, %s=%d",
+                "Memory compaction: facts=%d, summarized=%d, archived=%d",
                 result["facts_extracted"],
                 result["messages_summarized"],
-                action,
                 result["messages_removed"],
             )
     except Exception as e:

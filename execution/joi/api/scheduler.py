@@ -206,6 +206,7 @@ class Scheduler:
             logger.info("Scheduler: running end-of-day procedures", extra={"action": "daily_tasks_start"})
             self._check_hmac_rotation()
             self._purge_old_reminders()
+            self._purge_old_messages()
             self._dedup_wind_topics()
             self._rollup_moods()
             self._rollup_feedback_decay()
@@ -350,6 +351,23 @@ class Scheduler:
                     logger.warning("Scheduler: HMAC rotation failed", extra={"action": "hmac_rotation", "error": result})
         except Exception as e:
             logger.warning("Scheduler: HMAC rotation check failed", extra={"error": str(e)})
+
+    def _purge_old_messages(self):
+        """Hard-delete fully-processed messages older than JOI_MESSAGE_RETENTION_DAYS (0=disabled)."""
+        raw = int(os.getenv("JOI_MESSAGE_RETENTION_DAYS", "0"))
+        retention_days = 0 if raw == 0 else min(90, raw)
+        if not retention_days:
+            return
+        cutoff_ms = int((time.time() - retention_days * 86400) * 1000)
+        try:
+            deleted = self._memory.delete_processed_messages_before(cutoff_ms)
+            if deleted:
+                logger.info(
+                    "Purged old messages",
+                    extra={"count": deleted, "retention_days": retention_days, "action": "purge_old_messages"},
+                )
+        except Exception as e:
+            logger.warning("Scheduler: message purge failed", extra={"error": str(e)})
 
     def _purge_old_reminders(self):
         """Purge terminal reminders older than JOI_REMINDER_RETENTION_DAYS (default 180, 0=disabled)."""

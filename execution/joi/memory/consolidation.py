@@ -459,7 +459,6 @@ Corrected JSON:"""
         self,
         context_messages: int = 50,
         compact_batch_size: int = 20,
-        archive_instead_of_delete: bool = False,
         conversation_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
@@ -472,10 +471,12 @@ Corrected JSON:"""
         (just exited context window), avoiding "memory drift" where
         messages are forgotten then suddenly remembered via summary.
 
+        Compacted messages are always archived (archived=1). Hard deletion
+        is handled separately by the time-based purge (JOI_MESSAGE_RETENTION_DAYS).
+
         Args:
             context_messages: Context window size (trigger when exceeded)
             compact_batch_size: Number of oldest messages to compact
-            archive_instead_of_delete: If True, archive messages; if False, delete them
             conversation_id: If provided, only consolidate this conversation (skip full scan)
 
         Returns:
@@ -501,7 +502,6 @@ Corrected JSON:"""
                 conversation_id=convo_id,
                 context_messages=context_messages,
                 compact_batch_size=compact_batch_size,
-                archive_instead_of_delete=archive_instead_of_delete,
             )
 
             if convo_results["ran"]:
@@ -526,7 +526,6 @@ Corrected JSON:"""
         conversation_id: str,
         context_messages: int,
         compact_batch_size: int,
-        archive_instead_of_delete: bool,
         compact_all: bool = False,
     ) -> Dict[str, Any]:
         """
@@ -539,7 +538,6 @@ Corrected JSON:"""
             conversation_id: The conversation to consolidate
             context_messages: Context window size (trigger when exceeded)
             compact_batch_size: Number of oldest messages to compact
-            archive_instead_of_delete: If True, archive messages; if False, delete them
             compact_all: If True, compact ALL messages beyond context_messages
                         (batch_size = msg_count - context_messages).
                         If False, use compact_batch_size (original behavior).
@@ -621,10 +619,7 @@ Corrected JSON:"""
 
             # Remove compacted messages by ID (not timestamp, to avoid boundary issues)
             message_ids = [m.message_id for m in oldest_messages]
-            if archive_instead_of_delete:
-                removed = self.memory.archive_messages_by_ids(message_ids, conversation_id)
-            else:
-                removed = self.memory.delete_messages_by_ids(message_ids, conversation_id)
+            removed = self.memory.archive_messages_by_ids(message_ids, conversation_id)
             results["messages_removed"] = removed
 
         return results

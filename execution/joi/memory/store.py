@@ -2414,6 +2414,52 @@ class MemoryStore:
             logger.info("Archived messages", extra={"count": archived, "before_ms": before_ms})
         return archived
 
+    def delete_processed_messages_before(self, before_ms: int) -> int:
+        """
+        Hard-delete fully-processed messages older than before_ms.
+
+        A message qualifies when:
+          - archived = 1 (compaction has run)
+          - timestamp < last_tension_mined_message_ts for its conversation,
+            OR no wind_state row exists (Wind not enabled for that conversation)
+        """
+        conn = self._connect()
+        conn.execute(
+            """
+            UPDATE messages SET reply_to_id = NULL
+            WHERE reply_to_id IN (
+                SELECT m.message_id FROM messages m
+                LEFT JOIN wind_state ws ON ws.conversation_id = m.conversation_id
+                WHERE m.archived = 1
+                  AND m.timestamp < ?
+                  AND (ws.conversation_id IS NULL
+                       OR ws.last_tension_mined_message_ts IS NULL
+                       OR m.timestamp < ws.last_tension_mined_message_ts)
+            )
+            """,
+            (before_ms,)
+        )
+        cursor = conn.execute(
+            """
+            DELETE FROM messages
+            WHERE rowid IN (
+                SELECT m.rowid FROM messages m
+                LEFT JOIN wind_state ws ON ws.conversation_id = m.conversation_id
+                WHERE m.archived = 1
+                  AND m.timestamp < ?
+                  AND (ws.conversation_id IS NULL
+                       OR ws.last_tension_mined_message_ts IS NULL
+                       OR m.timestamp < ws.last_tension_mined_message_ts)
+            )
+            """,
+            (before_ms,)
+        )
+        conn.commit()
+        deleted = cursor.rowcount
+        if deleted > 0:
+            logger.info("Purged processed messages", extra={"count": deleted, "before_ms": before_ms})
+        return deleted
+
     def delete_messages_before(self, before_ms: int, conversation_id: Optional[str] = None) -> int:
         """Hard delete messages older than timestamp (use archive_messages_before for soft delete)."""
         conn = self._connect()
