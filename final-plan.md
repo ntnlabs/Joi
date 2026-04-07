@@ -360,6 +360,12 @@ tracking, no lifecycle rules, no impulse gating, works in all modes.
 Projects worth revisiting when hardware or scope allows:
 
 ### Memory & State
+- **MemPalace** (https://github.com/milla-jovovich/mempalace) — local ChromaDB-backed memory
+  system with semantic search and structured organization (wings/rooms/topics). 96.6% on
+  LongMemEval. Most relevant for replacing Joi's SQLite FTS with vector-based retrieval —
+  would fix cases where Joi misses relevant facts because the user phrased them differently
+  than how they were stored. Significant architecture change, worth revisiting during the
+  facts extraction review.
 - **Mem0** (https://github.com/mem0ai/mem0) — universal memory layer for AI agents.
   Closest open-source analogue to Joi's facts/summaries system. Worth studying their
   retrieval and consolidation approach, especially how they handle memory decay and
