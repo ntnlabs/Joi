@@ -2156,7 +2156,7 @@ SQL
 
             local where_clause=""
             if [[ ${#where_parts[@]} -gt 0 ]]; then
-                where_clause="WHERE $(IFS=' AND '; echo "${where_parts[*]}")"
+                local _wc_joined="${where_parts[0]}"; for (( _wci=1; _wci<${#where_parts[@]}; _wci++ )); do _wc_joined+=" AND ${where_parts[$_wci]}"; done; where_clause="WHERE $_wc_joined"
             fi
 
             local rows
@@ -2368,7 +2368,7 @@ HELP
 
             local where_clause=""
             if [[ ${#where_parts[@]} -gt 0 ]]; then
-                where_clause="WHERE $(IFS=' AND '; echo "${where_parts[*]}")"
+                local _wc_joined="${where_parts[0]}"; for (( _wci=1; _wci<${#where_parts[@]}; _wci++ )); do _wc_joined+=" AND ${where_parts[$_wci]}"; done; where_clause="WHERE $_wc_joined"
             fi
 
             local rows
@@ -2814,7 +2814,7 @@ cmd_facts() {
 
             local where_clause=""
             if [[ ${#where_parts[@]} -gt 0 ]]; then
-                where_clause="WHERE $(IFS=' AND '; echo "${where_parts[*]}")"
+                local _wc_joined="${where_parts[0]}"; for (( _wci=1; _wci<${#where_parts[@]}; _wci++ )); do _wc_joined+=" AND ${where_parts[$_wci]}"; done; where_clause="WHERE $_wc_joined"
             fi
 
             # Use char(1) as column separator to avoid splitting on | in LLM-generated values.
@@ -3142,7 +3142,7 @@ cmd_reminders() {
 
             local where_clause=""
             if [[ ${#where_parts[@]} -gt 0 ]]; then
-                where_clause="WHERE $(IFS=' AND '; echo "${where_parts[*]}")"
+                local _wc_joined="${where_parts[0]}"; for (( _wci=1; _wci<${#where_parts[@]}; _wci++ )); do _wc_joined+=" AND ${where_parts[$_wci]}"; done; where_clause="WHERE $_wc_joined"
             fi
 
             local rows
