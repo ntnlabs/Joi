@@ -111,6 +111,7 @@
   .t-always  { background: #0d2020; color: #39d353; }
   .t-cond    { background: #1a1a1a; color: #8b949e; }
   .t-llm     { background: #1f4d2a; color: #56d364; }
+  .t-detector{ background: #0d2230; color: #39c5cf; }
   .t-owner   { background: #1a0d2e; color: #bc8cff; }
   .t-regex   { background: #1a2436; color: #79c0ff; }
   .t-fts     { background: #2d1a00; color: #f0883e; }
@@ -280,7 +281,7 @@
 
     <!-- small LLMs -->
     <div class="block c-small" style="margin-bottom:8px;">
-      <div class="block-title">User Mood Detection <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-always">every message</span></div>
+      <div class="block-title">User Mood Detection <span class="tag t-detector">DETECTOR LLM · joi-detector</span> <span class="tag t-always">every message</span></div>
       <div class="block-body">
         <div class="kv">
           <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
@@ -295,7 +296,7 @@
 
     <div class="row">
       <div class="block c-small">
-        <div class="block-title">Reschedule Intent <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-cond">direct</span> <span class="tag t-regex">regex gate</span></div>
+        <div class="block-title">Reschedule Intent <span class="tag t-detector">DETECTOR LLM · joi-detector</span> <span class="tag t-cond">direct</span> <span class="tag t-regex">regex gate</span></div>
         <div class="block-body">
           <div class="kv">
             <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> + current temporal facts list + current UTC time</span>
@@ -305,7 +306,7 @@
         </div>
       </div>
       <div class="block c-small">
-        <div class="block-title">Reminder Command <span class="tag t-llm">LLM or regex</span> <span class="tag t-cond">direct</span> <span class="tag t-regex">regex gate</span></div>
+        <div class="block-title">Reminder Command <span class="tag t-detector">DETECTOR LLM · joi-detector</span> <span class="tag t-cond">direct</span> <span class="tag t-regex">regex gate</span></div>
         <div class="block-body">
           <div class="kv">
             <span class="kv-key">gate</span><span class="kv-val">\bremind\sme\b regex required</span>
@@ -318,7 +319,7 @@
     </div>
 
     <div class="block c-small" style="margin-bottom:8px;">
-      <div class="block-title">Implicit Temporal Task <span class="tag t-llm">LLM</span> <span class="tag t-cond">direct · only if no explicit reminder</span> <span class="tag t-regex">regex gate</span></div>
+      <div class="block-title">Implicit Temporal Task <span class="tag t-detector">DETECTOR LLM · joi-detector</span> <span class="tag t-cond">direct · only if no explicit reminder</span> <span class="tag t-regex">regex gate</span></div>
       <div class="block-body">
         <div class="kv">
           <span class="kv-key">gate</span><span class="kv-val">_TEMPORAL_TASK_TRIGGER — "I need to", "I have to", "gotta", "don't forget to", "supposed to", …</span>
@@ -330,7 +331,7 @@
     </div>
 
     <div class="block c-small" style="margin-bottom:8px;">
-      <div class="block-title">Fact Detection <span class="tag t-llm">CURIOSITY LLM</span> <span class="tag t-cond">if keyword match · skipped if reminder fired</span></div>
+      <div class="block-title">Fact Detection <span class="tag t-detector">DETECTOR LLM · joi-detector</span> <span class="tag t-cond">if keyword match · skipped if reminder fired</span></div>
       <div class="block-body">
         <div class="kv">
           <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
@@ -406,12 +407,12 @@
 
     <!-- post-prompt -->
     <div class="block" style="background:#0d1520; border-color:#388bfd55; margin-bottom:8px;">
-      <div class="block-title" style="color:#79c0ff;">Post-Prompt Additions <span class="tag t-cond">direct only</span> <span class="tag t-regex">regex gate</span></div>
+      <div class="block-title" style="color:#79c0ff;">Post-Prompt Additions <span class="tag t-cond">direct only</span> <span class="tag t-regex">regex gate</span> <span class="tag t-detector">DETECTOR LLM · joi-detector</span></div>
       <div class="block-body">
         <div class="kv">
           <span class="kv-key">reminder ack</span><span class="kv-val">if reminder just set → appends <em>"Note: reminder '{title}' due in {label}."</em></span>
-          <span class="kv-key">reminder list</span><span class="kv-val">LLM check → if list query, injects pending reminders · if past query (LLM check), injects pending + recently-fired instead</span>
-          <span class="kv-key">agenda set</span><span class="kv-val">LLM check → if agenda query, parses + stores multiple reminders</span>
+          <span class="kv-key">reminder list</span><span class="kv-val">DETECTOR LLM check → if list query, injects pending reminders · if past query (DETECTOR LLM check), injects pending + recently-fired instead</span>
+          <span class="kv-key">agenda set</span><span class="kv-val">DETECTOR LLM check → if agenda query, parses + stores multiple reminders</span>
         </div>
       </div>
     </div>
@@ -475,10 +476,11 @@
 
   <!-- CONSOLIDATION -->
   <div class="block c-bg">
-    <div class="block-title">Background: Memory Consolidation <span class="tag t-cond">if message count ≥ 50</span></div>
+    <div class="block-title">Background: Memory Consolidation <span class="tag t-cond">if message count ≥ 50</span> <span class="tag t-llm">CONSOLIDATION LLM · joi-consolidator</span></div>
     <div class="block-body">
       <div class="kv">
         <span class="kv-key">trigger</span><span class="kv-val">message window exceeds CONTEXT_MESSAGE_COUNT (<em>50</em>)</span>
+        <span class="kv-key">model</span><span class="kv-val">joi-consolidator · <em>8192</em> ctx · temp 0.3 · batch: oldest <em>20</em> messages</span>
         <span class="kv-key">does</span><span class="kv-val">extracts facts from old batch · generates conversation summary · skips current_mood (tracked per-message in WindState)</span>
         <span class="kv-key">cleanup</span><span class="kv-val">archives / deletes compacted messages</span>
       </div>
@@ -488,8 +490,9 @@
 </div><!-- /pipeline -->
 
 <div class="legend">
-  <div class="legend-item"><div class="legend-dot" style="background:#3fb950;"></div>Small LLM (CURIOSITY_MODEL)</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#ff7b72;"></div>Main LLM (default model)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#39c5cf;"></div>DETECTOR LLM (joi-detector) — facts, mood, reminders, notes, agenda</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950;"></div>CONSOLIDATION LLM (joi-consolidator) — batch fact extraction + summarization</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#ff7b72;"></div>Main LLM (joi-personal or per-conversation override)</div>
   <div class="legend-item"><div class="legend-dot" style="background:#f0883e;"></div>FTS / BM25 retrieval</div>
   <div class="legend-item"><div class="legend-dot" style="background:#d2a8ff;"></div>Semantic vector search</div>
   <div class="legend-item"><div class="legend-dot" style="background:#e3b341;"></div>Direct DB query</div>

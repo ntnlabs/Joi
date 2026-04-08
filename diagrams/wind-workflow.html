@@ -119,6 +119,7 @@
   .t-always  { background: #0d2020; color: #39d353; }
   .t-cond    { background: #1a1a1a; color: #8b949e; }
   .t-llm     { background: #1f4d2a; color: #56d364; }
+  .t-detector{ background: #0d2230; color: #39c5cf; }
   .t-db      { background: #2d1f00; color: #e3b341; }
   .t-timer   { background: #1a1500; color: #d29922; }
   .t-gate    { background: #1a0000; color: #f85149; }
@@ -450,7 +451,7 @@
       <div class="kv">
         <span class="kv-key">snooze check</span><span class="kv-val">"shh" → 8 h snooze · "shhh" → 24 h snooze · "wake/awake/clear" → clear snooze immediately</span>
         <span class="kv-key">record interaction</span><span class="kv-val"><em>record_user_interaction()</em> — updates last_user_interaction_at · resets unanswered_proactive_count = 0 · updates convo_gap_ema</span>
-        <span class="kv-key">user mood</span><span class="kv-val">per-message mood classification → stored as user_mood_state + user_mood_intensity in wind_state</span>
+        <span class="kv-key">user mood</span><span class="kv-val">per-message mood classification <span class="tag t-detector" style="font-size:10px;">DETECTOR LLM · joi-detector</span> → stored as user_mood_state + user_mood_intensity in wind_state</span>
       </div>
     </div>
   </div>
@@ -545,7 +546,7 @@
     <div class="block-title">Nightly Tasks <span class="tag t-nightly">~24 h boundary · delayed until system quiet</span></div>
     <div class="block-body">
       <div class="kv">
-        <span class="kv-key">deduplication</span><span class="kv-val">LLM pass over all pending topics per conversation · near-duplicate topics merged or discarded</span>
+        <span class="kv-key">deduplication</span><span class="kv-val"><span class="tag t-llm" style="font-size:10px;">joi-curiosity</span> LLM pass over all pending topics per conversation · near-duplicate topics merged or discarded</span>
         <span class="kv-key">mood rollup</span><span class="kv-val">Joi's mood intensity decayed by 15% toward middle — <em>intensity × 0.85 + 0.15 × 0.5</em> — prevents permanent extremes</span>
         <span class="kv-key">feedback decay</span><span class="kv-val">rejection_weight and interest_weight on topic families gradually forgiven — prevents permanent blocks from old data</span>
         <span class="kv-key">HMAC rotation</span><span class="kv-val">mesh authentication key rotated</span>
@@ -620,7 +621,8 @@
   <div class="legend-item"><div class="legend-dot" style="background:#79c0ff;"></div>Impulse scoring</div>
   <div class="legend-item"><div class="legend-dot" style="background:#ff7b72;"></div>WindMood / mood state</div>
   <div class="legend-item"><div class="legend-dot" style="background:#a371f7;"></div>Topic queue</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#56d364;"></div>LLM call</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#56d364;"></div>LLM call (joi-curiosity / joi-engagement)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#39c5cf;"></div>DETECTOR LLM (joi-detector) — user mood classification</div>
   <div class="legend-item"><div class="legend-dot" style="background:#e3b341;"></div>Engagement outcome</div>
   <div class="legend-item"><div class="legend-dot" style="background:#bc8cff;"></div>Nightly housekeeping</div>
   <div class="legend-item"><div class="legend-dot" style="background:#e3b341; opacity:0.4;"></div>DB table reference</div>
