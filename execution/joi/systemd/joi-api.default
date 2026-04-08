@@ -73,6 +73,9 @@ JOI_REQUIRE_ENCRYPTED_DB=1
 #JOI_ENGAGEMENT_MODEL=joi-engagement
 # Model for mining open conversation threads (tension topics)
 #JOI_CURIOSITY_MODEL=joi-curiosity
+# Model for structured intent detection (facts, mood, reminders, notes, agenda)
+# Falls back to JOI_CURIOSITY_MODEL if not set
+#JOI_DETECTOR_MODEL=joi-detector
 # Minutes of user silence before mining unprocessed messages for tension topics
 # Must be less than both min_silence_minutes (default: 30) and min_cooldown_minutes (default: 60)
 # so mining happens before Wind's gates open

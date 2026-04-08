@@ -1,0 +1,31 @@
+# Joi Detector Model - for structured intent detection tasks
+#
+# Used for: fact extraction, mood detection, reminder parsing,
+#           note commands, agenda parsing, list/past/future detection.
+#
+# USAGE:
+#   1. Build: docker exec ollama ollama create joi-detector -f /opt/Joi/execution/joi/ollama/Modelfile_detector
+#   2. Test:  docker exec -it ollama ollama run joi-detector 'Analyze: "remember I drink coffee every morning"'
+#   3. Use:   Set JOI_DETECTOR_MODEL=joi-detector in /etc/default/joi-api
+#
+# UPDATING:
+#   If you change this file, re-run step 1 to "rebake" the model.
+#   Changes don't apply until you recreate the model.
+
+FROM mannix/llama3.1-8b-abliterated
+
+# --- Parameters ---
+
+PARAMETER temperature 0.1
+PARAMETER top_p 0.4
+PARAMETER num_ctx 4096
+PARAMETER num_predict 500
+PARAMETER stop "<|eot_id|>"
+PARAMETER stop "<|end_of_text|>"
+PARAMETER repeat_penalty 1.1
+
+# --- System Prompt ---
+
+SYSTEM """
+You are a precise JSON extraction assistant. Follow the instructions in each prompt exactly. Output only valid JSON, nothing else. No explanations, no markdown, no extra text.
+"""

@@ -21,8 +21,8 @@ PARAMETER temperature 0.3
 PARAMETER top_p 0.5
 
 # Context window (tokens the model can "see")
-# 4096 is good for GTX 1650 (4GB VRAM)
-PARAMETER num_ctx 4096
+# 8192 gives headroom for the extraction prompt (~700 tokens) + 20-message batch
+PARAMETER num_ctx 8192
 
 # Stop sequences - model stops generating when it sees these
 PARAMETER stop "<|eot_id|>"
