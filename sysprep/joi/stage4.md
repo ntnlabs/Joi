@@ -285,6 +285,29 @@ If not configured, tension mining is silently skipped.
 
 ---
 
+## 9b. Detector Model (Recommended — structured intent detection)
+
+The detector model handles all per-message structured tasks: fact extraction, mood
+detection, reminder parsing, note commands, agenda parsing. Without it, these fall
+back to the curiosity model whose system prompt is tuned for Wind thread analysis,
+not JSON extraction.
+
+```bash
+# Build the detector model (uses mannix/llama3.1-8b-abliterated as base)
+docker exec ollama ollama create joi-detector \
+  -f /opt/Joi/execution/joi/ollama/Modelfile_detector
+
+# Enable in /etc/default/joi-api
+echo 'JOI_DETECTOR_MODEL=joi-detector' >> /etc/default/joi-api
+
+# Restart
+systemctl restart joi-api
+```
+
+If not configured, falls back to `JOI_CURIOSITY_MODEL`.
+
+---
+
 ## 10. Embedding Model for Semantic RAG Search (Optional)
 
 By default, knowledge retrieval uses BM25 full-text search. For semantic (meaning-based)

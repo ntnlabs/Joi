@@ -288,7 +288,8 @@ CONTEXT_MESSAGE_COUNT = int(os.getenv("JOI_CONTEXT_MESSAGES", "50"))
 # When message_count > CONTEXT_MESSAGE_COUNT, compact oldest COMPACT_BATCH_SIZE messages
 COMPACT_BATCH_SIZE = int(os.getenv("JOI_COMPACT_BATCH_SIZE", "20"))
 CONSOLIDATION_MODEL = os.getenv("JOI_CONSOLIDATION_MODEL")  # Optional: separate model for compaction
-CURIOSITY_MODEL = os.getenv("JOI_CURIOSITY_MODEL") or None  # Used for structured intent detection
+CURIOSITY_MODEL = os.getenv("JOI_CURIOSITY_MODEL") or None  # Used for Wind thread detection only
+DETECTOR_MODEL = os.getenv("JOI_DETECTOR_MODEL") or CURIOSITY_MODEL  # Structured intent detection (facts, mood, reminders, notes)
 
 # Validate compaction constraints: 10 <= batch_size < context_size // 2
 def _validate_compaction_settings():
@@ -806,7 +807,7 @@ def _detect_user_mood(text: str) -> Optional[tuple]:
         '"intensity": <0.0-1.0>}\n\n'
         'Use neutral/0.5 if the message has no emotional content.'
     )
-    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    result = _llm_detect(prompt, model=DETECTOR_MODEL)
     if result and "mood_state" in result and "intensity" in result:
         state = str(result["mood_state"])
         intensity = float(result["intensity"])
@@ -879,7 +880,7 @@ If NO, return:
 
 Return ONLY valid JSON, nothing else:"""
 
-    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    result = _llm_detect(prompt, model=DETECTOR_MODEL)
     if not result or not result.get("remember", False):
         logger.debug("LLM: nothing to remember in message")
         return None
@@ -2690,7 +2691,7 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         "If not a reminder or time cannot be determined, respond with exactly: SKIP"
     )
 
-    data = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    data = _llm_detect(prompt, model=DETECTOR_MODEL)
     if not data:
         logger.warning("Reminder LLM parse returned no data (SKIP or invalid JSON)", extra={"action": "reminder_llm_skip"})
         return None
@@ -2726,7 +2727,7 @@ def _is_reminder_list_query(text: str) -> bool:
         "Is this asking to see, list, or check their reminders or agenda?\n"
         'Respond with JSON only: {"list": true} or {"list": false}'
     )
-    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    result = _llm_detect(prompt, model=DETECTOR_MODEL)
     return bool(result and result.get("list"))
 
 
@@ -2739,7 +2740,7 @@ def _is_past_reminder_query(text: str) -> bool:
         "'what reminders fired yesterday')?\n"
         'Respond with JSON only: {"past": true} or {"past": false}'
     )
-    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    result = _llm_detect(prompt, model=DETECTOR_MODEL)
     return bool(result and result.get("past"))
 
 
@@ -2786,7 +2787,7 @@ def _is_agenda_set_query(text: str) -> bool:
         "(i.e. the user wants reminders set for multiple items)?\n"
         'Respond with JSON only: {"set": true} or {"set": false}'
     )
-    result = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    result = _llm_detect(prompt, model=DETECTOR_MODEL)
     return bool(result and result.get("set"))
 
 
@@ -2817,7 +2818,7 @@ def _llm_parse_agenda_items(text: str) -> List[tuple]:
         "{\"items\": [{\"year\": 2026, \"month\": 3, \"day\": 27, \"hour\": 10, \"minute\": 0, \"title\": \"Meeting\"}, ...]}"
     )
 
-    data = _llm_detect(prompt, model=CURIOSITY_MODEL)
+    data = _llm_detect(prompt, model=DETECTOR_MODEL)
     if not data or "items" not in data:
         logger.warning("Agenda LLM parse returned no items", extra={"action": "agenda_llm_skip"})
         return []
@@ -3058,7 +3059,7 @@ If the new time is ambiguous or no fact matches, respond with: null
 
 Only valid JSON or null. No explanation."""
 
-    data = _llm_detect(extraction_prompt, model=CURIOSITY_MODEL)
+    data = _llm_detect(extraction_prompt, model=DETECTOR_MODEL)
     if not data:
         return False
 
@@ -3961,7 +3962,7 @@ def _send_to_mesh(
 def _validate_models():
     configured = {"JOI_OLLAMA_MODEL": settings.ollama_model}
     for var in ("JOI_CONSOLIDATION_MODEL", "JOI_ENGAGEMENT_MODEL",
-                "JOI_CURIOSITY_MODEL", "JOI_EMBEDDING_MODEL"):
+                "JOI_CURIOSITY_MODEL", "JOI_DETECTOR_MODEL", "JOI_EMBEDDING_MODEL"):
         val = os.getenv(var)
         if val:
             configured[var] = val
