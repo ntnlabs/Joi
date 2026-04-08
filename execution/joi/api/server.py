@@ -718,8 +718,10 @@ IMPORTANT_CATEGORIES = ["personal", "relationship"]
 IMPORTANT_KEYS = ["name", "profession", "job", "partner", "spouse", "wife", "husband", "child", "children"]
 
 # Question forms directed at Joi ("do you remember X?") — not instructions to save
+# Note: "can/could you remember" is excluded here — it's often an instruction ("can you
+# remember that I prefer X?") and the LLM handles the distinction correctly.
 _REMEMBER_QUESTION_RE = re.compile(
-    r"\b(do|did|can|could|don'?t|doesn'?t|won'?t|will|would)\s+you\b[^.?!]*\bremember\b",
+    r"\b(do|did|don'?t|doesn'?t|won'?t|will|would)\s+you\b[^.?!]*\bremember\b",
     re.I,
 )
 
