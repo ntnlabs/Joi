@@ -3794,12 +3794,18 @@ def _handle_task_list_lists(conversation_id: str) -> bool:
     """Show all active task list names. Always returns True."""
     lists = task_manager.get_all_lists(conversation_id)
     if not lists:
-        _inject_task_context(conversation_id, "The user has no task lists.")
+        _inject_task_context(
+            conversation_id,
+            "Database result: zero task lists exist. Any previous mention of a 'Todo list', "
+            "'task list', or any named list was a mistake — ignore it. "
+            "Tell the user they have no lists yet and offer to create one."
+        )
         return True
     lines = [f"- {name.title()}" for name in lists]
     _inject_task_context(
         conversation_id,
-        "The user asked what lists they have. Present this list to them:\n" + "\n".join(lines)
+        "Database result: the user's task lists are listed below. "
+        "Present exactly these lists, nothing else:\n" + "\n".join(lines)
     )
     return True
 
