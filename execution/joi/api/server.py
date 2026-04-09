@@ -2408,11 +2408,8 @@ def _build_enriched_prompt(
             parts.append("\n\n" + "\n".join(exp_lines))
 
     # Add recent conversation summaries for this conversation (FTS search with fallback)
-    # Suppressed when a task command is active — authoritative DB result takes precedence.
     summaries_text = None
-    if _task_suppress_summaries():
-        logger.info("Summaries FTS: suppressed (task command active)")
-    elif SUMMARIES_FTS_ENABLED and user_message:
+    if SUMMARIES_FTS_ENABLED and user_message:
         summaries_text = memory.get_summaries_as_context(
             user_message,
             max_tokens=SUMMARIES_FTS_MAX_TOKENS,
@@ -2453,7 +2450,7 @@ def _build_enriched_prompt(
     if conversation_id:
         note_ctx = _pop_note_context(conversation_id)
         if note_ctx:
-            parts.append("\n\n[NOTE SYSTEM - authoritative database result, use this and ignore any conflicting conversation history]\n" + note_ctx)
+            parts.append("\n\n" + note_ctx)
         else:
             # Hint mode: search notes against user message, inject brief hint if match found
             # Notes are DM-only, so skip hint for group conversations.
@@ -2474,7 +2471,7 @@ def _build_enriched_prompt(
     if conversation_id:
         task_ctx = _pop_task_context(conversation_id)
         if task_ctx:
-            parts.append("\n\n[TASK SYSTEM - authoritative database result, use this and ignore any conflicting conversation history]\n" + task_ctx)
+            parts.append("\n\n" + task_ctx)
 
     # Phase 4d: Inject mood as response modifier
     if conversation_id and wind_orchestrator:
@@ -3455,7 +3452,6 @@ def _inject_task_context(conversation_id: str, context: str) -> None:
     """Store task context for pickup by _build_enriched_prompt in the same request."""
     _task_context_local.context = context
     _task_context_local.conversation_id = conversation_id
-    _task_context_local.suppress_summaries = True
     logger.debug("Task context injected", extra={
         "conversation_id": conversation_id,
         "context_len": len(context),
@@ -3470,14 +3466,8 @@ def _pop_task_context(conversation_id: str) -> Optional[str]:
     if stored_conv == conversation_id and stored_ctx is not None:
         _task_context_local.context = None
         _task_context_local.conversation_id = None
-        _task_context_local.suppress_summaries = False
         return stored_ctx
     return None
-
-
-def _task_suppress_summaries() -> bool:
-    """Return True if a task command is pending and summaries should be suppressed."""
-    return bool(getattr(_task_context_local, "suppress_summaries", False))
 
 
 def _format_task_list(list_name: str, tasks: list) -> str:
@@ -3585,13 +3575,7 @@ def _handle_task_command(text: str, conversation_id: str) -> bool:
     """
     Route task commands. Returns True if a task operation was handled, False otherwise.
     """
-    trigger_match = bool(_TASK_TRIGGER.search(text))
-    logger.info("Task handler called", extra={
-        "conversation_id": conversation_id,
-        "trigger_match": trigger_match,
-        "action": "task_handler_entry",
-    })
-    if not trigger_match:
+    if not _TASK_TRIGGER.search(text):
         return False
 
     text_lower = text.lower()
@@ -3623,17 +3607,7 @@ def _handle_task_command(text: str, conversation_id: str) -> bool:
     elif any(w in text_lower for w in ("add", "put", "append", "include")):
         intent = "add"
     else:
-        logger.info("Task handler: no intent matched", extra={
-            "conversation_id": conversation_id,
-            "action": "task_no_intent",
-        })
         return False
-
-    logger.info("Task handler: intent routed", extra={
-        "conversation_id": conversation_id,
-        "intent": intent,
-        "action": "task_intent",
-    })
 
     if intent == "add":
         return _handle_task_add(text, conversation_id)
@@ -3804,18 +3778,12 @@ def _handle_task_list_lists(conversation_id: str) -> bool:
     """Show all active task list names. Always returns True."""
     lists = task_manager.get_all_lists(conversation_id)
     if not lists:
-        _inject_task_context(
-            conversation_id,
-            "Database result: zero task lists exist. Any previous mention of a 'Todo list', "
-            "'task list', or any named list was a mistake — ignore it. "
-            "Tell the user they have no lists yet and offer to create one."
-        )
+        _inject_task_context(conversation_id, "The user has no task lists.")
         return True
     lines = [f"- {name.title()}" for name in lists]
     _inject_task_context(
         conversation_id,
-        "Database result: the user's task lists are listed below. "
-        "Present exactly these lists, nothing else:\n" + "\n".join(lines)
+        "The user asked what lists they have. Present this list to them:\n" + "\n".join(lines)
     )
     return True
 
