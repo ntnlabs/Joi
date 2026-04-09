@@ -1359,15 +1359,25 @@ class WindOrchestrator:
             )
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.debug("Tension mining: failed to parse LLM response", extra={
+            logger.warning("Tension mining: failed to parse LLM response — advancing pointer to prevent retry loop", extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
+                "action": "tension_mining_parse_fail",
             })
+            self.state_manager.update_state(
+                conversation_id,
+                last_tension_mined_message_ts=newest_ts,
+            )
         except Exception as e:
-            logger.debug("Tension mining: LLM call failed", extra={
+            logger.warning("Tension mining: LLM call failed — advancing pointer to prevent retry loop", extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
+                "action": "tension_mining_llm_fail",
             })
+            self.state_manager.update_state(
+                conversation_id,
+                last_tension_mined_message_ts=newest_ts,
+            )
 
     def check_timeout_topics(self, now: Optional[datetime] = None) -> int:
         """
