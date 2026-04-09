@@ -2450,7 +2450,7 @@ def _build_enriched_prompt(
     if conversation_id:
         note_ctx = _pop_note_context(conversation_id)
         if note_ctx:
-            parts.append("\n\n" + note_ctx)
+            parts.append("\n\n[NOTE SYSTEM - authoritative database result, use this and ignore any conflicting conversation history]\n" + note_ctx)
         else:
             # Hint mode: search notes against user message, inject brief hint if match found
             # Notes are DM-only, so skip hint for group conversations.
@@ -2471,7 +2471,7 @@ def _build_enriched_prompt(
     if conversation_id:
         task_ctx = _pop_task_context(conversation_id)
         if task_ctx:
-            parts.append("\n\n" + task_ctx)
+            parts.append("\n\n[TASK SYSTEM - authoritative database result, use this and ignore any conflicting conversation history]\n" + task_ctx)
 
     # Phase 4d: Inject mood as response modifier
     if conversation_id and wind_orchestrator:
