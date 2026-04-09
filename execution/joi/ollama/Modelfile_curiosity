@@ -16,7 +16,7 @@ FROM mannix/llama3.1-8b-abliterated
 PARAMETER temperature 0.2
 PARAMETER top_p 0.4
 PARAMETER num_ctx 4096
-PARAMETER num_predict 250
+PARAMETER num_predict 500
 PARAMETER stop "<|eot_id|>"
 PARAMETER stop "<|end_of_text|>"
 PARAMETER repeat_penalty 1.2
