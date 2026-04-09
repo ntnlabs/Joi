@@ -1229,11 +1229,21 @@ class WindOrchestrator:
             "message_count": len(user_messages),
             "model": self._curiosity_model,
         })
+        def _normalize_raw(text: str) -> str:
+            """Strip whitespace and code fences from LLM response."""
+            text = text.strip()
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+            return text
+
         try:
             llm_response = self._llm_client.generate(prompt, model=self._curiosity_model)
-            raw = llm_response.text.strip()
+            raw = _normalize_raw(llm_response.text)
 
-            # SKIP means the model found nothing worth mining — advance pointer and return
+            # SKIP/empty means the model found nothing worth mining — advance pointer and return
             if not raw or raw.upper() == "SKIP":
                 logger.debug("Tension mining: model returned nothing", extra={
                     "conversation_id": conversation_id,
@@ -1245,13 +1255,6 @@ class WindOrchestrator:
                 )
                 return
 
-            # Strip markdown code fences if present
-            if raw.startswith("```"):
-                raw = raw.split("```")[1]
-                if raw.startswith("json"):
-                    raw = raw[4:]
-                raw = raw.strip()
-
             # Retry once on parse failure before giving up
             try:
                 data = json.loads(raw)
@@ -1261,7 +1264,7 @@ class WindOrchestrator:
                     "action": "tension_mining_parse_retry",
                 })
                 llm_response = self._llm_client.generate(prompt, model=self._curiosity_model)
-                raw = llm_response.text.strip()
+                raw = _normalize_raw(llm_response.text)
                 if not raw or raw.upper() == "SKIP":
                     self.state_manager.update_state(
                         conversation_id,
