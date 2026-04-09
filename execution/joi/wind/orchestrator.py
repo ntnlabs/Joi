@@ -1133,16 +1133,18 @@ class WindOrchestrator:
                 "conversation_id": conversation_id,
                 "silence_minutes": self._tension_silence_minutes,
             })
-            self._mine_tension_from_messages(messages, conversation_id, now)
+            if not self._mine_tension_from_messages(messages, conversation_id, now):
+                break
 
-    def _mine_tension_from_messages(self, messages, conversation_id: str, now: datetime) -> None:
+    def _mine_tension_from_messages(self, messages, conversation_id: str, now: datetime) -> bool:
         """
         Run the curiosity LLM on a batch of messages and create a tension topic if warranted.
 
-        Updates last_tension_mined_message_ts regardless of whether a topic is created.
+        Updates last_tension_mined_message_ts on success.
+        Returns True on success, False on LLM or parse failure (caller should stop the loop).
         """
         if not messages:
-            return
+            return True
 
         # Filter out Wind/reminder system messages
         user_messages = [
@@ -1160,7 +1162,7 @@ class WindOrchestrator:
                 conversation_id,
                 last_tension_mined_message_ts=newest_ts,
             )
-            return
+            return True
 
         # Build transcript (oldest first, truncated)
         lines = []
@@ -1261,7 +1263,7 @@ class WindOrchestrator:
                         conversation_id,
                         last_tension_mined_message_ts=newest_ts,
                     )
-                    return
+                    return True
 
             if confidence >= 0.5 and title:
                 novelty_key = (
@@ -1357,27 +1359,22 @@ class WindOrchestrator:
                 conversation_id,
                 last_tension_mined_message_ts=newest_ts,
             )
+            return True
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.warning("Tension mining: failed to parse LLM response — advancing pointer to prevent retry loop", extra={
+            logger.warning("Tension mining: failed to parse LLM response", extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
                 "action": "tension_mining_parse_fail",
             })
-            self.state_manager.update_state(
-                conversation_id,
-                last_tension_mined_message_ts=newest_ts,
-            )
+            return False
         except Exception as e:
-            logger.warning("Tension mining: LLM call failed — advancing pointer to prevent retry loop", extra={
+            logger.warning("Tension mining: LLM call failed", extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
                 "action": "tension_mining_llm_fail",
             })
-            self.state_manager.update_state(
-                conversation_id,
-                last_tension_mined_message_ts=newest_ts,
-            )
+            return False
 
     def check_timeout_topics(self, now: Optional[datetime] = None) -> int:
         """
