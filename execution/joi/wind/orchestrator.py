@@ -1360,19 +1360,21 @@ class WindOrchestrator:
             )
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.error("Tension mining: failed to parse LLM response", extra={
+            logger.critical("Tension mining: LLM parse failure - SHUTTING DOWN", extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
                 "action": "tension_mining_parse_fail",
             })
-            raise
+            time.sleep(1)
+            os._exit(78)
         except Exception as e:
-            logger.error("Tension mining: LLM call failed", extra={
+            logger.critical("Tension mining: LLM call failed - SHUTTING DOWN", extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
                 "action": "tension_mining_llm_fail",
             })
-            raise
+            time.sleep(1)
+            os._exit(78)
 
     def check_timeout_topics(self, now: Optional[datetime] = None) -> int:
         """
