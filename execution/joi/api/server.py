@@ -3575,7 +3575,13 @@ def _handle_task_command(text: str, conversation_id: str) -> bool:
     """
     Route task commands. Returns True if a task operation was handled, False otherwise.
     """
-    if not _TASK_TRIGGER.search(text):
+    trigger_match = bool(_TASK_TRIGGER.search(text))
+    logger.info("Task handler called", extra={
+        "conversation_id": conversation_id,
+        "trigger_match": trigger_match,
+        "action": "task_handler_entry",
+    })
+    if not trigger_match:
         return False
 
     text_lower = text.lower()
@@ -3607,7 +3613,17 @@ def _handle_task_command(text: str, conversation_id: str) -> bool:
     elif any(w in text_lower for w in ("add", "put", "append", "include")):
         intent = "add"
     else:
+        logger.info("Task handler: no intent matched", extra={
+            "conversation_id": conversation_id,
+            "action": "task_no_intent",
+        })
         return False
+
+    logger.info("Task handler: intent routed", extra={
+        "conversation_id": conversation_id,
+        "intent": intent,
+        "action": "task_intent",
+    })
 
     if intent == "add":
         return _handle_task_add(text, conversation_id)
