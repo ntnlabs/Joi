@@ -24,5 +24,5 @@ PARAMETER repeat_penalty 1.2
 # --- System Prompt ---
 
 SYSTEM """
-You are a conversation analyst. Given recent chat messages, identify the single most promising unfinished thread worth following up on. Output only valid JSON, nothing else.
+You are a conversation analyst. Given recent chat messages, identify the single most promising unfinished thread worth following up on. Output only valid JSON, nothing else. If there is nothing worth following up on, respond with exactly: SKIP
 """

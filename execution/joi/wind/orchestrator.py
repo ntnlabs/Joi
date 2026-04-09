@@ -1217,7 +1217,8 @@ class WindOrchestrator:
             '}\n'
             "Set confidence to 0 for either tension/followup if there is no good candidate. "
             "followup.event_time must be a future local datetime or null. "
-            "Set mood_update to null if no significant mood shift is detected.\n"
+            "Set mood_update to null if no significant mood shift is detected. "
+            "If you have nothing to report at all, respond with exactly: SKIP\n"
             f"\n\nPERMANENTLY OFF-LIMITS topic areas (never surface these):\n{undertaker_block}"
             f"\n\nALREADY RESOLVED topics — only surface again if there is a GENUINELY NEW ANGLE "
             f"(e.g. user raised a new problem on the same subject, not just revisiting the same thread):\n{resolved_block}"
@@ -1232,6 +1233,18 @@ class WindOrchestrator:
             llm_response = self._llm_client.generate(prompt, model=self._curiosity_model)
             raw = llm_response.text.strip()
 
+            # SKIP means the model found nothing worth mining — advance pointer and return
+            if not raw or raw.upper() == "SKIP":
+                logger.debug("Tension mining: model returned nothing", extra={
+                    "conversation_id": conversation_id,
+                    "action": "tension_mining_skip",
+                })
+                self.state_manager.update_state(
+                    conversation_id,
+                    last_tension_mined_message_ts=newest_ts,
+                )
+                return
+
             # Strip markdown code fences if present
             if raw.startswith("```"):
                 raw = raw.split("```")[1]
@@ -1239,7 +1252,23 @@ class WindOrchestrator:
                     raw = raw[4:]
                 raw = raw.strip()
 
-            data = json.loads(raw)
+            # Retry once on parse failure before giving up
+            try:
+                data = json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning("Tension mining: parse failure, retrying", extra={
+                    "conversation_id": conversation_id,
+                    "action": "tension_mining_parse_retry",
+                })
+                llm_response = self._llm_client.generate(prompt, model=self._curiosity_model)
+                raw = llm_response.text.strip()
+                if not raw or raw.upper() == "SKIP":
+                    self.state_manager.update_state(
+                        conversation_id,
+                        last_tension_mined_message_ts=newest_ts,
+                    )
+                    return
+                data = json.loads(raw)
 
             # --- Tension topic (existing logic, now reads from nested key) ---
             # Support both nested {"tension": {...}} and old flat {"title": ..., ...} format
@@ -1360,13 +1389,11 @@ class WindOrchestrator:
             )
 
         except (json.JSONDecodeError, KeyError, ValueError) as e:
-            logger.critical("Tension mining: LLM parse failure - SHUTTING DOWN", extra={
+            logger.warning("Tension mining: parse failure after retry — skipping cycle", extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
                 "action": "tension_mining_parse_fail",
             })
-            time.sleep(1)
-            os._exit(78)
         except Exception as e:
             logger.critical("Tension mining: LLM call failed - SHUTTING DOWN", extra={
                 "conversation_id": conversation_id,
