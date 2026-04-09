@@ -2408,8 +2408,11 @@ def _build_enriched_prompt(
             parts.append("\n\n" + "\n".join(exp_lines))
 
     # Add recent conversation summaries for this conversation (FTS search with fallback)
+    # Suppressed when a task command is active — authoritative DB result takes precedence.
     summaries_text = None
-    if SUMMARIES_FTS_ENABLED and user_message:
+    if _task_suppress_summaries():
+        logger.info("Summaries FTS: suppressed (task command active)")
+    elif SUMMARIES_FTS_ENABLED and user_message:
         summaries_text = memory.get_summaries_as_context(
             user_message,
             max_tokens=SUMMARIES_FTS_MAX_TOKENS,
@@ -3452,6 +3455,7 @@ def _inject_task_context(conversation_id: str, context: str) -> None:
     """Store task context for pickup by _build_enriched_prompt in the same request."""
     _task_context_local.context = context
     _task_context_local.conversation_id = conversation_id
+    _task_context_local.suppress_summaries = True
     logger.debug("Task context injected", extra={
         "conversation_id": conversation_id,
         "context_len": len(context),
@@ -3466,8 +3470,14 @@ def _pop_task_context(conversation_id: str) -> Optional[str]:
     if stored_conv == conversation_id and stored_ctx is not None:
         _task_context_local.context = None
         _task_context_local.conversation_id = None
+        _task_context_local.suppress_summaries = False
         return stored_ctx
     return None
+
+
+def _task_suppress_summaries() -> bool:
+    """Return True if a task command is pending and summaries should be suppressed."""
+    return bool(getattr(_task_context_local, "suppress_summaries", False))
 
 
 def _format_task_list(list_name: str, tasks: list) -> str:
