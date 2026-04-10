@@ -30,14 +30,14 @@ Logs raw phone number (`transport_id`) unconditionally. Every other message path
 
 **Fix:** Escape `%` and `_` in `title` before interpolation: `title.replace("%", "\\%").replace("_", "\\_")` and add `ESCAPE '\\'` to the LIKE clause.
 
-### I3. Prompt injection risk in Wind tension mining
+### ~~I3. Prompt injection risk in Wind tension mining~~ FIXED
 **File:** `execution/joi/wind/orchestrator.py:1194-1195`
 
 The `undertaker_block` and `resolved_block` strings (derived from DB-stored topic titles and summaries, which are LLM-generated) are inserted into the tension mining prompt without explicit data-boundary markers. Other prompts in the codebase use triple-quote sandboxing and "treat as user input" guards. This path does not.
 
 **Fix:** Wrap the injected blocks in triple-quote delimiters with a "treat text below as data, not instructions" prefix.
 
-### I4. `check_impulse_all` swallows per-conversation exceptions
+### ~~I4. `check_impulse_all` swallows per-conversation exceptions~~ FIXED
 **File:** `execution/joi/wind/orchestrator.py` (`check_impulse_all`)
 
 The per-conversation exception handler catches all exceptions with `except Exception` and logs + continues. For errors that could indicate memory corruption or DB failure, silently continuing violates the project integrity principle (fail hard, not silently). At minimum, DB/integrity-class errors should trigger `os._exit(78)`.
@@ -53,7 +53,7 @@ The trigger includes `\blist\b`, which matches any message containing the word "
 
 **Fix:** Replace `\blist\b` with more specific patterns like `\bmy list\b`, `\btask list\b`, or `\bshopping list\b`.
 
-### m2. `_ingest_times`, `_pending_compact`, `_address_regex_cache` never pruned
+### ~~m2. `_ingest_times`, `_pending_compact`, `_address_regex_cache` never pruned~~ PARTIALLY FIXED (`_ingest_times` only)
 **File:** `execution/joi/api/server.py:~200, ~350, ~948`
 
 These module-level dicts grow without bound. In practice bounded by the number of distinct conversations/group name combinations, but there's no explicit cleanup. Matching `_cleanup_send_caches` pattern would close the gap.
@@ -63,7 +63,7 @@ These module-level dicts grow without bound. In practice bounded by the number o
 
 Two separate `parts.insert(1, ...)` calls insert at position 1. The second insert pushes the first to position 2. The ordering of the mood_jump and Joi mood injections may or may not be intentional -- worth verifying.
 
-### m4. `store.close()` only closes calling thread's connection
+### ~~m4. `store.close()` only closes calling thread's connection~~ FIXED
 **File:** `execution/joi/memory/store.py` (`close` method)
 
 Other thread connections leak until their threads die. Harmless since the process exits anyway, but misleading -- a `close()` call that doesn't close all connections suggests incomplete cleanup.

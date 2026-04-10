@@ -1393,17 +1393,20 @@ def _check_ingest_rate_limit(scope: str) -> bool:
     cutoff = now - _INGEST_RATE_WINDOW
 
     with _ingest_lock:
-        if scope not in _ingest_times:
-            _ingest_times[scope] = []
+        if scope in _ingest_times:
+            # Prune expired timestamps
+            _ingest_times[scope] = [t for t in _ingest_times[scope] if t > cutoff]
+            # Remove key if scope has no recent activity
+            if not _ingest_times[scope]:
+                del _ingest_times[scope]
 
-        # Remove expired timestamps
-        _ingest_times[scope] = [t for t in _ingest_times[scope] if t > cutoff]
-
-        # Check limit before recording
-        if len(_ingest_times[scope]) >= _INGEST_RATE_LIMIT:
+        # Check limit
+        if len(_ingest_times.get(scope, [])) >= _INGEST_RATE_LIMIT:
             return False
 
         # Record this request
+        if scope not in _ingest_times:
+            _ingest_times[scope] = []
         _ingest_times[scope].append(now)
         return True
 

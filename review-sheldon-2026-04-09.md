@@ -129,7 +129,7 @@ The `_events` dictionary maps keys to deques. Old entries within each deque are 
 
 **Fix:** Remove keys when their deque becomes empty after pruning.
 
-### I6. _get_client() double-checked locking pattern
+### I6. _get_client() double-checked locking pattern ✓ FIXED by design
 
 **File:** `/home/peter/AI/Jessica/execution/mesh/proxy/forwarder.py:74-82`
 
@@ -194,7 +194,7 @@ The `rag show` subcommand makes 7 separate database queries to display one row. 
 
 **Consequence:** Slow admin command execution, especially over encrypted SQLCipher databases. Should be a single SELECT returning all columns.
 
-### M3. sql_escape_literal in joi-admin is not injection-proof for all edge cases
+### M3. sql_escape_literal in joi-admin is not injection-proof for all edge cases ✓ FIXED by design
 
 **File:** `/home/peter/AI/Jessica/execution/joi/scripts/joi-admin:334-337`
 
@@ -229,7 +229,7 @@ The reaction logging path does not check `policy_manager.is_privacy_mode()` befo
 
 **Consequence:** PII could be logged in plaintext when privacy mode is enabled, specifically for reaction messages.
 
-### M6. update_state builds SQL with f-string column names
+### M6. update_state builds SQL with f-string column names ✓ FIXED by design
 
 **File:** `/home/peter/AI/Jessica/execution/joi/wind/state.py:282-288`
 
@@ -260,7 +260,7 @@ set_parts = [f"{counter_col} = COALESCE({counter_col}, 0) + 1", ...]
 
 Column names come from hardcoded string literals in the if/elif chain, so this is safe. But the pattern of building SQL with f-strings containing column names appears frequently and could be fragile if someone adds a new outcome without thinking about SQL safety.
 
-### M9. WindDecisionLogger._last_state dict grows unbounded
+### M9. WindDecisionLogger._last_state dict grows unbounded ✓ FIXED by design
 
 **File:** `/home/peter/AI/Jessica/execution/joi/wind/logging.py:68`
 
@@ -330,7 +330,7 @@ PRAGMA key = '$DB_KEY';
 
 If the key contained a single quote, it would break the PRAGMA. The key is hex (from file), so safe in practice.
 
-### m7. Mesh config.py bind_host defaults to 0.0.0.0
+### m7. Mesh config.py bind_host defaults to 0.0.0.0 ✓ FIXED by design
 
 **File:** `/home/peter/AI/Jessica/execution/mesh/proxy/config.py:8`
 
