@@ -8,7 +8,7 @@
 
 ## IMPORTANT
 
-### I1. Privacy leak in reaction logging
+### I1. Privacy leak in reaction logging ✓ FIXED
 **File:** `execution/joi/api/server.py:1554`
 
 ```python

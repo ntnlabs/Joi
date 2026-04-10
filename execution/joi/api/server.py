@@ -347,6 +347,17 @@ _send_locks: Dict[str, threading.Lock] = {}  # per-conversation locks
 _send_locks_lock = threading.Lock()  # protects _send_locks dict creation
 _SEND_CACHE_MAX_SIZE = 1000  # Max conversations to track
 _SEND_CACHE_CLEANUP_AGE = 3600  # Remove entries older than 1 hour
+_mesh_client: Optional[httpx.Client] = None
+_mesh_client_lock = threading.Lock()
+
+
+def _get_mesh_client() -> httpx.Client:
+    global _mesh_client
+    if _mesh_client is None:
+        with _mesh_client_lock:
+            if _mesh_client is None:
+                _mesh_client = httpx.Client(timeout=10.0)
+    return _mesh_client
 
 
 def _cleanup_send_caches():
@@ -1551,7 +1562,11 @@ def receive_message(msg: InboundMessage):
     # Handle reactions - store and respond briefly
     if msg.content.type == "reaction":
         emoji = msg.content.reaction or "?"
-        logger.info("Received reaction", extra={"emoji": emoji, "sender": msg.sender.transport_id, "action": "reaction_receive"})
+        logger.info("Received reaction", extra={
+            "emoji": emoji,
+            "sender": "[redacted]" if privacy_mode else msg.sender.transport_id,
+            "action": "reaction_receive",
+        })
 
         reaction_text = f"[reacted with {emoji}]"
         memory.store_message(
@@ -3948,10 +3963,10 @@ def _send_to_mesh(
             hmac_headers = create_request_headers(body, current_secret)
             headers.update(hmac_headers)
 
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.post(url, content=body, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
+        client = _get_mesh_client()
+        resp = client.post(url, content=body, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
 
         if data.get("status") == "ok":
             logger.info("Sent response to mesh successfully", extra={"action": "mesh_send"})
