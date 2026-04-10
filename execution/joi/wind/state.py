@@ -304,6 +304,7 @@ class WindStateManager:
         record_user_interaction (which resets unanswered_proactive_count).
         """
         now = datetime.now(timezone.utc)
+        # Shift back 3 h so conversations after midnight still count as "today"
         today_bucket = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
 
         # Ensure state exists (atomic)
@@ -421,6 +422,7 @@ class WindStateManager:
 
         Called when day bucket changes.
         """
+        # Shift back 3 h so conversations after midnight still count as "today"
         today_bucket = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%d")
         self.update_state(
             conversation_id,

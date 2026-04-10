@@ -4,8 +4,8 @@ Wind decision logging for observability.
 
 import json
 import logging
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any
 
 logger = logging.getLogger("joi.wind.logging")
@@ -47,6 +47,18 @@ def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
         return datetime.fromisoformat(value)
     except (ValueError, TypeError):
         return None
+
+
+def _fmt_conv_id(conversation_id: str) -> str:
+    """Format conversation_id for logging without over-truncating group IDs."""
+    if not conversation_id:
+        return "?"
+    if conversation_id.startswith("+"):
+        # Phone number (DM) — show last 4 digits
+        return f"+***{conversation_id[-4:]}" if len(conversation_id) >= 4 else "+***"
+    else:
+        # Group ID (base64) — show first 8 chars
+        return f"[GRP:{conversation_id[:8]}...]" if len(conversation_id) >= 8 else f"[GRP:{conversation_id}]"
 
 
 class WindDecisionLogger:
@@ -147,7 +159,7 @@ class WindDecisionLogger:
             logger.info(
                 "Wind decision #%d: conv=%s score=%.2f threshold=%.2f%s%s decision=%s reason=%s",
                 log_id,
-                conversation_id[:16] if conversation_id else "?",
+                _fmt_conv_id(conversation_id),
                 impulse_score or 0.0,
                 threshold or 0.0,
                 offset_str,
@@ -234,7 +246,6 @@ class WindDecisionLogger:
         conn = self._connect()
 
         # Calculate cutoff
-        from datetime import timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         if conversation_id:
@@ -283,7 +294,6 @@ class WindDecisionLogger:
         Returns:
             Number of logs deleted
         """
-        from datetime import timedelta
         cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
         conn = self._connect()
