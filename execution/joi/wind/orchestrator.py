@@ -88,10 +88,10 @@ class WindOrchestrator:
         # Phase 4a+4b: Feedback manager (constructed before ImpulseEngine to wire in)
         self.feedback_manager = TopicFeedbackManager(
             db_connection_factory,
-            cooldown_days=self.config.cooldown_days if hasattr(self.config, 'cooldown_days') else 9,
-            cooldown_jitter_days=self.config.cooldown_jitter_days if hasattr(self.config, 'cooldown_jitter_days') else 2,
-            interest_decay_rate=self.config.interest_decay_rate if hasattr(self.config, 'interest_decay_rate') else 0.02,
-            undertaker_threshold=self.config.undertaker_threshold if hasattr(self.config, 'undertaker_threshold') else 2.0,
+            cooldown_days=self.config.cooldown_days,
+            cooldown_jitter_days=self.config.cooldown_jitter_days,
+            interest_decay_rate=self.config.interest_decay_rate,
+            undertaker_threshold=self.config.undertaker_threshold,
         )
         self.impulse_engine = ImpulseEngine(
             config=self.config,
@@ -102,7 +102,7 @@ class WindOrchestrator:
         # Phase 4a: Engagement tracking
         self.engagement_classifier = EngagementClassifier(
             llm_client=llm_client,
-            timeout_hours=self.config.ignore_timeout_hours if hasattr(self.config, 'ignore_timeout_hours') else 12.0,
+            timeout_hours=self.config.ignore_timeout_hours,
         )
         # Suppress identical "mining skipped at cap" repeats: {conv_id: (tension, discovery)}
         self._mining_skip_last: dict[str, tuple[int, int]] = {}
@@ -704,7 +704,7 @@ class WindOrchestrator:
             # Retry logic with pursuit back-off
             max_retries = self._parse_retry_count(action, topic)
             if topic.retry_count < max_retries:
-                backoff_list = self.config.pursuit_backoff_hours if hasattr(self.config, 'pursuit_backoff_hours') else [4, 12, 24]
+                backoff_list = self.config.pursuit_backoff_hours
                 backoff_h = backoff_list[min(topic.retry_count, len(backoff_list) - 1)]
                 due_after = datetime.now(timezone.utc) + timedelta(hours=backoff_h)
                 self.topic_manager.requeue_for_retry(topic.id, due_after=due_after)

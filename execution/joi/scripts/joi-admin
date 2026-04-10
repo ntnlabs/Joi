@@ -910,21 +910,27 @@ SQL
             done
             [[ -z "$chunk_id" ]] && error "rag show requires --id ID"
 
-            local exists
-            exists=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks WHERE id = $chunk_id;")
-            [[ "${exists:-0}" == "0" ]] && error "No knowledge chunk found with id $chunk_id"
+            # 1 query for all metadata (id, scope, source, title, chunk_index, created_at, metadata_json
+            # are safe to pipe-delimit — none of these fields contain '|')
+            local row
+            row=$(db_scalar "SELECT id || '|' || COALESCE(scope,'(none)') || '|' || COALESCE(source,'') || '|' || COALESCE(title,'') || '|' || COALESCE(chunk_index,0) || '|' || datetime(created_at/1000,'unixepoch') || '|' || COALESCE(metadata_json,'-') FROM knowledge_chunks WHERE id = $chunk_id;")
+            [[ -z "$row" ]] && error "No knowledge chunk found with id $chunk_id"
+            local kc_id kc_scope kc_source kc_title kc_chunk_index kc_created_at kc_metadata
+            IFS='|' read -r kc_id kc_scope kc_source kc_title kc_chunk_index kc_created_at kc_metadata <<< "$row"
+
+            # Separate query for content (may contain any character including '|')
+            local content
+            content=$(db_scalar "SELECT COALESCE(content,'') FROM knowledge_chunks WHERE id = $chunk_id;")
 
             echo ""
             echo "=== KNOWLEDGE CHUNK #$chunk_id ==="
-            printf "  %-18s %s\n" "id:" "$(db_scalar "SELECT id FROM knowledge_chunks WHERE id = $chunk_id;")"
-            printf "  %-18s %s\n" "scope:" "$(db_scalar "SELECT COALESCE(scope,'(none)') FROM knowledge_chunks WHERE id = $chunk_id;")"
-            printf "  %-18s %s\n" "source:" "$(db_scalar "SELECT COALESCE(source,'') FROM knowledge_chunks WHERE id = $chunk_id;")"
-            printf "  %-18s %s\n" "title:" "$(db_scalar "SELECT COALESCE(title,'') FROM knowledge_chunks WHERE id = $chunk_id;")"
-            printf "  %-18s %s\n" "chunk_index:" "$(db_scalar "SELECT COALESCE(chunk_index,0) FROM knowledge_chunks WHERE id = $chunk_id;")"
-            printf "  %-18s %s\n" "created_at:" "$(db_scalar "SELECT datetime(created_at/1000,'unixepoch') FROM knowledge_chunks WHERE id = $chunk_id;")"
-            printf "  %-18s %s\n" "metadata_json:" "$(db_scalar "SELECT COALESCE(metadata_json,'-') FROM knowledge_chunks WHERE id = $chunk_id;")"
-            local content
-            content=$(db_scalar "SELECT COALESCE(content,'') FROM knowledge_chunks WHERE id = $chunk_id;")
+            printf "  %-18s %s\n" "id:" "$kc_id"
+            printf "  %-18s %s\n" "scope:" "$kc_scope"
+            printf "  %-18s %s\n" "source:" "$kc_source"
+            printf "  %-18s %s\n" "title:" "$kc_title"
+            printf "  %-18s %s\n" "chunk_index:" "$kc_chunk_index"
+            printf "  %-18s %s\n" "created_at:" "$kc_created_at"
+            printf "  %-18s %s\n" "metadata_json:" "$kc_metadata"
             if [[ -n "$content" ]]; then
                 echo ""
                 echo "  --- content ---"

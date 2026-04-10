@@ -147,7 +147,7 @@ The outer check reads `_client` without the lock. In CPython this is safe due to
 
 **Consequence:** Low risk in CPython. Would be a real data race under PEP 703 free-threaded Python or PyPy without GIL.
 
-### I7. Typing indicator forwarding skips routing state
+### I7. Typing indicator forwarding skips routing state ✓ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/mesh/proxy/forwarder.py:303-331`
 
@@ -155,7 +155,7 @@ The outer check reads `_client` without the lock. In CPython this is safe due to
 
 **Consequence:** When routing is active, typing suppression for Wind will not work for conversations routed to non-default backends. Wind might fire proactive messages while the user is actively typing.
 
-### I8. Dead code: redundant guard after early return
+### I8. Dead code: redundant guard after early return ✓ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/mesh/proxy/forwarder.py:319-322`
 
@@ -173,7 +173,7 @@ if secret:           # <-- always True at this point, dead code
 
 ## MODERATE -- Performance, maintainability, design issues
 
-### M1. Per-request httpx.Client creation in _send_to_mesh
+### M1. Per-request httpx.Client creation in _send_to_mesh ✓ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/joi/api/server.py:3950`
 
@@ -186,7 +186,7 @@ Every outbound message creates a new HTTP client with fresh TCP connection and T
 
 **Consequence:** Unnecessary latency and resource overhead on every outbound message.
 
-### M2. Three separate db_scalar calls for rag show command
+### M2. Three separate db_scalar calls for rag show command ✓ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/joi/scripts/joi-admin:919-927`
 
@@ -221,7 +221,7 @@ if dt.tzinfo is None:
 
 **Consequence:** Legacy data could shift by the DST offset. The comment acknowledges this is for legacy values.
 
-### M5. Inconsistent privacy mode checking in reaction logging
+### M5. Inconsistent privacy mode checking in reaction logging ✓ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/joi/api/server.py` (reaction handling path)
 
@@ -237,7 +237,7 @@ Column names are interpolated into SQL via f-string. They are validated against 
 
 **Consequence:** Safe due to whitelist validation. Noting for completeness.
 
-### M7. hasattr checks on WindConfig dataclass are dead guards
+### M7. hasattr checks on WindConfig dataclass are dead guards ✓ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/joi/wind/orchestrator.py:91-106`
 

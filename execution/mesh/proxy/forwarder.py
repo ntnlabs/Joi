@@ -310,8 +310,15 @@ def forward_typing(sender: str, conversation_id: str) -> None:
     if os.getenv("MESH_ENABLE_FORWARD", "0") != "1":
         return
 
-    url = f"{MESH_JOI_URL}/api/v1/typing/inbound"
     payload = {"sender": sender, "conversation_id": conversation_id}
+
+    # Respect multi-backend routing so typing suppression reaches the correct backend
+    if _routing_state and _routing_state.is_enabled():
+        _, backend_url = _routing_state.get_backend_for_payload(payload)
+        url = f"{backend_url}/api/v1/typing/inbound"
+    else:
+        url = f"{MESH_JOI_URL}/api/v1/typing/inbound"
+
     body = json.dumps(payload).encode("utf-8")
 
     headers = {"Content-Type": "application/json"}
@@ -319,9 +326,8 @@ def forward_typing(sender: str, conversation_id: str) -> None:
     if not secret:
         logger.error("Forward rejected: no HMAC secret configured (fail-closed)", extra={"action": "forward_rejected"})
         return
-    if secret:
-        hmac_headers = create_request_headers(body, secret)
-        headers.update(hmac_headers)
+    hmac_headers = create_request_headers(body, secret)
+    headers.update(hmac_headers)
 
     try:
         client = _get_client()
