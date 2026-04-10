@@ -80,7 +80,7 @@ This creates a **naive** (timezone-unaware) datetime, while all other datetimes 
 
 **Fix:** `cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)`
 
-### I2. Double-formatting of mood_updated_at -- passing pre-formatted string where datetime expected
+### ~~I2. Double-formatting of mood_updated_at -- passing pre-formatted string where datetime expected~~ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/joi/wind/state.py:603, 688, 705`
 
@@ -92,7 +92,7 @@ This passes an ISO string to `update_state()`, which checks `isinstance(value, d
 
 **Consequence:** Currently benign. Creates a maintenance trap -- if `update_state` ever adds validation or transformation logic for datetime values, these calls will silently bypass it.
 
-### I3. record_proactive_sent does two separate commits -- non-atomic update
+### ~~I3. record_proactive_sent does two separate commits -- non-atomic update~~ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/joi/wind/state.py:292-348`
 
@@ -104,7 +104,7 @@ Between these commits, `get_state()` is called (line 339) which reads the partia
 
 **Consequence:** Fire time tracking can become inconsistent with send counters after a crash. The daily cap check uses `proactive_fire_times` while `proactive_sent_today` uses the counter -- they could disagree, potentially allowing extra Wind messages or blocking them incorrectly.
 
-### I4. Wind message_id is a UUID, not the Signal timestamp needed for reply tracking
+### I4. Wind message_id is a UUID, not the Signal timestamp needed for reply tracking -- SKIPPED (false positive)
 
 **File:** `/home/peter/AI/Jessica/execution/joi/api/scheduler.py:476-494`
 
@@ -119,7 +119,7 @@ self._wind_orchestrator.record_proactive_sent(
 
 **Consequence:** Direct reply detection for Wind messages will never match. All engagement classification falls through to the slower LLM-based path. The feature works but wastes LLM calls and loses the high-confidence direct-reply signal.
 
-### I5. Rate limiter _events dict grows unbounded per unique key
+### ~~I5. Rate limiter _events dict grows unbounded per unique key~~ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/mesh/proxy/rate_limiter.py:18-53`
 
@@ -314,7 +314,7 @@ conversation_id[:16] if conversation_id else "?"
 
 Phone numbers are typically 12-15 characters, so this truncation is effectively no truncation for DMs. Inconsistent with the privacy mode redaction patterns used elsewhere.
 
-### m5. notes.py and tasks.py are very thin wrappers
+### m5. notes.py and tasks.py are very thin wrappers -- SKIPPED (by design)
 
 **Files:** `/home/peter/AI/Jessica/execution/joi/notes.py` (124 lines), `/home/peter/AI/Jessica/execution/joi/tasks.py` (99 lines)
 

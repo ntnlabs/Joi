@@ -2,6 +2,7 @@
 Wind state management for per-conversation proactive messaging state.
 """
 
+import json
 import logging
 import time
 from dataclasses import dataclass, field
@@ -149,11 +150,10 @@ class WindStateManager:
         if not row:
             return None
 
-        import json as _json
         raw_fire = row["proactive_fire_times_json"]
         fire_times = []
         if raw_fire:
-            for ts in _json.loads(raw_fire):
+            for ts in json.loads(raw_fire):
                 dt = _parse_datetime(ts)
                 if dt:
                     fire_times.append(dt)
@@ -286,15 +286,16 @@ class WindStateManager:
         now = datetime.now(timezone.utc)
         # Shift back 3 h so conversations after midnight still count as "today"
         today_bucket = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
-
-        # Ensure state exists (atomic)
         self.get_or_create_state(conversation_id)
 
-        conn = self._connect()
+        # Read current fire_times BEFORE any write
+        state = self.get_state(conversation_id)
+        cutoff = now - timedelta(hours=24)
+        fire_times = [t for t in state.proactive_fire_times if t > cutoff]
+        fire_times.append(now)
+        fire_times_json = json.dumps([_format_datetime(t) for t in fire_times])
 
-        # Atomic update with conditional reset and increment
-        # If day bucket changed, reset to 1; otherwise increment
-        # unanswered_proactive_count always increments atomically
+        conn = self._connect()
         conn.execute(
             """
             UPDATE wind_state
@@ -307,28 +308,16 @@ class WindStateManager:
                 proactive_day_bucket = ?,
                 unanswered_proactive_count = unanswered_proactive_count + 1,
                 total_proactives_sent = COALESCE(total_proactives_sent, 0) + 1,
+                proactive_fire_times_json = ?,
                 updated_at = ?
             WHERE conversation_id = ?
             """,
             (_format_datetime(now), today_bucket, today_bucket,
-             _format_datetime(now), conversation_id)
+             fire_times_json, _format_datetime(now), conversation_id)
         )
         conn.commit()
 
-        # Update rolling 24h fire timestamps
-        import json as _json
-        state = self.get_state(conversation_id)
-        cutoff = now - timedelta(hours=24)
-        fire_times = [t for t in state.proactive_fire_times if t > cutoff]
-        fire_times.append(now)
-        fire_times_json = _json.dumps([_format_datetime(t) for t in fire_times])
-        conn.execute(
-            "UPDATE wind_state SET proactive_fire_times_json = ? WHERE conversation_id = ?",
-            (fire_times_json, conversation_id),
-        )
-        conn.commit()
-
-        # Log with fresh state
+        # Re-read for logging
         state = self.get_state(conversation_id)
         logger.info("Recorded proactive sent", extra={
             "conversation_id": conversation_id,
@@ -584,7 +573,7 @@ class WindStateManager:
                     conversation_id,
                     mood_intensity=new_intensity,
                     mood_state=new_mood_state,
-                    mood_updated_at=datetime.now(timezone.utc).isoformat(),
+                    mood_updated_at=datetime.now(timezone.utc),
                 )
 
         # Log with fresh state
@@ -669,7 +658,7 @@ class WindStateManager:
             conversation_id,
             mood_state=state,
             mood_intensity=intensity,
-            mood_updated_at=datetime.now(timezone.utc).isoformat(),
+            mood_updated_at=datetime.now(timezone.utc),
         )
         logger.info("Wind mood updated", extra={
             "conversation_id": conversation_id,
@@ -686,7 +675,7 @@ class WindStateManager:
             conversation_id,
             user_mood_state=state,
             user_mood_intensity=intensity,
-            user_mood_updated_at=datetime.now(timezone.utc).isoformat(),
+            user_mood_updated_at=datetime.now(timezone.utc),
         )
         logger.debug("User mood updated", extra={
             "conversation_id": conversation_id,
