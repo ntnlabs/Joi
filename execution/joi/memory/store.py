@@ -537,6 +537,8 @@ class MemoryStore:
         """
         self._db_path = db_path
         self._local = threading.local()
+        self._all_connections: list = []
+        self._all_connections_lock = threading.Lock()
 
         # Load encryption key from file if not provided directly
         if encryption_key is None:
@@ -615,6 +617,8 @@ class MemoryStore:
             conn.execute("PRAGMA foreign_keys = ON")
 
             self._local.conn = conn
+            with self._all_connections_lock:
+                self._all_connections.append(conn)
         return self._local.conn
 
     def rollback(self) -> None:
@@ -1409,10 +1413,15 @@ class MemoryStore:
         return results
 
     def close(self) -> None:
-        """Close the database connection for this thread."""
-        if hasattr(self._local, 'conn') and self._local.conn:
-            self._local.conn.close()
-            self._local.conn = None
+        """Close all database connections for all threads."""
+        with self._all_connections_lock:
+            for conn in self._all_connections:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            self._all_connections.clear()
+        self._local.conn = None
 
     # --- Message Operations ---
 
