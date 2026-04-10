@@ -960,6 +960,8 @@ def _is_addressing_joi(text: str, names: Optional[List[str]] = None) -> bool:
     # Use cached regex if available
     names_key = tuple(sorted(names))
     if names_key not in _address_regex_cache:
+        if len(_address_regex_cache) >= 100:
+            _address_regex_cache.clear()
         _address_regex_cache[names_key] = _build_address_regex(names)
 
     return bool(_address_regex_cache[names_key].search(text))
