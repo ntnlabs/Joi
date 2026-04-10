@@ -457,7 +457,7 @@ _NOTE_TRIGGER = re.compile(
 
 # Tasks: pre-filter before LLM parsing
 _TASK_TRIGGER = re.compile(
-    r"\b(task|tasks|list|lists|todo|to-do|to do|check off|cross off|uncheck|grocery|shopping list)\b",
+    r"\b(task|tasks|todo|to-do|to do|check off|cross off|uncheck|grocery|shopping list|task list|my list|todo list)\b",
     re.I,
 )
 _REMINDER_TIME_VOCAB = (
@@ -2356,7 +2356,8 @@ def _build_enriched_prompt(
     """Build system prompt enriched with user facts, summaries, and RAG context for this conversation."""
     parts = [base_prompt]
 
-    # Mood jump injection: behavioral hint, injected before facts/summaries
+    # mood_jump injected at pos 1; mood_line (below) will also insert at 1,
+    # placing mood_line immediately after base_prompt and mood_jump after it.
     if mood_jump:
         parts.insert(1, "\n\n" + mood_jump)
 

@@ -36,7 +36,7 @@ _hmac_secret: Optional[bytes] = None
 _hmac_secret_loaded = False
 
 # Reusable client for connection pooling
-_client: httpx.Client = None
+_client: Optional[httpx.Client] = None
 _client_lock = threading.Lock()
 
 # Fixed worker queues for causal ordering (same conversation always goes to same worker)
