@@ -419,12 +419,12 @@ class Scheduler:
                     if self._message_queue:
                         message_text = self._message_queue.enqueue(
                             message_id=f"wind-{conv_id}-{int(time.time())}",
-                            handler=lambda msg: self._generate_proactive_message(
-                                topic_title=topic.title,
-                                topic_content=topic.content,
-                                conversation_id=conv_id,
-                                topic_type=topic.topic_type,
-                                emotional_context=topic.emotional_context,
+                            handler=lambda msg, _topic=topic, _conv_id=conv_id: self._generate_proactive_message(
+                                topic_title=_topic.title,
+                                topic_content=_topic.content,
+                                conversation_id=_conv_id,
+                                topic_type=_topic.topic_type,
+                                emotional_context=_topic.emotional_context,
                             ),
                             is_owner=False,
                             timeout=600.0,
@@ -527,11 +527,11 @@ class Scheduler:
                     if self._message_queue:
                         message_text = self._message_queue.enqueue(
                             message_id=f"reminder-{reminder.id}-{int(time.time())}",
-                            handler=lambda msg: self._generate_reminder_message(
-                                title=reminder.title,
-                                conversation_id=reminder.conversation_id,
-                                is_recurring=is_recurring,
-                                snooze_count=reminder.snooze_count,
+                            handler=lambda msg, _r=reminder, _recurring=is_recurring: self._generate_reminder_message(
+                                title=_r.title,
+                                conversation_id=_r.conversation_id,
+                                is_recurring=_recurring,
+                                snooze_count=_r.snooze_count,
                             ),
                             is_owner=False,
                             timeout=600.0,
