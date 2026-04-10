@@ -32,21 +32,7 @@ class WindDecision:
     accumulated_impulse: Optional[float] = None
 
 
-def _format_datetime(dt: Optional[datetime]) -> Optional[str]:
-    """Format datetime to ISO string."""
-    if not dt:
-        return None
-    return dt.isoformat()
-
-
-def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO format datetime string."""
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value)
-    except (ValueError, TypeError):
-        return None
+from .utils import _parse_datetime, _format_datetime
 
 
 def _fmt_conv_id(conversation_id: str) -> str:

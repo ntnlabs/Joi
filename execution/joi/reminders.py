@@ -268,7 +268,7 @@ class ReminderManager:
         """
         if retention_days <= 0:
             return 0
-        cutoff = datetime.now() - timedelta(days=retention_days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
         conn = self._connect()
         cursor = conn.execute(
             """

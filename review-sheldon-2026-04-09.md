@@ -66,7 +66,7 @@ memory._connect().rollback()
 
 ## IMPORTANT -- Correctness and reliability bugs
 
-### I1. Naive datetime in reminders.purge_old() -- timezone mismatch
+### I1. Naive datetime in reminders.purge_old() -- timezone mismatch ✓ FIXED
 
 **File:** `/home/peter/AI/Jessica/execution/joi/reminders.py:271`
 
@@ -208,7 +208,7 @@ Handles single quotes but not null bytes or other edge cases. Used for user-supp
 
 **Consequence:** Theoretical SQL injection vector. Low practical risk since the script requires root.
 
-### M4. _parse_datetime in wind/state.py treats naive datetimes as local time
+### M4. _parse_datetime in wind/state.py treats naive datetimes as local time — SKIPPED (by design)
 
 **File:** `/home/peter/AI/Jessica/execution/joi/wind/state.py:83-96`
 

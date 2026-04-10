@@ -22,26 +22,7 @@ DEFAULT_COOLDOWN_JITTER_DAYS = 2    # ±N days random jitter on cooldown duratio
 DEFAULT_UNDERTAKER_THRESHOLD = 2.0  # rejection_weight to auto-promote to undertaker
 
 
-def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO format datetime string, returning a UTC-aware datetime."""
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            dt = dt.astimezone(timezone.utc)
-        else:
-            dt = dt.astimezone(timezone.utc)
-        return dt
-    except (ValueError, TypeError):
-        return None
-
-
-def _format_datetime(dt: Optional[datetime]) -> Optional[str]:
-    """Format datetime to ISO string."""
-    if not dt:
-        return None
-    return dt.isoformat()
+from .utils import _parse_datetime, _format_datetime
 
 
 @dataclass

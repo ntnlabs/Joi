@@ -69,7 +69,7 @@ This logs the full `transport_id` (phone number) without any privacy mode check.
 
 Note titles are user-generated PII ("doctor appointment", "Alice's birthday gift") and should be redacted when privacy mode is active. Currently all note handlers log the full title at INFO level unconditionally.
 
-### I3. `_parse_datetime` has inconsistent behavior across Wind modules
+### I3. `_parse_datetime` has inconsistent behavior across Wind modules ✓ FIXED
 **Files:**
 - `/home/peter/AI/Jessica/execution/joi/wind/topics.py:42-54` (normalizes naive to UTC via local assumption)
 - `/home/peter/AI/Jessica/execution/joi/wind/feedback.py:25-37` (same)
@@ -136,7 +136,7 @@ The `decision-log` subcommand at line 2341-2342 does validate `$limit` properly 
 
 ## MINOR (worth noting)
 
-### M1. Duplicated `_parse_datetime` / `_format_datetime` across 4 Wind modules
+### M1. Duplicated `_parse_datetime` / `_format_datetime` across 4 Wind modules ✓ FIXED
 **Files:** `topics.py`, `feedback.py`, `state.py`, `logging.py`
 
 Four identical (or near-identical) copies of these utility functions. This violates DRY and, as noted in I3, has already caused a behavioral inconsistency in the `logging.py` variant.

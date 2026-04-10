@@ -39,26 +39,7 @@ class PendingTopic:
     emotional_context: Optional[str] = None
 
 
-def _parse_datetime(value: Optional[str]) -> Optional[datetime]:
-    """Parse ISO format datetime string, returning a UTC-aware datetime."""
-    if not value:
-        return None
-    try:
-        dt = datetime.fromisoformat(value)
-        if dt.tzinfo is None:
-            dt = dt.astimezone(timezone.utc)
-        else:
-            dt = dt.astimezone(timezone.utc)
-        return dt
-    except (ValueError, TypeError):
-        return None
-
-
-def _format_datetime(dt: Optional[datetime]) -> Optional[str]:
-    """Format datetime to ISO string."""
-    if not dt:
-        return None
-    return dt.isoformat()
+from .utils import _parse_datetime, _format_datetime
 
 
 class TopicManager:
