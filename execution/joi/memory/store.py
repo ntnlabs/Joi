@@ -617,6 +617,13 @@ class MemoryStore:
             self._local.conn = conn
         return self._local.conn
 
+    def rollback(self) -> None:
+        """Roll back the current thread's connection transaction."""
+        try:
+            self._connect().rollback()
+        except Exception:
+            pass
+
     def _init_schema(self) -> None:
         """Initialize database schema."""
         conn = self._connect()
@@ -1056,15 +1063,16 @@ class MemoryStore:
         Returns a row dict or None.
         """
         conn = self._connect()
+        escaped = title.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         cursor = conn.execute(
             """
             SELECT id, conversation_id, title, content, embedding, remind_at, created_at, updated_at, archived
             FROM notes
-            WHERE conversation_id = ? AND LOWER(title) LIKE LOWER(?) AND archived = 0
+            WHERE conversation_id = ? AND LOWER(title) LIKE LOWER(?) ESCAPE '\\' AND archived = 0
             ORDER BY updated_at DESC
             LIMIT 1
             """,
-            (conversation_id, f"%{title}%"),
+            (conversation_id, f"%{escaped}%"),
         )
         row = cursor.fetchone()
         return dict(row) if row else None

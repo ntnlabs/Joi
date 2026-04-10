@@ -934,7 +934,7 @@ Return ONLY valid JSON, nothing else:"""
         logger.warning("Failed to store fact", extra={"error": str(e)})
         # Rollback to clear failed transaction state (prevents blocking other connections)
         try:
-            memory._connect().rollback()
+            memory.rollback()
         except Exception:
             pass
 
