@@ -358,6 +358,9 @@ ensure_db_mode() {
         if [[ -f "$MEMORY_KEY_FILE" ]]; then
             DB_KEY=$(tr -d '\r\n' < "$MEMORY_KEY_FILE")
             if [[ -n "$DB_KEY" ]]; then
+                if [[ ! "$DB_KEY" =~ ^[0-9a-fA-F]+$ ]]; then
+                    error "DB_KEY is not valid hex — check key file format"
+                fi
                 if "$SQLCIPHER_BIN" "$MEMORY_DB" <<EOF >/dev/null 2>&1
 PRAGMA key = '$DB_KEY';
 SELECT count(*) FROM sqlite_master WHERE type='table';
@@ -2209,28 +2212,50 @@ SQL
             fi
             [[ ! "$topic_id" =~ ^[0-9]+$ ]] && error "Topic id must be a number"
 
-            local exists
-            exists=$(db_scalar "SELECT COUNT(*) FROM pending_topics WHERE id = $topic_id;")
-            [[ "${exists:-0}" == "0" ]] && error "No topic found with id $topic_id"
+            local row
+            row=$(db_scalar "SELECT \
+  COALESCE(id,'') || '|' || \
+  COALESCE(conversation_id,'') || '|' || \
+  COALESCE(topic_type,'') || '|' || \
+  COALESCE(title,'') || '|' || \
+  COALESCE(status,'') || '|' || \
+  COALESCE(outcome,'-') || '|' || \
+  COALESCE(priority,0) || '|' || \
+  COALESCE(retry_count,0) || '|' || \
+  COALESCE(created_at,'-') || '|' || \
+  COALESCE(expires_at,'-') || '|' || \
+  COALESCE(due_at,'-') || '|' || \
+  COALESCE(mentioned_at,'-') || '|' || \
+  COALESCE(outcome_at,'-') || '|' || \
+  COALESCE(novelty_key,'-') || '|' || \
+  COALESCE(source_event_id,'-') || '|' || \
+  COALESCE(sent_message_id,'-') \
+  FROM pending_topics WHERE id = $topic_id;")
+            [[ -z "$row" ]] && error "No topic found with id $topic_id"
+
+            local t_id t_conv t_type t_title t_status t_outcome t_priority t_retry \
+                  t_created t_expires t_due t_mentioned t_outcome_at t_novelty t_source_id t_sent_id
+            IFS='|' read -r t_id t_conv t_type t_title t_status t_outcome t_priority t_retry \
+                             t_created t_expires t_due t_mentioned t_outcome_at t_novelty t_source_id t_sent_id <<< "$row"
 
             echo ""
             echo "=== TOPIC #$topic_id ==="
-            printf "  %-18s %s\n" "id:" "$(db_scalar "SELECT id FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "conversation_id:" "$(db_scalar "SELECT COALESCE(conversation_id,'') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "type:" "$(db_scalar "SELECT COALESCE(topic_type,'') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "title:" "$(db_scalar "SELECT COALESCE(title,'') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "status:" "$(db_scalar "SELECT COALESCE(status,'') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "outcome:" "$(db_scalar "SELECT COALESCE(outcome,'-') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "priority:" "$(db_scalar "SELECT COALESCE(priority,0) FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "retry_count:" "$(db_scalar "SELECT COALESCE(retry_count,0) FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "created_at:" "$(db_scalar "SELECT COALESCE(created_at,'-') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "expires_at:" "$(db_scalar "SELECT COALESCE(expires_at,'-') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "due_at:" "$(db_scalar "SELECT COALESCE(due_at,'-') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "mentioned_at:" "$(db_scalar "SELECT COALESCE(mentioned_at,'-') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "outcome_at:" "$(db_scalar "SELECT COALESCE(outcome_at,'-') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "novelty_key:" "$(db_scalar "SELECT COALESCE(novelty_key,'-') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "source_event_id:" "$(db_scalar "SELECT COALESCE(source_event_id,'-') FROM pending_topics WHERE id = $topic_id;")"
-            printf "  %-18s %s\n" "sent_message_id:" "$(db_scalar "SELECT COALESCE(sent_message_id,'-') FROM pending_topics WHERE id = $topic_id;")"
+            printf "  %-18s %s\n" "id:" "$t_id"
+            printf "  %-18s %s\n" "conversation_id:" "$t_conv"
+            printf "  %-18s %s\n" "type:" "$t_type"
+            printf "  %-18s %s\n" "title:" "$t_title"
+            printf "  %-18s %s\n" "status:" "$t_status"
+            printf "  %-18s %s\n" "outcome:" "$t_outcome"
+            printf "  %-18s %s\n" "priority:" "$t_priority"
+            printf "  %-18s %s\n" "retry_count:" "$t_retry"
+            printf "  %-18s %s\n" "created_at:" "$t_created"
+            printf "  %-18s %s\n" "expires_at:" "$t_expires"
+            printf "  %-18s %s\n" "due_at:" "$t_due"
+            printf "  %-18s %s\n" "mentioned_at:" "$t_mentioned"
+            printf "  %-18s %s\n" "outcome_at:" "$t_outcome_at"
+            printf "  %-18s %s\n" "novelty_key:" "$t_novelty"
+            printf "  %-18s %s\n" "source_event_id:" "$t_source_id"
+            printf "  %-18s %s\n" "sent_message_id:" "$t_sent_id"
             local content
             content=$(db_scalar "SELECT COALESCE(content,'') FROM pending_topics WHERE id = $topic_id;")
             if [[ -n "$content" ]]; then

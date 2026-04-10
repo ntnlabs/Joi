@@ -564,6 +564,8 @@ class WindStateManager:
         # Build dynamic SQL for the update
         # EMA formula: new_score = (1 - alpha) * old_score + alpha * new_value
         # counter_col and timestamp_col are validated by the if/elif block above.
+        _VALID_ENGAGEMENT_COLS = frozenset({"total_engaged", "total_ignored", "total_deflected"})
+        assert counter_col in _VALID_ENGAGEMENT_COLS, f"Unexpected counter_col: {counter_col!r}"
         set_parts = [
             f"{counter_col} = COALESCE({counter_col}, 0) + 1",
             "engagement_score = ? * COALESCE(engagement_score, 0.5) + ? * ?",

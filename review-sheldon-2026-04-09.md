@@ -249,7 +249,7 @@ WindConfig is a dataclass with all fields defined with defaults. `hasattr` will 
 
 **Consequence:** No functional impact. Unnecessary complexity. Six instances.
 
-### M8. record_engagement uses dynamic SQL column names from if/elif
+### M8. record_engagement uses dynamic SQL column names from if/elif — **FIXED**
 
 **File:** `/home/peter/AI/Jessica/execution/joi/wind/state.py:562-584`
 
@@ -320,7 +320,7 @@ Phone numbers are typically 12-15 characters, so this truncation is effectively 
 
 These modules add a dataclass and row converter over MemoryStore methods. They provide clean abstraction but add an extra layer of indirection for very simple operations. Given the project preference for minimal modules, these are at the boundary of "worth the extra file."
 
-### m6. DB_KEY variable in joi-admin interpolated into heredoc
+### m6. DB_KEY variable in joi-admin interpolated into heredoc — **FIXED**
 
 **File:** `/home/peter/AI/Jessica/execution/joi/scripts/joi-admin:396-398`
 
