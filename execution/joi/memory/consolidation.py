@@ -355,7 +355,7 @@ Corrected JSON:"""
 
                     # For groups, try to extract name from value and prefix key
                     if is_group and fact_value:
-                        # Extract first word as likely name (e.g., "Peter is a developer" -> "peter")
+                        # Extract first word as likely name (e.g., "Adrian is a developer" -> "adrian")
                         first_word = fact_value.split()[0].lower() if fact_value.split() else ""
                         # Only use if it looks like a name (capitalized in original, reasonable length)
                         original_first = fact_value.split()[0] if fact_value.split() else ""
