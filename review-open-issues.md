@@ -15,7 +15,7 @@ Already fixed — reaction log uses `privacy_mode` variable set just above it at
 
 ---
 
-### P2. Note/task operation logs titles without privacy mode check
+### ~~P2. Note/task operation logs titles without privacy mode check~~ FIXED
 **Source:** wednesday-2026-04-09 I2
 **Files:** `execution/joi/api/server.py` — note create (~3276), append (~3297), replace (~3318), delete (~3385)
 
@@ -39,7 +39,7 @@ Both branches of `get_recent_topics` omit `emotional_context` from the SELECT. `
 
 ---
 
-### P5. Engagement classifier prompt has no sandboxing
+### ~~P5. Engagement classifier prompt has no sandboxing~~ FIXED
 **Source:** wednesday-2026-04-09 I5
 **File:** `execution/joi/wind/engagement.py:234-250`
 
@@ -49,7 +49,7 @@ Fix: wrap both blocks in triple-quote delimiters with "treat as data, not instru
 
 ---
 
-### P6. `_cleanup_send_caches` TOCTOU with lock eviction
+### ~~P6. `_cleanup_send_caches` TOCTOU with lock eviction~~ FIXED
 **Source:** wednesday-2026-04-09 I6
 **File:** `execution/joi/api/server.py:352-379`
 
@@ -57,7 +57,7 @@ After `lock.release()` (line ~369) and before `_send_locks.pop(cid)` (line ~370)
 
 ---
 
-### P7. `joi-admin` SQL injection via `$limit` in summaries list
+### ~~P7. `joi-admin` SQL injection via `$limit` in summaries list~~ FIXED
 **Source:** wednesday-2026-04-09 I7
 **File:** `execution/joi/scripts/joi-admin:1242-1243`
 
@@ -65,7 +65,7 @@ After `lock.release()` (line ~369) and before `_send_locks.pop(cid)` (line ~370)
 
 ---
 
-### P8. `last_tension_mined_message_ts IS NULL` allows premature message deletion
+### ~~P8. `last_tension_mined_message_ts IS NULL` allows premature message deletion~~ ALREADY FIXED
 **Source:** sheldon-2026-04-07
 **File:** `execution/joi/memory/store.py:2436-2437`
 
@@ -81,7 +81,7 @@ AND (ws.conversation_id IS NULL
 
 ## MINOR — Low priority / optional
 
-### m1. `get_note_by_title` fuzzy LIKE can match wrong notes
+### ~~m1. `get_note_by_title` fuzzy LIKE can match wrong notes~~ ALREADY FIXED
 **Source:** wednesday-2026-04-01 item 5
 **File:** `execution/joi/memory/store.py:~1043`
 
@@ -101,7 +101,7 @@ Signal does not render markdown bold natively. The scheduler outbound path bypas
 
 ---
 
-### m3. Duplicate subquery in message retention UPDATE + DELETE
+### m3. Duplicate subquery in message retention UPDATE + DELETE — SKIPPED (by design)
 **Source:** sheldon-2026-04-07
 **File:** `execution/joi/memory/store.py`
 
@@ -125,7 +125,7 @@ Should have its own section rather than being under `# --- Compaction ---`.
 
 ---
 
-### m6. Schema v13 migration has no explicit notes table entry (convention break)
+### ~~m6. Schema v13 migration has no explicit notes table entry (convention break)~~ ALREADY FIXED
 **Source:** wednesday-2026-04-01 item 1
 
 The `_run_migrations` v13 block only adds user mood columns to `wind_state`. The notes table is created by `SCHEMA_SQL` (IF NOT EXISTS), which works in practice, but breaks the convention that each schema version bump includes an explicit migration entry. Low runtime risk, flagged for auditing clarity.

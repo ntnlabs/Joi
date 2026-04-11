@@ -370,24 +370,15 @@ def _cleanup_send_caches():
     now = time.time()
     cutoff = now - _SEND_CACHE_CLEANUP_AGE
     with _send_locks_lock:
-        # Find stale conversation IDs and remove timestamps + idle locks
+        # Find stale conversation IDs and remove timestamps only (never remove locks)
         stale_ids = [cid for cid, ts in _last_send_times.items() if ts < cutoff]
         for cid in stale_ids:
             _last_send_times.pop(cid, None)
-            # Remove the lock only if it is idle (non-blocking acquire succeeds)
-            lock = _send_locks.get(cid)
-            if lock is not None and lock.acquire(blocking=False):
-                lock.release()
-                _send_locks.pop(cid, None)
         # If still too large, remove oldest timestamp entries
         if len(_last_send_times) > _SEND_CACHE_MAX_SIZE:
             sorted_ids = sorted(_last_send_times.items(), key=lambda x: x[1])
             for cid, _ in sorted_ids[:len(sorted_ids) - _SEND_CACHE_MAX_SIZE]:
                 _last_send_times.pop(cid, None)
-                lock = _send_locks.get(cid)
-                if lock is not None and lock.acquire(blocking=False):
-                    lock.release()
-                    _send_locks.pop(cid, None)
 
 
 def _get_send_lock(convo_id: str) -> threading.Lock:
@@ -3294,9 +3285,10 @@ def _handle_note_create(text: str, conversation_id: str) -> bool:
             remind_at = None
 
     note_manager.add(conversation_id, title, content, remind_at=remind_at)
+    privacy_mode = policy_manager.is_privacy_mode()
     logger.info("Note created", extra={
         "conversation_id": conversation_id,
-        "title": title,
+        "title": "[redacted]" if privacy_mode else title,
         "has_reminder": remind_at is not None,
         "action": "note_create",
     })
@@ -3315,7 +3307,8 @@ def _handle_note_append(text: str, conversation_id: str) -> bool:
 
     note = note_manager.get_by_title(conversation_id, title)
     if not note:
-        logger.info("Note append: note not found", extra={"title": title, "conversation_id": conversation_id})
+        privacy_mode = policy_manager.is_privacy_mode()
+        logger.info("Note append: note not found", extra={"title": "[redacted]" if privacy_mode else title, "conversation_id": conversation_id})
         _inject_note_context(conversation_id, f'No active note found matching "{title}". Tell the user the note was not found and ask them to verify the note name.')
         return True  # Handled — LLM will inform user
 
@@ -3336,7 +3329,8 @@ def _handle_note_replace(text: str, conversation_id: str) -> bool:
 
     note = note_manager.get_by_title(conversation_id, title)
     if not note:
-        logger.info("Note replace: note not found", extra={"title": title, "conversation_id": conversation_id})
+        privacy_mode = policy_manager.is_privacy_mode()
+        logger.info("Note replace: note not found", extra={"title": "[redacted]" if privacy_mode else title, "conversation_id": conversation_id})
         _inject_note_context(conversation_id, f'No active note found matching "{title}". Tell the user the note was not found and ask them to verify the note name.')
         return True  # Handled — LLM will inform user
 
@@ -3403,7 +3397,8 @@ def _handle_note_delete(text: str, conversation_id: str) -> bool:
 
     note = note_manager.get_by_title(conversation_id, title)
     if not note:
-        logger.info("Note delete: note not found", extra={"title": title, "conversation_id": conversation_id})
+        privacy_mode = policy_manager.is_privacy_mode()
+        logger.info("Note delete: note not found", extra={"title": "[redacted]" if privacy_mode else title, "conversation_id": conversation_id})
         _inject_note_context(conversation_id, f'No active note found matching "{title}". Tell the user the note was not found.')
         return True  # Handled — LLM will inform user
 
@@ -3424,7 +3419,8 @@ def _handle_note_set_reminder(text: str, conversation_id: str) -> bool:
 
     note = note_manager.get_by_title(conversation_id, title)
     if not note:
-        logger.info("Note set_reminder: note not found", extra={"title": title, "conversation_id": conversation_id})
+        privacy_mode = policy_manager.is_privacy_mode()
+        logger.info("Note set_reminder: note not found", extra={"title": "[redacted]" if privacy_mode else title, "conversation_id": conversation_id})
         _inject_note_context(conversation_id, f'No active note found matching "{title}". Tell the user the note was not found.')
         return True  # Handled — LLM will inform user
 
@@ -3663,9 +3659,10 @@ def _handle_task_add(text: str, conversation_id: str) -> bool:
         return False
 
     task_manager.add(conversation_id, list_name, item_text)
+    privacy_mode = policy_manager.is_privacy_mode()
     logger.info("Task item added", extra={
         "conversation_id": conversation_id,
-        "list_name": list_name,
+        "list_name": "[redacted]" if privacy_mode else list_name,
         "action": "task_add",
     })
     return True
@@ -3691,9 +3688,10 @@ def _handle_task_show(text: str, conversation_id: str) -> bool:
         conversation_id,
         f"The user asked to see their task list. Show them this list exactly as formatted:\n{formatted}"
     )
+    privacy_mode = policy_manager.is_privacy_mode()
     logger.info("Task list shown", extra={
         "conversation_id": conversation_id,
-        "list_name": list_name,
+        "list_name": "[redacted]" if privacy_mode else list_name,
         "count": len(tasks),
         "action": "task_show",
     })
@@ -3792,9 +3790,10 @@ def _handle_task_delete_list(text: str, conversation_id: str) -> bool:
     if count == 0:
         _inject_task_context(conversation_id, f'No active list found matching "{list_name}". Tell the user.')
     else:
+        privacy_mode = policy_manager.is_privacy_mode()
         logger.info("Task list deleted", extra={
             "conversation_id": conversation_id,
-            "list_name": list_name,
+            "list_name": "[redacted]" if privacy_mode else list_name,
             "count": count,
             "action": "task_delete_list",
         })
