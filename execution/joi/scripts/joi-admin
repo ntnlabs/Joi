@@ -1213,7 +1213,9 @@ cmd_summaries() {
                         ;;
                     --limit)
                         [[ -z "${2:-}" ]] && error "--limit requires a number"
+                        # Regex is the security gate for $limit interpolation into SQL
                         [[ ! "$2" =~ ^[0-9]+$ ]] && error "--limit must be a positive integer"
+                        [[ "$2" -lt 1 || "$2" -gt 10000 ]] && error "--limit must be between 1 and 10000"
                         limit="$2"
                         shift 2
                         ;;
