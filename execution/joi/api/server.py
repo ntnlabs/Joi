@@ -2702,6 +2702,7 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         "- Do NOT adjust the hour for UTC or any timezone offset. Python handles that separately.\n"
         "- If the user says 11:15, output hour=11, minute=15. Never subtract or add hours.\n"
         "- title: concise description of what to remind about.\n"
+        "- day must be a valid calendar day (1-31). If the user did not specify a day, respond with SKIP.\n"
         "If not a reminder or time cannot be determined, respond with exactly: SKIP"
     )
 
@@ -2710,6 +2711,9 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         logger.warning("Reminder LLM parse returned no data (SKIP or invalid JSON)", extra={"action": "reminder_llm_skip"})
         return None
     try:
+        if int(data.get("day", 0)) < 1:
+            logger.warning("Reminder LLM returned day=0 (no day specified)", extra={"data": str(data)[:120], "action": "reminder_parse_error"})
+            return None
         tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
         due_at = datetime(
             year=int(data["year"]),
