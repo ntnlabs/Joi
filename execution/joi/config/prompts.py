@@ -523,8 +523,8 @@ If truly no facts, return: []
 
 Examples:
 [
-  {{"category": "personal", "key": "name", "value": "Peter is the user's name", "confidence": 1.0, "core": true}},
-  {{"category": "work", "key": "profession", "value": "Peter is a developer", "confidence": 1.0, "core": true}},
+  {{"category": "personal", "key": "name", "value": "NTN's real name is Adrian", "confidence": 1.0, "core": true}},
+  {{"category": "work", "key": "profession", "value": "Adrian is a developer", "confidence": 1.0, "core": true}},
   {{"category": "routine", "key": "wake_up_time", "value": "NTN wakes up at 6:45 every morning", "confidence": 0.9, "core": false}},
   {{"category": "event", "key": "tire_service", "value": "NTN has a tire service appointment tomorrow", "confidence": 0.9, "core": false, "ttl_hours": 24}},
   {{"category": "event", "key": "lunch_plan", "value": "NTN will have lunch at Vapiano today", "confidence": 0.9, "core": false, "ttl_hours": 12}},
