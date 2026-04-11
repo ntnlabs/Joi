@@ -1054,11 +1054,6 @@ class MemoryStore:
         )
         conn.commit()
         note_id = cursor.lastrowid or 0
-        logger.debug("Note added", extra={
-            "note_id": note_id,
-            "conversation_id": conversation_id,
-            "action": "note_add",
-        })
         return note_id
 
     def get_note_by_title(self, conversation_id: str, title: str) -> Optional[dict]:

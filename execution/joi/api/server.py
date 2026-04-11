@@ -2535,7 +2535,7 @@ def _maybe_run_consolidation(conversation_id: Optional[str] = None) -> None:
                 "Memory compaction: facts=%d, summarized=%d, archived=%d",
                 result["facts_extracted"],
                 result["messages_summarized"],
-                result["messages_removed"],
+                result["messages_archived"],
             )
     except Exception as e:
         logger.error("Consolidation error", extra={"error": str(e)})

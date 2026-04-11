@@ -681,7 +681,7 @@ class TopicManager:
                 SELECT id, conversation_id, topic_type, title, content, priority,
                        status, created_at, expires_at, due_at, mentioned_at, novelty_key,
                        source_event_id, outcome, outcome_at, retry_count, last_retry_at,
-                       sent_message_id
+                       sent_message_id, emotional_context
                 FROM pending_topics
                 WHERE conversation_id = ?
                 ORDER BY created_at DESC
@@ -695,7 +695,7 @@ class TopicManager:
                 SELECT id, conversation_id, topic_type, title, content, priority,
                        status, created_at, expires_at, due_at, mentioned_at, novelty_key,
                        source_event_id, outcome, outcome_at, retry_count, last_retry_at,
-                       sent_message_id
+                       sent_message_id, emotional_context
                 FROM pending_topics
                 WHERE conversation_id = ?
                   AND status IN (?, ?, ?)
