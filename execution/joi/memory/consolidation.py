@@ -487,7 +487,7 @@ Corrected JSON:"""
             "reason": None,
             "facts_extracted": 0,
             "messages_summarized": 0,
-            "messages_removed": 0,
+            "messages_archived": 0,
             "conversations_processed": 0,
         }
 
@@ -509,14 +509,14 @@ Corrected JSON:"""
                 results["reason"] = "context_overflow"
                 results["facts_extracted"] += convo_results["facts_extracted"]
                 results["messages_summarized"] += convo_results["messages_summarized"]
-                results["messages_removed"] += convo_results["messages_removed"]
+                results["messages_archived"] += convo_results["messages_archived"]
                 results["conversations_processed"] += 1
 
         if results["ran"]:
             logger.info("Consolidation complete", extra={
                 "facts_extracted": results["facts_extracted"],
                 "messages_summarized": results["messages_summarized"],
-                "messages_removed": results["messages_removed"],
+                "messages_archived": results["messages_archived"],
                 "conversations_processed": results["conversations_processed"]
             })
         return results
@@ -547,7 +547,7 @@ Corrected JSON:"""
             "reason": None,
             "facts_extracted": 0,
             "messages_summarized": 0,
-            "messages_removed": 0,
+            "messages_archived": 0,
         }
 
         # Look up per-conversation settings (override defaults if configured)
@@ -620,6 +620,6 @@ Corrected JSON:"""
             # Remove compacted messages by ID (not timestamp, to avoid boundary issues)
             message_ids = [m.message_id for m in oldest_messages]
             removed = self.memory.archive_messages_by_ids(message_ids, conversation_id)
-            results["messages_removed"] = removed
+            results["messages_archived"] = removed
 
         return results

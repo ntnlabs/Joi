@@ -649,7 +649,7 @@ class Scheduler:
                     continue
 
                 preview = note.content[:100] + ("..." if len(note.content) > 100 else "")
-                message_text = f"A note you flagged: **{note.title}**"
+                message_text = f"A note you flagged: {note.title}"
                 if preview and not self._policy_manager.is_privacy_mode():
                     message_text += f" — {preview}"
 
