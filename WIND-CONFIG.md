@@ -47,8 +47,8 @@ Hard gates run first. Any failure skips the tick entirely — no score computed,
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `quiet_hours_start` | `23` | Start of quiet window (local hour, 0–23). Wind will not send from this hour onward. |
-| `quiet_hours_end` | `7` | End of quiet window (local hour, 0–23). Wind resumes at this hour. Supports overnight ranges (e.g., start=23, end=7). |
+| `quiet_hours_start` | `23` | Start of quiet window. Accepts an integer hour (`23`), minutes since midnight (`1380`), or `"HH:MM"` string (`"23:30"`). Wind will not send from this time onward. Overridden per-conversation by the adaptive learned quiet start when available. |
+| `quiet_hours_end` | `7` | End of quiet window. Same format as `quiet_hours_start`. Wind resumes at this time. Supports overnight ranges (e.g., start=`23`, end=`7`). Config-only — not learned adaptively. |
 | `min_cooldown_minutes` | `60` | Minimum minutes between proactive sends. Prevents bursts even if accumulator resets fast. |
 | `daily_cap` | `3` | Max proactive messages per rolling 24h window. Each fire expires 24h after it happened, freeing a slot. Hard stop regardless of score. |
 | `max_unanswered_streak` | `2` | Stop sending after N consecutive proactives with no user reply. Resets when user responds. |

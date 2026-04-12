@@ -287,7 +287,9 @@ CREATE TABLE IF NOT EXISTS wind_state (
     -- User mood (per-message classification)
     user_mood_state TEXT DEFAULT 'neutral',
     user_mood_intensity REAL DEFAULT 0.5,
-    user_mood_updated_at TEXT DEFAULT NULL
+    user_mood_updated_at TEXT DEFAULT NULL,
+    -- Adaptive quiet start learned from inbound message timestamps
+    learned_quiet_start_minutes INTEGER DEFAULT NULL
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -950,6 +952,17 @@ class MemoryStore:
 
         # Migration v13 (cont.): notes table is created via SCHEMA_SQL (CREATE TABLE IF NOT EXISTS)
         # No ALTER TABLE needed — new table always created on startup if missing.
+
+        # Migration v14: adaptive quiet start
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='wind_state'")
+        if cursor.fetchone():
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+            if "learned_quiet_start_minutes" not in cols:
+                logger.info("Migration v14: Adding 'learned_quiet_start_minutes' column to wind_state table")
+                conn.execute(
+                    "ALTER TABLE wind_state ADD COLUMN learned_quiet_start_minutes INTEGER DEFAULT NULL"
+                )
+                conn.commit()
 
         # Migration v14: tasks table is created via SCHEMA_SQL (CREATE TABLE IF NOT EXISTS)
         # No ALTER TABLE needed — new table always created on startup if missing.
