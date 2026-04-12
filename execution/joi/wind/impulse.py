@@ -144,7 +144,7 @@ class ImpulseEngine:
             )
 
         # Gate 4: Not in quiet hours
-        gates["not_quiet_hours"] = self._check_not_quiet_hours(now)
+        gates["not_quiet_hours"] = self._check_not_quiet_hours(now, state)
         if not gates["not_quiet_hours"]:
             return GateResult(
                 passed=False,
@@ -203,21 +203,24 @@ class ImpulseEngine:
         # All gates passed
         return GateResult(passed=True, gate_details=gates)
 
-    def _check_not_quiet_hours(self, now: datetime) -> bool:
+    def _check_not_quiet_hours(self, now: datetime, wind_state=None) -> bool:
         """Check if we're outside quiet hours."""
         tz = ZoneInfo(self.config.timezone)
         local_now = now.astimezone(tz)
-        hour = local_now.hour
-        start = self.config.quiet_hours_start
-        end = self.config.quiet_hours_end
+        current = local_now.hour * 60 + local_now.minute
+
+        if wind_state is not None and wind_state.learned_quiet_start_minutes is not None:
+            start = wind_state.learned_quiet_start_minutes
+        else:
+            start = self.config.quiet_hours_start  # minutes since midnight
+
+        end = self.config.quiet_hours_end  # minutes since midnight
 
         # Handle overnight quiet hours (e.g., 23:00 to 07:00)
         if start > end:
-            # Quiet if hour >= start OR hour < end
-            in_quiet = hour >= start or hour < end
+            in_quiet = current >= start or current < end
         else:
-            # Quiet if hour >= start AND hour < end
-            in_quiet = start <= hour < end
+            in_quiet = start <= current < end
 
         return not in_quiet
 

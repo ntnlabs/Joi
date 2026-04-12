@@ -5,12 +5,14 @@ Wind orchestrator - main entry point for proactive messaging.
 import hashlib
 import json
 import logging
+import math
 import os
 import random
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Callable, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from .config import WindConfig
 from .state import WindStateManager, _MOOD_VALENCE
@@ -1453,6 +1455,48 @@ class WindOrchestrator:
 
         return timed_out
 
+    _LEARNED_QUIET_MAX_MINUTES = 3 * 60   # hard cap at 03:00
+    _LEARNED_QUIET_SAMPLE_COUNT = 10
+
+    def _compute_learned_quiet_start(self, conversation_id: str) -> Optional[int]:
+        """
+        Return learned quiet start (minutes since midnight) from last N inbound messages.
+
+        Uses circular mean to handle midnight wrap-around correctly.
+        Returns None if no samples available.
+        Caps result at 03:00 (180 min).
+        """
+        if not self.memory:
+            return None
+
+        messages = self.memory.get_recent_messages(
+            conversation_id=conversation_id,
+            limit=self._LEARNED_QUIET_SAMPLE_COUNT * 4,  # over-fetch to allow direction filter
+        )
+        # Filter to inbound only (get_recent_messages has no direction param)
+        inbound = [m for m in messages if m.direction == "inbound"][:self._LEARNED_QUIET_SAMPLE_COUNT]
+
+        if not inbound:
+            return None
+
+        tz = ZoneInfo(self.config.timezone)
+        samples = []
+        for msg in inbound:
+            local_dt = datetime.fromtimestamp(msg.timestamp / 1000, tz=tz)
+            samples.append(local_dt.hour * 60 + local_dt.minute)
+
+        # Circular mean over 24*60 minutes
+        period = 24 * 60
+        angles = [2 * math.pi * s / period for s in samples]
+        avg_sin = sum(math.sin(a) for a in angles) / len(angles)
+        avg_cos = sum(math.cos(a) for a in angles) / len(angles)
+        mean_angle = math.atan2(avg_sin, avg_cos)
+        if mean_angle < 0:
+            mean_angle += 2 * math.pi
+        result = int(round(mean_angle * period / (2 * math.pi)))
+
+        return min(result, self._LEARNED_QUIET_MAX_MINUTES)
+
     def deduplicate_topics_all(self, now: Optional[datetime] = None) -> None:
         """End-of-day LLM pass to collapse near-duplicate pending topics."""
         if not getattr(self.config, 'topic_dedup_enabled', True):
@@ -1464,6 +1508,25 @@ class WindOrchestrator:
                 self._deduplicate_topics(conversation_id)
             except Exception as e:
                 logger.warning("Topic dedup failed", extra={
+                    "conversation_id": conversation_id, "error": str(e),
+                })
+
+        # Update learned quiet start for each allowlisted conversation
+        for conversation_id in self.config.allowlist:
+            try:
+                learned = self._compute_learned_quiet_start(conversation_id)
+                if learned is not None:
+                    self.state_manager.update_state(
+                        conversation_id,
+                        learned_quiet_start_minutes=learned,
+                    )
+                    logger.info("Updated learned quiet start", extra={
+                        "conversation_id": conversation_id,
+                        "learned_quiet_start_minutes": learned,
+                        "as_time": f"{learned // 60:02d}:{learned % 60:02d}",
+                    })
+            except Exception as e:
+                logger.warning("Failed to compute learned quiet start", extra={
                     "conversation_id": conversation_id, "error": str(e),
                 })
 

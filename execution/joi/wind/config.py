@@ -6,6 +6,17 @@ from dataclasses import dataclass, field
 from typing import List
 
 
+def _parse_quiet_minutes(value, default: int) -> int:
+    """Accept int (hours), int (already minutes >= 24 treated as minutes), or 'HH:MM' string."""
+    if isinstance(value, str) and ":" in value:
+        h, m = value.split(":", 1)
+        return int(h) * 60 + int(m)
+    val = int(value)
+    if val < 24:          # old-style: bare hour
+        return val * 60
+    return val            # already minutes
+
+
 @dataclass
 class WindConfig:
     """Configuration for Wind proactive messaging system."""
@@ -15,8 +26,8 @@ class WindConfig:
     shadow_mode: bool = True  # Phase 1: log only, no sends
 
     # Hard gates
-    quiet_hours_start: int = 23  # 23:00 local time
-    quiet_hours_end: int = 7  # 07:00 local time
+    quiet_hours_start: int = 1380  # 23:00 local time (minutes since midnight)
+    quiet_hours_end: int = 420    # 07:00 local time (minutes since midnight)
     min_cooldown_minutes: int = 60   # 1 hour between proactives
     daily_cap: int = 3  # Max proactive messages per day
     daily_cap_boost_moderate_minutes: int = 60  # EMA below this → cap +1
@@ -99,8 +110,8 @@ class WindConfig:
         return cls(
             enabled=data.get("enabled", False),
             shadow_mode=data.get("shadow_mode", True),
-            quiet_hours_start=data.get("quiet_hours_start", 23),
-            quiet_hours_end=data.get("quiet_hours_end", 7),
+            quiet_hours_start=_parse_quiet_minutes(data.get("quiet_hours_start", 1380), 1380),
+            quiet_hours_end=_parse_quiet_minutes(data.get("quiet_hours_end", 420), 420),
             min_cooldown_minutes=data.get("min_cooldown_minutes", 60),
             daily_cap=data.get("daily_cap", 3),
             daily_cap_boost_moderate_minutes=data.get("daily_cap_boost_moderate_minutes", 60),
