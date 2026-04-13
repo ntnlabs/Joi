@@ -1580,7 +1580,8 @@ SELECT
     COALESCE(mood_state, 'neutral'),
     COALESCE(mood_intensity, 0.5),
     COALESCE(updated_at, ''),
-    learned_quiet_start_minutes
+    learned_quiet_start_minutes,
+    COALESCE(last_daily_tasks_at, '-')
 FROM wind_state
 $where_clause
 ORDER BY conversation_id;
@@ -1592,15 +1593,19 @@ SQL
                 exit 0
             fi
 
-            printf "%-40s  %12s  %12s  %14s  %9s  %10s  %s\n" "conversation_id" "offset" "accumulated" "mood_state" "intensity" "quiet_start" "updated_at"
-            printf "%-40s  %12s  %12s  %14s  %9s  %10s  %s\n" "---------------" "------" "-----------" "----------" "---------" "-----------" "----------"
-            while IFS='|' read -r conv_id offset accum mood_state mood_intensity updated learned_min; do
+            printf "%-40s  %12s  %12s  %14s  %9s  %10s  %20s  %s\n" \
+                "conversation_id" "offset" "accumulated" "mood_state" "intensity" "quiet_start" "last_eod" "updated_at"
+            printf "%-40s  %12s  %12s  %14s  %9s  %10s  %20s  %s\n" \
+                "---------------" "------" "-----------" "----------" "---------" "-----------" "--------" "----------"
+            while IFS='|' read -r conv_id offset accum mood_state mood_intensity updated learned_min last_eod; do
                 [[ -z "${conv_id}${offset}${accum}${updated}" ]] && continue
                 local quiet_display="-"
                 if [[ -n "$learned_min" && "$learned_min" =~ ^[0-9]+$ ]]; then
                     quiet_display=$(printf "%02d:%02d" $((learned_min / 60)) $((learned_min % 60)))
                 fi
-                printf "%-40s  %12s  %12.2f  %14s  %9.3f  %10s  %s\n" "$conv_id" "$offset" "$accum" "$mood_state" "$mood_intensity" "$quiet_display" "$updated"
+                printf "%-40s  %12s  %12.2f  %14s  %9.3f  %10s  %20s  %s\n" \
+                    "$conv_id" "$offset" "$accum" "$mood_state" "$mood_intensity" \
+                    "$quiet_display" "${last_eod:--}" "$updated"
             done <<< "$rows"
             ;;
 
