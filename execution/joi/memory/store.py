@@ -1510,6 +1510,7 @@ class MemoryStore:
         limit: int = 20,
         conversation_id: Optional[str] = None,
         content_type: str = "text",
+        since_ts: Optional[int] = None,
     ) -> List[Message]:
         """
         Get recent messages for LLM context.
@@ -1518,6 +1519,7 @@ class MemoryStore:
             limit: Maximum number of messages to return
             conversation_id: Filter by conversation (optional)
             content_type: Filter by content type (default: text)
+            since_ts: Only return messages with timestamp >= this value (ms, optional)
 
         Returns:
             List of Message objects, oldest first (for context building)
@@ -1525,31 +1527,61 @@ class MemoryStore:
         conn = self._connect()
 
         if conversation_id:
-            cursor = conn.execute(
-                """
-                SELECT id, message_id, direction, channel, content_type,
-                       content_text, conversation_id, reply_to_id, timestamp, created_at,
-                       archived, sender_id, sender_name
-                FROM messages
-                WHERE content_type = ? AND conversation_id = ? AND archived = 0
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (content_type, conversation_id, limit)
-            )
+            if since_ts is not None:
+                cursor = conn.execute(
+                    """
+                    SELECT id, message_id, direction, channel, content_type,
+                           content_text, conversation_id, reply_to_id, timestamp, created_at,
+                           archived, sender_id, sender_name
+                    FROM messages
+                    WHERE content_type = ? AND conversation_id = ? AND archived = 0
+                      AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    (content_type, conversation_id, since_ts, limit)
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT id, message_id, direction, channel, content_type,
+                           content_text, conversation_id, reply_to_id, timestamp, created_at,
+                           archived, sender_id, sender_name
+                    FROM messages
+                    WHERE content_type = ? AND conversation_id = ? AND archived = 0
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    (content_type, conversation_id, limit)
+                )
         else:
-            cursor = conn.execute(
-                """
-                SELECT id, message_id, direction, channel, content_type,
-                       content_text, conversation_id, reply_to_id, timestamp, created_at,
-                       archived, sender_id, sender_name
-                FROM messages
-                WHERE content_type = ? AND archived = 0
-                ORDER BY timestamp DESC
-                LIMIT ?
-                """,
-                (content_type, limit)
-            )
+            if since_ts is not None:
+                cursor = conn.execute(
+                    """
+                    SELECT id, message_id, direction, channel, content_type,
+                           content_text, conversation_id, reply_to_id, timestamp, created_at,
+                           archived, sender_id, sender_name
+                    FROM messages
+                    WHERE content_type = ? AND archived = 0
+                      AND timestamp >= ?
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    (content_type, since_ts, limit)
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    SELECT id, message_id, direction, channel, content_type,
+                           content_text, conversation_id, reply_to_id, timestamp, created_at,
+                           archived, sender_id, sender_name
+                    FROM messages
+                    WHERE content_type = ? AND archived = 0
+                    ORDER BY timestamp DESC
+                    LIMIT ?
+                    """,
+                    (content_type, limit)
+                )
 
         rows = cursor.fetchall()
 

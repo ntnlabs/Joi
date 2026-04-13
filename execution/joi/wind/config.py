@@ -92,6 +92,11 @@ class WindConfig:
     # Clock time (minutes since midnight) at which end-of-day tasks are eligible to fire
     end_of_day_time: int = 180  # 03:00 local time
 
+    # Emotional depth mining (end-of-day)
+    emotional_mining_enabled: bool = True
+    emotional_day_char_limit: int = 8000   # max chars of day context fed to LLM
+    emotional_min_message_chars: int = 20  # skip messages shorter than this
+
     # WindMood: threshold drift bounds (random walk)
     threshold_drift_min: float = -0.1  # Can drift 0.1 below baseline
     threshold_drift_max: float = 0.1   # Can drift 0.1 above baseline
@@ -148,6 +153,9 @@ class WindConfig:
             topic_dedup_enabled=data.get("topic_dedup_enabled", True),
             daily_tasks_silence_minutes=data.get("daily_tasks_silence_minutes", 30),
             end_of_day_time=_parse_quiet_minutes(data.get("end_of_day_time", 180), 180),
+            emotional_mining_enabled=data.get("emotional_mining_enabled", True),
+            emotional_day_char_limit=int(data.get("emotional_day_char_limit", 8000)),
+            emotional_min_message_chars=int(data.get("emotional_min_message_chars", 20)),
             threshold_drift_min=data.get("threshold_drift_min", -0.1),
             threshold_drift_max=data.get("threshold_drift_max", 0.1),
             threshold_drift_step=data.get("threshold_drift_step", 0.01),
@@ -197,6 +205,9 @@ class WindConfig:
             "topic_dedup_enabled": self.topic_dedup_enabled,
             "daily_tasks_silence_minutes": self.daily_tasks_silence_minutes,
             "end_of_day_time": self.end_of_day_time,
+            "emotional_mining_enabled": self.emotional_mining_enabled,
+            "emotional_day_char_limit": self.emotional_day_char_limit,
+            "emotional_min_message_chars": self.emotional_min_message_chars,
             "threshold_drift_min": self.threshold_drift_min,
             "threshold_drift_max": self.threshold_drift_max,
             "threshold_drift_step": self.threshold_drift_step,

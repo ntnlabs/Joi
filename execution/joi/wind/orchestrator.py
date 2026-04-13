@@ -31,6 +31,7 @@ LIFECYCLE_RULES = {
     "affinity": {"engaged": "mark_engaged", "ignored": "retry_2", "deflected": "cooldown_3"},
     "discovery": {"engaged": "convert_affinity", "ignored": "expire", "deflected": "cooldown_7"},
     "followup": {"engaged": "complete", "ignored": "retry_1", "deflected": "dismiss"},
+    "emotional": {"engaged": "complete", "ignored": "retry_1", "deflected": "dismiss"},
     # Phase 4b: Ghost probe — rare re-check for deeply-rejected families
     "ghost": {"engaged": "mark_engaged", "ignored": "cooldown_90", "deflected": "undertaker_promote"},
     # Undertaker poke — playful challenge to revive a permanently blocked family
@@ -1558,6 +1559,244 @@ class WindOrchestrator:
             logger.warning("Failed to compute learned quiet start", extra={
                 "conversation_id": conversation_id, "error": str(e),
             })
+
+    def mine_emotional_depth_for(self, conversation_id: str) -> None:
+        """
+        End-of-day deep emotional scan for one conversation.
+
+        Reads the full day's substantive inbound messages holistically — detects
+        sarcasm, subtext, implied emotions, and future events (near and far).
+        Creates 'emotional' check-in topics and long-horizon 'followup' topics.
+        """
+        if not getattr(self.config, 'emotional_mining_enabled', True):
+            return
+        if not self._llm_client:
+            return
+
+        # Determine window: since last end-of-day run (or 26h fallback)
+        state = self.state_manager.get_state(conversation_id)
+        now = datetime.now(timezone.utc)
+        if state and state.last_daily_tasks_at:
+            since_ts = int(state.last_daily_tasks_at.timestamp() * 1000)
+        else:
+            since_ts = int((now - timedelta(hours=26)).timestamp() * 1000)
+
+        # Fetch today's messages
+        if not self.memory:
+            return
+        messages = self.memory.get_recent_messages(
+            conversation_id=conversation_id,
+            limit=500,
+            since_ts=since_ts,
+        )
+
+        min_chars = getattr(self.config, 'emotional_min_message_chars', 20)
+
+        # Filter: inbound only, skip short, skip system messages
+        _SYSTEM_PREFIXES = ("[JOI-", "[joi-", "/")
+        substantive = [
+            m for m in messages
+            if m.direction == "inbound"
+            and m.content_text
+            and len(m.content_text.strip()) >= min_chars
+            and not any(m.content_text.strip().startswith(p) for p in _SYSTEM_PREFIXES)
+        ]
+
+        if not substantive:
+            logger.debug("Emotional mining: no substantive messages today", extra={
+                "conversation_id": conversation_id,
+            })
+            return
+
+        # Build day context (oldest first, char-limited)
+        char_limit = getattr(self.config, 'emotional_day_char_limit', 8000)
+        lines = []
+        total = 0
+        for m in substantive:  # already oldest-first from DB
+            line = m.content_text.strip()
+            if total + len(line) > char_limit:
+                break
+            lines.append(line)
+            total += len(line)
+
+        if not lines:
+            return
+
+        day_context = "\n".join(lines)
+
+        tz = ZoneInfo(self.config.timezone)
+        today_str = now.astimezone(tz).strftime("%A, %Y-%m-%d")
+
+        # Undertaker block
+        undertaker_block = "none"
+        if self.feedback_manager:
+            undertaker_families = self.feedback_manager.get_undertaker_families(conversation_id)
+            if undertaker_families:
+                undertaker_block = "\n".join(f"- {f}" for f in sorted(undertaker_families))
+
+        prompt = (
+            f"Today is {today_str}.\n\n"
+            f"Messages from the user today (oldest first):\n{day_context}\n\n"
+            "---\n\n"
+            "Read this carefully and deeply. Look beyond the obvious.\n"
+            "Notice: sarcasm, things said between the lines, emotions the user didn't name "
+            "but showed, tension they downplayed, excitement they hid, worry they brushed off.\n"
+            "Also notice: any future events they mentioned — tomorrow, next week, next month, "
+            "or further (trips, exams, medical appointments, family occasions, birthdays, "
+            "anniversaries, deadlines, interviews — anything with a future time anchor).\n\n"
+            "For each significant thing you find, return a JSON object:\n"
+            "{\n"
+            '  "topic": "<short natural title, 3-7 words>",\n'
+            '  "what": "<what this is about, 1 sentence>",\n'
+            '  "when": "<future datetime YYYY-MM-DDTHH:MM:SS local if there is a future event anchor, else null>",\n'
+            '  "why": "<cause or context, 1 sentence, or null>",\n'
+            '  "who": "<who the user is in this situation, or null>",\n'
+            '  "with_whom": "<other people involved, or null>",\n'
+            '  "emotions": "<emotional tone — name subtle, implied, or masked emotions explicitly>",\n'
+            '  "confidence": <0.0-1.0>\n'
+            "}\n\n"
+            "Return a JSON array of objects. Return [] if nothing significant found.\n"
+            "Only include items with confidence >= 0.5.\n"
+            f"PERMANENTLY OFF-LIMITS (never surface):\n---\n{undertaker_block}\n---"
+        )
+
+        try:
+            # Use main Joi model for nuanced emotional analysis
+            main_model = os.getenv("JOI_OLLAMA_MODEL")
+            if not main_model:
+                logger.warning("Emotional mining: JOI_OLLAMA_MODEL not set", extra={
+                    "conversation_id": conversation_id,
+                })
+                return
+
+            resp = self._llm_client.generate(prompt, model=main_model)
+            if not resp or resp.error or not resp.text:
+                logger.debug("Emotional mining: nothing found", extra={
+                    "conversation_id": conversation_id,
+                })
+                return
+
+            # Strip markdown fences if present
+            text = resp.text.strip()
+            if not text or text.upper() == "[]":
+                logger.debug("Emotional mining: nothing found", extra={
+                    "conversation_id": conversation_id,
+                })
+                return
+            if text.startswith("```"):
+                text = text.split("```")[1]
+                if text.startswith("json"):
+                    text = text[4:]
+                text = text.strip()
+
+            items = json.loads(text)
+            if not isinstance(items, list):
+                return
+
+        except (json.JSONDecodeError, Exception) as e:
+            logger.warning("Emotional mining: parse failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+            return
+
+        created_emotional = 0
+        created_followup = 0
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            confidence = float(item.get("confidence", 0.0))
+            if confidence < 0.5:
+                continue
+
+            topic_title = str(item.get("topic", "")).strip()
+            what = str(item.get("what", "")).strip()
+            emotions = str(item.get("emotions", "")).strip()
+            when_str = item.get("when")
+            why = str(item.get("why") or "").strip()
+            with_whom = str(item.get("with_whom") or "").strip()
+
+            if not topic_title:
+                continue
+
+            content_parts = [p for p in [what, why, with_whom and f"With: {with_whom}"] if p]
+            content = " ".join(content_parts) if content_parts else what
+
+            # Items with a future event anchor → followup topic (long-horizon)
+            if when_str:
+                try:
+                    event_time = datetime.fromisoformat(when_str)
+                    # Accept events up to ~400 days out
+                    max_future = now + timedelta(days=400)
+                    event_time_utc = event_time.astimezone(timezone.utc) if event_time.tzinfo else event_time.replace(tzinfo=timezone.utc)
+                    if event_time_utc < now - timedelta(minutes=30):
+                        pass  # past — fall through to emotional topic
+                    elif event_time_utc <= max_future:
+                        due_at = event_time_utc + timedelta(hours=2)
+                        expires_at = due_at + timedelta(days=7)
+                        fu_key = (
+                            f"followup_{hashlib.md5(topic_title.lower().encode()).hexdigest()[:12]}"
+                            f"_{event_time_utc.strftime('%Y-%m-%d')}"
+                        )
+                        fu_family = normalize_topic_family("followup", topic_title)
+                        in_cooldown = (
+                            self.feedback_manager
+                            and self.feedback_manager.is_in_cooldown(conversation_id, fu_family)
+                        )
+                        if not in_cooldown:
+                            self.topic_manager.add_topic(
+                                conversation_id=conversation_id,
+                                topic_type="followup",
+                                title=topic_title,
+                                content=content,
+                                emotional_context=emotions or None,
+                                priority=60,
+                                due_at=due_at,
+                                expires_at=expires_at,
+                                novelty_key=fu_key,
+                            )
+                            created_followup += 1
+                        continue
+                except (ValueError, TypeError):
+                    pass  # fall through to emotional topic
+
+            # Emotional topic (no future anchor, or unparseable when)
+            if not emotions and confidence < 0.7:
+                continue
+
+            em_key = (
+                f"emotional_{hashlib.md5(topic_title.lower().encode()).hexdigest()[:12]}"
+                f"_{now.astimezone(tz).strftime('%Y-%m-%d')}"
+            )
+            em_family = normalize_topic_family("emotional", topic_title)
+            in_cooldown = (
+                self.feedback_manager
+                and self.feedback_manager.is_in_cooldown(conversation_id, em_family)
+            )
+            if not in_cooldown:
+                # Due next active morning (~9h from now, so it fires when the user wakes up)
+                due_at = now + timedelta(hours=9)
+                expires_at = due_at + timedelta(days=4)
+                self.topic_manager.add_topic(
+                    conversation_id=conversation_id,
+                    topic_type="emotional",
+                    title=topic_title,
+                    content=content,
+                    emotional_context=emotions or None,
+                    priority=55,
+                    due_at=due_at,
+                    expires_at=expires_at,
+                    novelty_key=em_key,
+                )
+                created_emotional += 1
+
+        logger.info("Emotional mining complete", extra={
+            "conversation_id": conversation_id,
+            "created_emotional": created_emotional,
+            "created_followup": created_followup,
+            "messages_scanned": len(substantive),
+            "action": "emotional_mining_done",
+        })
 
     def _deduplicate_topics(self, conversation_id: str) -> None:
         """LLM-based near-duplicate collapse for a single conversation."""
