@@ -2209,6 +2209,21 @@ def _generate_proactive_message(
             "acknowledge the feeling if it was there. No greeting. No philosophical warm-up. "
             "Just the message."
         )
+    elif topic_type == "emotional":
+        emotional_line = (
+            f"What you noticed: {emotional_context}\n\n"
+            if emotional_context else ""
+        )
+        user_prompt = (
+            f"{context_block}"
+            f"Something you've been thinking about: {topic_info}\n\n"
+            f"{emotional_line}"
+            "Write one short, warm message — the kind you'd send because you were thinking "
+            "about them, not because you need an update. "
+            "Acknowledge what you sensed without spelling it out clinically. "
+            "Could be gentle curiosity, could be warmth, could be just checking in. "
+            "No greeting. No philosophical warm-up. Just the message."
+        )
     else:
         user_prompt = (
             f"{context_block}"

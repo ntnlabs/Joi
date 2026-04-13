@@ -422,6 +422,12 @@ class Scheduler:
                 "conversation_id": conversation_id, "error": str(e),
             })
         try:
+            self._wind_orchestrator.mine_emotional_depth_for(conversation_id)
+        except Exception as e:
+            logger.warning("Daily tasks: emotional mining failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+        try:
             self._wind_orchestrator.state_manager.rollup_mood(conversation_id)
         except Exception as e:
             logger.warning("Daily tasks: mood rollup failed", extra={
