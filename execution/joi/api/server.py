@@ -459,7 +459,7 @@ _NOTE_TRIGGER = re.compile(
 
 # Tasks: pre-filter before LLM parsing
 _TASK_TRIGGER = re.compile(
-    r"\b(task|tasks|todo|to-do|to do|check off|cross off|uncheck|grocery|shopping list|task list|my list|todo list)\b",
+    r"\b(task|tasks|todo|to-do|to do|check off|cross off|cross out|uncheck|grocery|shopping list|task list|my list|todo list)\b",
     re.I,
 )
 _REMINDER_TIME_VOCAB = (
@@ -3606,7 +3606,10 @@ def _handle_task_command(text: str, conversation_id: str) -> bool:
     text_lower = text.lower()
 
     # Intent routing (most specific first)
-    if any(w in text_lower for w in ("cross off", "check off", "mark done", "mark as done")) and any(
+    if "cross out" in text_lower:
+        # "cross out X" is unambiguous — no list word required
+        intent = "done"
+    elif any(w in text_lower for w in ("cross off", "check off", "mark done", "mark as done")) and any(
         w in text_lower for w in ("list", "task", "todo", "to-do", "to do")
     ):
         intent = "done"
