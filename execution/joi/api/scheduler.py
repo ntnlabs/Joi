@@ -143,6 +143,12 @@ class Scheduler:
         # Push config to mesh on startup
         self._startup_config_push()
 
+        # Restore persisted global tasks date so restarts don't re-fire before 03:00
+        if self._memory:
+            stored = self._memory.get_state("last_global_tasks_date")
+            if stored:
+                self._last_global_tasks_date = stored
+
         logger.info("Scheduler active", extra={"first_tick_in_seconds": self._interval})
 
         while self._running:
@@ -438,7 +444,10 @@ class Scheduler:
     def _run_global_daily_tasks(self, now: datetime) -> None:
         """Run global daily maintenance tasks (once per calendar day, in-memory gate)."""
         tz = ZoneInfo(self._wind_orchestrator.config.timezone)
-        self._last_global_tasks_date = now.astimezone(tz).strftime("%Y-%m-%d")
+        today_str = now.astimezone(tz).strftime("%Y-%m-%d")
+        self._last_global_tasks_date = today_str
+        if self._memory:
+            self._memory.set_state("last_global_tasks_date", today_str)
         logger.info("Running global daily tasks", extra={"action": "global_daily_tasks_start"})
         self._check_hmac_rotation()
         self._purge_old_reminders()
