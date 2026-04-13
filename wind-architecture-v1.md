@@ -1326,7 +1326,7 @@ Success criteria:
   - Decay rate slower than rejection (interest should persist longer than annoyance fades)
   - Recurring topics for high-affinity subjects — system learns what the user actually likes talking about
 
-### Phase 4c: Intelligence (Partial)
+### Phase 4c: Intelligence (Mostly Complete)
 *Depends on: Phase 4b (benefits from affinity data)*
 
 **Requires: Low-priority background queue** (see Background Processing Architecture)
@@ -1353,9 +1353,11 @@ Success criteria:
   - `_generate_special_date_topics` triggers warm check-ins
 - ✅ **Spontaneous sharing**: Joi "discovers" something interesting to share
   - `_generate_spontaneous_topics` — from knowledge base, low frequency, high relevance
-- **Adaptive quiet hours**: learn activity patterns
+- ✅ **Adaptive quiet hours**: learn activity patterns
   - Track when user typically responds
   - Shift quiet windows based on observed patterns
+  - `_compute_learned_quiet_start()` — circular mean of last N inbound message timestamps
+  - Persisted to `learned_quiet_start_minutes` in `wind_state`; overrides config default in `_check_not_quiet_hours()`
 
 ### Phase 4d: Personality Variance
 *Depends on: Phase 3 (WindMood foundation)*
