@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Joi — 24h Daily Cycle</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d1117;
+    color: #e6edf3;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-size: 13px;
+    padding: 32px;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #58a6ff;
+    margin-bottom: 6px;
+    letter-spacing: 0.5px;
+  }
+  .subtitle {
+    color: #8b949e;
+    font-size: 12px;
+    margin-bottom: 36px;
+  }
+
+  .pipeline {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    max-width: 860px;
+    margin: 0 auto;
+  }
+
+  .arrow {
+    width: 2px;
+    height: 22px;
+    background: #30363d;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .arrow::after {
+    content: '';
+    position: absolute;
+    bottom: -5px;
+    left: -4px;
+    border-left: 5px solid transparent;
+    border-right: 5px solid transparent;
+    border-top: 6px solid #30363d;
+  }
+
+  .block {
+    width: 100%;
+    border-radius: 8px;
+    padding: 11px 14px;
+    border: 1px solid #30363d;
+  }
+  .block-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .block-body {
+    font-size: 12px;
+    color: #c9d1d9;
+    line-height: 1.55;
+  }
+  .kv {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 10px;
+    margin-top: 4px;
+  }
+  .kv-key {
+    color: #8b949e;
+    font-size: 11px;
+    white-space: nowrap;
+    padding-top: 1px;
+  }
+  .kv-val {
+    font-size: 11px;
+    color: #c9d1d9;
+    font-family: 'Consolas', 'Fira Code', monospace;
+  }
+  .kv-val em {
+    font-style: normal;
+    color: #e3b341;
+  }
+  .kv-val .ok  { color: #39d353; }
+  .kv-val .bad { color: #f85149; }
+
+  /* tags */
+  .tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .t-always  { background: #0d2020; color: #39d353; }
+  .t-cond    { background: #1a1a1a; color: #8b949e; }
+  .t-timer   { background: #1a1500; color: #d29922; }
+  .t-gate    { background: #1a0000; color: #f85149; }
+  .t-db      { background: #2d1f00; color: #e3b341; }
+  .t-nightly { background: #1a0d2e; color: #bc8cff; }
+  .t-wind    { background: #0c1a0d; color: #56d364; }
+  .t-global  { background: #2d1a00; color: #f0883e; }
+  .t-llm     { background: #1f4d2a; color: #56d364; }
+
+  /* color themes */
+  .c-entry  { background: #0d2136; border-color: #388bfd; }
+  .c-entry  .block-title { color: #58a6ff; }
+  .c-wind   { background: #0c1a0d; border-color: #3fb950; }
+  .c-wind   .block-title { color: #56d364; }
+  .c-quiet  { background: #0d0020; border-color: #6e40c966; }
+  .c-quiet  .block-title { color: #bc8cff; }
+  .c-eod    { background: #1a1500; border-color: #d2992266; }
+  .c-eod    .block-title { color: #e3b341; }
+  .c-global { background: #1a0c00; border-color: #f0883e66; }
+  .c-global .block-title { color: #f0883e; }
+  .c-gate   { background: #1a0000; border-color: #f8514966; }
+  .c-gate   .block-title { color: #f85149; }
+
+  /* row layout */
+  .row {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+  }
+  .row .block { flex: 1; }
+
+  .section-heading {
+    width: 100%;
+    max-width: 860px;
+    margin: 32px auto 14px auto;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #484f58;
+    border-bottom: 1px solid #21262d;
+    padding-bottom: 6px;
+  }
+
+  /* gate list */
+  .gates {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    margin-top: 5px;
+  }
+  .gates li {
+    display: grid;
+    grid-template-columns: 16px auto 1fr;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 11px;
+  }
+  .gate-n { color: #484f58; font-size: 10px; text-align: right; }
+  .gate-l { color: #f85149; font-weight: 700; white-space: nowrap; }
+  .gate-d { color: #8b949e; }
+  .gate-d em { font-style: normal; color: #c9d1d9; }
+
+  /* legend */
+  .legend {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 36px;
+    padding-top: 18px;
+    border-top: 1px solid #21262d;
+    max-width: 860px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #8b949e;
+  }
+  .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<h1>Joi — 24h Daily Cycle</h1>
+<p class="subtitle">scheduler ticks · quiet hours · Wind proactive window · end-of-day tasks · default timezone: Europe/Bratislava</p>
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">Continuous — Every 60 Seconds</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <div class="block c-entry">
+    <div class="block-title">Scheduler Tick <span class="tag t-timer">every 60 s</span> <span class="tag t-always">all day, every day</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">source</span><span class="kv-val">daemon thread · <em>scheduler.py:_tick()</em> · 10 s startup grace period</span>
+        <span class="kv-key">every tick</span><span class="kv-val">auto-ingestion of knowledge files · tamper detection (SHA256) · Wind impulse check · due reminders · due note reminders</span>
+        <span class="kv-key">every 10 ticks</span><span class="kv-val">config sync push to Mesh VM (only if local config changed or Mesh has drifted)</span>
+        <span class="kv-key">every 15 ticks</span><span class="kv-val">group membership cache refresh (business mode only)</span>
+        <span class="kv-key">every 60 ticks</span><span class="kv-val">nonce cleanup · send-cache pruning · FTS index integrity check</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">07:00 — Quiet Hours End · Wind Becomes Eligible</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <div class="block c-wind">
+    <div class="block-title">Active Hours <span class="tag t-wind">07:00 – 23:00 local</span> <span class="tag t-cond">configurable: quiet_hours_start / quiet_hours_end</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">wind eligible</span><span class="kv-val">proactive messaging checks run every tick — impulse scoring active</span>
+        <span class="kv-key">daily cap</span><span class="kv-val">max <em>3</em> proactives per shifted day · cap resets at <em>03:00</em> (3-hour shift prevents midnight boundary issues)</span>
+        <span class="kv-key">cap boost</span><span class="kv-val">EMA response gap ≤ <em>60 min</em> → cap +1 (moderate) · ≤ <em>15 min</em> → cap +2 (active conversation)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <div class="block c-gate">
+    <div class="block-title">Wind Hard Gates <span class="tag t-gate">fast-fail — any miss → skip this tick</span></div>
+    <div class="block-body">
+      <ul class="gates">
+        <li><span class="gate-n">1</span><span class="gate-l">enabled</span><span class="gate-d">Wind globally enabled and conversation on allowlist</span></li>
+        <li><span class="gate-n">2</span><span class="gate-l">not snoozed</span><span class="gate-d"><em>wind_snooze_until</em> is NULL or in the past · "shh" → 8 h snooze · "shhh" → 24 h</span></li>
+        <li><span class="gate-n">3</span><span class="gate-l">quiet hours</span><span class="gate-d">current local time outside <em>23:00–07:00</em> window</span></li>
+        <li><span class="gate-n">4</span><span class="gate-l">cooldown</span><span class="gate-d">≥ <em>1 h</em> since last proactive sent</span></li>
+        <li><span class="gate-n">5</span><span class="gate-l">daily cap</span><span class="gate-d">proactives in rolling 24 h window &lt; cap (base <em>3</em>, boosted for active conversations)</span></li>
+        <li><span class="gate-n">6</span><span class="gate-l">unanswered</span><span class="gate-d">unanswered streak &lt; <em>2</em> — stops if user consistently ignores</span></li>
+        <li><span class="gate-n">7</span><span class="gate-l">silence</span><span class="gate-d">≥ <em>30 min</em> since last user message (≥ <em>1 h</em> if conversation is heated or hot)</span></li>
+        <li><span class="gate-n">8</span><span class="gate-l">not typing</span><span class="gate-d">no typing indicator within past 60 s</span></li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
+  <div class="block c-wind">
+    <div class="block-title">Impulse Score + WindMood Accumulator <span class="tag t-wind">0.0 – 1.0</span> <span class="tag t-db">reads wind_state</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">score factors</span><span class="kv-val">base (0.10) + silence (0–0.30) + topic pressure (0–0.20) − fatigue (0–0.30) ± engagement (±0.20) + affinity (0–0.15) + novelty (0–0.10) ± mood (±0.15)</span>
+        <span class="kv-key">threshold drift</span><span class="kv-val">random walk ±0.01/tick · mean-reverts toward <em>0.60</em> · range [0.50, 0.70]</span>
+        <span class="kv-key">accumulator</span><span class="kv-val">score adds to <em>accumulated_impulse</em> each tick · resets to 0 after trigger · sigmoid probability gate</span>
+        <span class="kv-key">result</span><span class="kv-val"><span class="ok">fire → topic selection → LLM generation → Signal send</span> &nbsp;·&nbsp; <span class="bad">skip → reason logged to wind_decision_log</span></span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">23:00 — Quiet Hours Begin · Wind Suppressed</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <div class="block c-quiet">
+    <div class="block-title">Quiet Hours <span class="tag t-nightly">23:00 – 07:00 local</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">wind</span><span class="kv-val">proactive messaging hard-blocked — gate 3 fails every tick</span>
+        <span class="kv-key">reminders</span><span class="kv-val">still fire — reminders are not subject to quiet hours</span>
+        <span class="kv-key">scheduler</span><span class="kv-val">ticks continue · maintenance tasks run · end-of-day check runs (fires at 03:00)</span>
+        <span class="kv-key">snooze</span><span class="kv-val">"shh" / "wake" still work to extend or clear Wind snooze</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">03:00 — End-of-Day Tasks (once per shifted day)</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <div class="row">
+
+    <div class="block c-eod">
+      <div class="block-title">Per-Conversation Tasks <span class="tag t-nightly">each allowlisted conversation, independently</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">clock gate</span><span class="kv-val">local time ≥ <em>03:00</em> (configurable: <em>end_of_day_time</em>)</span>
+          <span class="kv-key">day gate</span><span class="kv-val">shifted date since <em>last_daily_tasks_at</em> has advanced (3-hour shift · same convention as daily cap)</span>
+          <span class="kv-key">silence gate</span><span class="kv-val">conversation quiet ≥ <em>30 min</em> · each conversation waits independently — one active conversation does not block others</span>
+          <span class="kv-key">deduplication</span><span class="kv-val"><span class="tag t-llm" style="font-size:10px;">joi-curiosity</span> LLM pass over pending topics · near-duplicates merged · best combined title + content kept</span>
+          <span class="kv-key">mood rollup</span><span class="kv-val">Joi's mood intensity decayed toward middle — <em>intensity × 0.85 + 0.5 × 0.15</em> — prevents permanent emotional extremes</span>
+          <span class="kv-key">feedback decay</span><span class="kv-val">rejection_weight and interest_weight on topic families gradually forgiven — old data loses influence over time</span>
+          <span class="kv-key">learned quiet</span><span class="kv-val">quiet start inferred from last 10 inbound message timestamps · stored as <em>learned_quiet_start_minutes</em></span>
+          <span class="kv-key">persisted</span><span class="kv-val"><em>last_daily_tasks_at</em> written to wind_state · survives service restart</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="block c-global">
+      <div class="block-title">Global Daily Tasks <span class="tag t-global">once per calendar day · service-wide</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">clock gate</span><span class="kv-val">local time ≥ <em>03:00</em> (same <em>end_of_day_time</em> as per-conversation)</span>
+          <span class="kv-key">day gate</span><span class="kv-val">today's date ≠ <em>last_global_tasks_date</em> in system_state · persists across restarts — no double-fire on restart</span>
+          <span class="kv-key">HMAC rotation</span><span class="kv-val">mesh authentication key rotation check — rotates if weekly interval elapsed · uses grace period for in-flight messages</span>
+          <span class="kv-key">purge messages</span><span class="kv-val">hard-delete fully-archived messages older than <em>JOI_MESSAGE_RETENTION_DAYS</em> (default: disabled · max cap: 90 days)</span>
+          <span class="kv-key">purge reminders</span><span class="kv-val">archive terminal reminders older than <em>JOI_REMINDER_RETENTION_DAYS</em> (default: 180 days)</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">State Reference</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <div class="row">
+    <div class="block" style="background:#0d1117; border-color:#30363d;">
+      <div class="block-title" style="color:#8b949e;">wind_state <span class="tag t-db">per conversation · PRIMARY KEY = conversation_id</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">timing</span><span class="kv-val">last_user_interaction_at · last_proactive_sent_at · wind_snooze_until · convo_gap_ema_seconds</span>
+          <span class="kv-key">counters</span><span class="kv-val">unanswered_proactive_count · proactive_fire_times[] (rolling 24 h) · proactive_sent_today · proactive_day_bucket</span>
+          <span class="kv-key">mood</span><span class="kv-val">mood_state (Plutchik) · mood_intensity · user_mood_state · user_mood_intensity</span>
+          <span class="kv-key">windmood</span><span class="kv-val">threshold_offset · accumulated_impulse</span>
+          <span class="kv-key">eod</span><span class="kv-val">last_daily_tasks_at · learned_quiet_start_minutes</span>
+        </div>
+      </div>
+    </div>
+    <div class="block" style="background:#0d1117; border-color:#30363d;">
+      <div class="block-title" style="color:#8b949e;">system_state <span class="tag t-db">service-wide key-value store</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">last_global_tasks_date</span><span class="kv-val">YYYY-MM-DD · gates global daily tasks · persists across restarts</span>
+          <span class="kv-key">schema_version</span><span class="kv-val">migration tracking</span>
+          <span class="kv-key">last_interaction_at</span><span class="kv-val">epoch ms of last user message (any conversation)</span>
+          <span class="kv-key">agent_state</span><span class="kv-val">idle / busy</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
+<!-- LEGEND -->
+<div class="legend">
+  <div class="legend-item"><div class="legend-dot" style="background:#58a6ff;"></div>Scheduler — continuous background daemon</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#3fb950;"></div>Wind active (07:00–23:00)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#bc8cff;"></div>Quiet hours (23:00–07:00) — Wind suppressed</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e3b341;"></div>Per-conversation end-of-day tasks (at 03:00)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f0883e;"></div>Global daily tasks (at 03:00, once per calendar day)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f85149;"></div>Hard gate — any failure skips the tick</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#e3b341; opacity:0.4;"></div>DB table reference</div>
+</div>
+
+</body>
+</html>
