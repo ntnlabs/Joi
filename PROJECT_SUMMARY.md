@@ -8,12 +8,15 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 
 ## Project Status
 
-**Phase: Implementation** - Core system operational with defense-in-depth security. Wind proactive messaging live through Phase 4b + partial 4c (tension extraction).
+**Phase: Implementation** - Core system operational with defense-in-depth security. Wind proactive messaging live through Phase 4c (adaptive quiet hours complete; emotional follow-up remaining).
 
 ### Milestones
 
 | Date | Milestone |
 |------|-----------|
+| 2026-04-13 | **Clock-time end-of-day scheduler** - Replaced tick-count daily tasks with clock-time gate (03:00 local); per-conversation `last_daily_tasks_at` in DB; global tasks (HMAC rotation, purge) tracked in `system_state` and persist across restarts |
+| 2026-04-13 | **Wind Phase 4c: Adaptive quiet hours** - `_compute_learned_quiet_start()` uses circular mean of inbound message timestamps; overrides configured quiet start in `_check_not_quiet_hours()`; updated nightly during end-of-day tasks |
+| 2026-04-11 | **Task list** - Natural language task management via Signal: add, done, reopen, delete, list tasks; LLM parser with list-name inference from known lists |
 | 2026-03-19 | **Ollama model presence check at startup** - `_validate_models()` checks all configured model env vars against Ollama on startup; fails fast with clear error if any are missing |
 | 2026-03-19 | **Wind Phase 4c: Tension extraction** - Curiosity LLM mines conversation history for unfinished threads; fires on silence (configurable) and pre-compaction; creates tension topics for Wind to follow up on |
 | 2026-03-15 | **Wind Phase 4b: Learning & Pursuit** - Symmetric affinity/decay model, pursuit back-off, undertaker (permanent block), ghost probes, cooldown anti-periodicity, novelty bonus |
