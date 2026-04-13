@@ -6,6 +6,7 @@ import time
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from typing import Callable, Optional
 
 logger = logging.getLogger("joi.api.scheduler")
@@ -13,7 +14,6 @@ logger = logging.getLogger("joi.api.scheduler")
 # Tick intervals (assuming 60s base interval)
 _TICKS_CONFIG_SYNC = 10      # Config sync every ~10 minutes
 _TICKS_HOURLY = 60           # Maintenance tasks every ~1 hour
-_TICKS_DAILY = 1440          # Daily tasks (24 hours)
 _TICKS_MEMBERSHIP = 15       # Membership cache check every ~15 minutes
 
 
@@ -37,7 +37,7 @@ class Scheduler:
         self._last_tick: Optional[float] = None
         self._tick_count = 0
         self._error_count = 0
-        self._daily_tasks_pending: bool = False
+        self._last_global_tasks_date: Optional[str] = None
 
         # Dependencies (set via set_dependencies)
         self._memory = None
@@ -196,21 +196,16 @@ class Scheduler:
             self._cleanup_send_cache()
             self._check_fts_integrity()
 
-        # Mark daily tasks as due at the 24h boundary (unchanged schedule)
-        if self._tick_count % _TICKS_DAILY == 0 and self._tick_count > 0:
-            self._daily_tasks_pending = True
-
-        # Fire on the first quiet tick after the boundary (may be same tick if already silent)
-        if self._daily_tasks_pending and self._is_system_quiet():
-            self._daily_tasks_pending = False
-            logger.info("Scheduler: running end-of-day procedures", extra={"action": "daily_tasks_start"})
-            self._check_hmac_rotation()
-            self._purge_old_reminders()
-            self._purge_old_messages()
-            self._dedup_wind_topics()
-            self._rollup_moods()
-            self._rollup_feedback_decay()
-            logger.info("Scheduler: end-of-day procedures complete", extra={"action": "daily_tasks_done"})
+        # End-of-day tasks (clock-time gated, not tick-count based)
+        now_utc = datetime.now(timezone.utc)
+        # Per-conversation tasks: each conversation fires independently when quiet
+        if self._wind_orchestrator:
+            for conv_id in (self._wind_orchestrator.config.allowlist or []):
+                if self._should_run_daily_tasks_for(conv_id, now_utc):
+                    self._run_daily_tasks_for(conv_id, now_utc)
+        # Global tasks: fire once per calendar day regardless of conversation activity
+        if self._should_run_global_tasks(now_utc):
+            self._run_global_daily_tasks(now_utc)
 
         # Refresh membership cache (only runs if business mode + dm_group_knowledge)
         if self._tick_count % _TICKS_MEMBERSHIP == 0:
@@ -351,6 +346,104 @@ class Scheduler:
                     logger.warning("Scheduler: HMAC rotation failed", extra={"action": "hmac_rotation", "error": result})
         except Exception as e:
             logger.warning("Scheduler: HMAC rotation check failed", extra={"error": str(e)})
+
+    def _is_conversation_quiet(self, conversation_id: str, now: datetime) -> bool:
+        """Return True if the conversation has been silent long enough for daily tasks."""
+        if not self._wind_orchestrator:
+            return True
+        config = self._wind_orchestrator.config
+        threshold_s = config.daily_tasks_silence_minutes * 60
+        state = self._wind_orchestrator.state_manager.get_state(conversation_id)
+        if state and state.last_user_interaction_at:
+            elapsed = (now - state.last_user_interaction_at).total_seconds()
+            if elapsed < threshold_s:
+                logger.debug("Daily tasks deferred: conversation recently active", extra={
+                    "conversation_id": conversation_id,
+                    "elapsed_minutes": round(elapsed / 60, 1),
+                    "required_minutes": config.daily_tasks_silence_minutes,
+                })
+                return False
+        return True
+
+    def _should_run_daily_tasks_for(self, conversation_id: str, now: datetime) -> bool:
+        """Check if end-of-day tasks should run for this conversation on this tick."""
+        if not self._wind_orchestrator:
+            return False
+        config = self._wind_orchestrator.config
+        tz = ZoneInfo(config.timezone)
+        local_now = now.astimezone(tz)
+
+        # Clock-time gate: must be at or past end_of_day_time
+        current_minutes = local_now.hour * 60 + local_now.minute
+        if current_minutes < config.end_of_day_time:
+            return False
+
+        # Day gate: must be a new shifted day since last run (3h shift matches 03:00 default)
+        state = self._wind_orchestrator.state_manager.get_state(conversation_id)
+        if state and state.last_daily_tasks_at:
+            last_local = state.last_daily_tasks_at.astimezone(tz)
+            last_shifted_date = (last_local - timedelta(hours=3)).date()
+            now_shifted_date = (local_now - timedelta(hours=3)).date()
+            if now_shifted_date <= last_shifted_date:
+                return False
+
+        # Silence gate
+        return self._is_conversation_quiet(conversation_id, now)
+
+    def _should_run_global_tasks(self, now: datetime) -> bool:
+        """Return True if global daily tasks should run today (once per calendar day)."""
+        if not self._wind_orchestrator:
+            return False  # No config to determine end_of_day_time or timezone
+        config = self._wind_orchestrator.config
+        tz = ZoneInfo(config.timezone)
+        local_now = now.astimezone(tz)
+        current_minutes = local_now.hour * 60 + local_now.minute
+        if current_minutes < config.end_of_day_time:
+            return False
+        today_str = local_now.strftime("%Y-%m-%d")
+        return self._last_global_tasks_date != today_str
+
+    def _run_daily_tasks_for(self, conversation_id: str, now: datetime) -> None:
+        """Run end-of-day tasks for a single conversation."""
+        logger.info("Running end-of-day tasks", extra={
+            "conversation_id": conversation_id,
+            "action": "daily_tasks_start",
+        })
+        try:
+            self._wind_orchestrator.deduplicate_topics_for(conversation_id)
+        except Exception as e:
+            logger.warning("Daily tasks: topic dedup failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+        try:
+            self._wind_orchestrator.state_manager.rollup_mood(conversation_id)
+        except Exception as e:
+            logger.warning("Daily tasks: mood rollup failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+        try:
+            self._wind_orchestrator.feedback_manager.apply_daily_decay(conversation_id)
+        except Exception as e:
+            logger.warning("Daily tasks: feedback decay failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+        self._wind_orchestrator.state_manager.update_state(
+            conversation_id, last_daily_tasks_at=now
+        )
+        logger.info("End-of-day tasks complete", extra={
+            "conversation_id": conversation_id,
+            "action": "daily_tasks_done",
+        })
+
+    def _run_global_daily_tasks(self, now: datetime) -> None:
+        """Run global daily maintenance tasks (once per calendar day, in-memory gate)."""
+        tz = ZoneInfo(self._wind_orchestrator.config.timezone)
+        self._last_global_tasks_date = now.astimezone(tz).strftime("%Y-%m-%d")
+        logger.info("Running global daily tasks", extra={"action": "global_daily_tasks_start"})
+        self._check_hmac_rotation()
+        self._purge_old_reminders()
+        self._purge_old_messages()
+        logger.info("Global daily tasks complete", extra={"action": "global_daily_tasks_done"})
 
     def _purge_old_messages(self):
         """Hard-delete fully-processed messages older than JOI_MESSAGE_RETENTION_DAYS (0=disabled)."""
@@ -724,57 +817,6 @@ class Scheduler:
                 "error": str(e)
             })
 
-    def _is_system_quiet(self) -> bool:
-        """Return True if no allowlisted conversation has been recently active."""
-        if not self._wind_orchestrator:
-            return True
-        config = self._wind_orchestrator.config
-        if not config.allowlist:
-            return True
-        threshold_s = config.daily_tasks_silence_minutes * 60
-        now = datetime.now(timezone.utc)
-        for conv_id in config.allowlist:
-            state = self._wind_orchestrator.state_manager.get_state(conv_id)
-            if state and state.last_user_interaction_at:
-                elapsed = (now - state.last_user_interaction_at).total_seconds()
-                if elapsed < threshold_s:
-                    logger.debug("Daily tasks deferred: conversation recently active", extra={
-                        "conversation_id": conv_id,
-                        "elapsed_minutes": round(elapsed / 60, 1),
-                        "required_minutes": config.daily_tasks_silence_minutes,
-                    })
-                    return False
-        return True
-
-    def _dedup_wind_topics(self):
-        """End-of-day topic deduplication via LLM."""
-        if not self._wind_orchestrator:
-            return
-        try:
-            self._wind_orchestrator.deduplicate_topics_all()
-        except Exception as e:
-            logger.warning("Scheduler: topic dedup failed", extra={"error": str(e)})
-
-    def _rollup_moods(self) -> None:
-        """Daily mood intensity decay toward moderate for all allowlisted conversations."""
-        if not self._wind_orchestrator:
-            return
-        for conv_id in self._wind_orchestrator.config.allowlist:
-            try:
-                self._wind_orchestrator.state_manager.rollup_mood(conv_id)
-            except Exception as e:
-                logger.warning("Failed to rollup mood", extra={
-                    "conversation_id": conv_id, "error": str(e),
-                })
-
-    def _rollup_feedback_decay(self) -> None:
-        """Daily decay of Wind topic rejection weights (forgiveness over time)."""
-        if not self._wind_orchestrator:
-            return
-        try:
-            self._wind_orchestrator.feedback_manager.apply_daily_decay()
-        except Exception as e:
-            logger.warning("Failed to apply feedback decay", extra={"error": str(e)})
 
     def _startup_config_push(self):
         """Push config to mesh on startup to ensure sync."""

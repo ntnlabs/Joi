@@ -1530,6 +1530,35 @@ class WindOrchestrator:
                     "conversation_id": conversation_id, "error": str(e),
                 })
 
+    def deduplicate_topics_for(self, conversation_id: str) -> None:
+        """End-of-day LLM dedup pass + learned quiet start update for one conversation."""
+        if not getattr(self.config, 'topic_dedup_enabled', True):
+            return
+        if not self._llm_client or not self._curiosity_model:
+            return
+        try:
+            self._deduplicate_topics(conversation_id)
+        except Exception as e:
+            logger.warning("Topic dedup failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+        try:
+            learned = self._compute_learned_quiet_start(conversation_id)
+            if learned is not None:
+                self.state_manager.update_state(
+                    conversation_id,
+                    learned_quiet_start_minutes=learned,
+                )
+                logger.info("Updated learned quiet start", extra={
+                    "conversation_id": conversation_id,
+                    "learned_quiet_start_minutes": learned,
+                    "as_time": f"{learned // 60:02d}:{learned % 60:02d}",
+                })
+        except Exception as e:
+            logger.warning("Failed to compute learned quiet start", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+
     def _deduplicate_topics(self, conversation_id: str) -> None:
         """LLM-based near-duplicate collapse for a single conversation."""
         pending = self.topic_manager.get_pending_topics(conversation_id)

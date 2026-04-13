@@ -289,7 +289,9 @@ CREATE TABLE IF NOT EXISTS wind_state (
     user_mood_intensity REAL DEFAULT 0.5,
     user_mood_updated_at TEXT DEFAULT NULL,
     -- Adaptive quiet start learned from inbound message timestamps
-    learned_quiet_start_minutes INTEGER DEFAULT NULL
+    learned_quiet_start_minutes INTEGER DEFAULT NULL,
+    -- End-of-day task tracking (v15)
+    last_daily_tasks_at TEXT DEFAULT NULL
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -966,6 +968,17 @@ class MemoryStore:
 
         # Migration v14: tasks table is created via SCHEMA_SQL (CREATE TABLE IF NOT EXISTS)
         # No ALTER TABLE needed — new table always created on startup if missing.
+
+        # Migration v15: per-conversation end-of-day task tracking
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='wind_state'")
+        if cursor.fetchone():
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+            if "last_daily_tasks_at" not in cols:
+                logger.info("Migration v15: Adding 'last_daily_tasks_at' column to wind_state table")
+                conn.execute(
+                    "ALTER TABLE wind_state ADD COLUMN last_daily_tasks_at TEXT DEFAULT NULL"
+                )
+                conn.commit()
 
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
