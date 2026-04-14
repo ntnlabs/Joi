@@ -57,6 +57,7 @@ COMMANDS:
     summaries   Read-only context summary inspection
     fts         Check and rebuild FTS (full-text search) indexes
     wind        Inspect and manage Wind proactive messaging state
+    stats       Show global memory statistics (messages, facts, topics, etc. per conversation)
     security    Toggle kill-switch and privacy-mode (writes policy file — Joi will shut down)
     nuke        Drop ALL tables in the memory database (irreversible)
 
@@ -4130,6 +4131,89 @@ HELP
     esac
 }
 
+cmd_stats() {
+    if [[ ! -f "$MEMORY_DB" ]]; then
+        error "Memory database not found: $MEMORY_DB"
+    fi
+
+    echo "Joi Memory Statistics"
+    echo "====================="
+    echo ""
+
+    # --- Global totals (not per-conversation) ---
+    local total_msgs total_facts total_summaries total_topics total_reminders total_notes total_tasks total_rag
+    total_msgs=$(db_scalar "SELECT COUNT(*) FROM messages;")
+    total_facts=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE expires_at IS NULL OR expires_at > strftime('%s','now')*1000;")
+    total_summaries=$(db_scalar "SELECT COUNT(*) FROM context_summaries;")
+    total_topics=$(db_scalar "SELECT COUNT(*) FROM pending_topics WHERE status NOT IN ('expired','complete','dismissed');")
+    total_reminders=$(db_scalar "SELECT COUNT(*) FROM reminders WHERE status = 'pending';")
+    total_notes=$(db_scalar "SELECT COUNT(*) FROM notes WHERE archived = 0;")
+    total_tasks=$(db_scalar "SELECT COUNT(*) FROM tasks WHERE archived = 0 AND done = 0;")
+    total_rag=$(db_scalar "SELECT COUNT(*) FROM knowledge_chunks;")
+
+    printf "  %-22s %s\n" "Messages:"        "${total_msgs:-0}"
+    printf "  %-22s %s\n" "Facts (active):"  "${total_facts:-0}"
+    printf "  %-22s %s\n" "Summaries:"       "${total_summaries:-0}"
+    printf "  %-22s %s\n" "Wind topics:"     "${total_topics:-0}"
+    printf "  %-22s %s\n" "Reminders (due):" "${total_reminders:-0}"
+    printf "  %-22s %s\n" "Notes (active):"  "${total_notes:-0}"
+    printf "  %-22s %s\n" "Tasks (open):"    "${total_tasks:-0}"
+    printf "  %-22s %s\n" "RAG chunks:"      "${total_rag:-0}"
+    echo ""
+
+    # --- Per-conversation breakdown ---
+    local conv_rows
+    conv_rows=$(db_exec "$(cat <<'SQL'
+SELECT conversation_id,
+  COUNT(*) AS msg_count,
+  SUM(CASE WHEN direction='inbound' THEN 1 ELSE 0 END) AS inbound,
+  SUM(CASE WHEN direction='outbound' THEN 1 ELSE 0 END) AS outbound,
+  datetime(MAX(timestamp)/1000, 'unixepoch', 'localtime') AS last_msg
+FROM messages
+GROUP BY conversation_id
+ORDER BY MAX(timestamp) DESC;
+SQL
+)" | awk 'NF && $0 != "ok"')
+
+    if [[ -z "${conv_rows//[$'\t\r\n ']/}" ]]; then
+        echo "  No conversations found."
+        return
+    fi
+
+    echo "Per-Conversation Breakdown"
+    echo "--------------------------"
+    printf "%-20s  %5s  %5s  %5s  %5s  %5s  %5s  %5s  %19s\n" \
+        "conversation" "msgs" "in" "out" "facts" "topics" "remind" "notes" "last_message"
+    printf "%-20s  %5s  %5s  %5s  %5s  %5s  %5s  %5s  %19s\n" \
+        "------------" "----" "--" "---" "-----" "------" "------" "-----" "------------"
+
+    while IFS='|' read -r conv_id msg_count inbound outbound last_msg; do
+        [[ -z "$conv_id" ]] && continue
+
+        local conv_esc facts_count topic_count reminder_count note_count
+        conv_esc=$(sql_escape_literal "$conv_id")
+
+        facts_count=$(db_scalar "SELECT COUNT(*) FROM user_facts WHERE conversation_id='$conv_esc' AND (expires_at IS NULL OR expires_at > strftime('%s','now')*1000);")
+        topic_count=$(db_scalar "SELECT COUNT(*) FROM pending_topics WHERE conversation_id='$conv_esc' AND status NOT IN ('expired','complete','dismissed');")
+        reminder_count=$(db_scalar "SELECT COUNT(*) FROM reminders WHERE conversation_id='$conv_esc' AND status='pending';")
+        note_count=$(db_scalar "SELECT COUNT(*) FROM notes WHERE conversation_id='$conv_esc' AND archived=0;")
+
+        # Truncate long conversation IDs
+        local display_conv="${conv_id:0:20}"
+
+        printf "%-20s  %5s  %5s  %5s  %5s  %5s  %5s  %5s  %19s\n" \
+            "$display_conv" \
+            "${msg_count:-0}" \
+            "${inbound:-0}" \
+            "${outbound:-0}" \
+            "${facts_count:-0}" \
+            "${topic_count:-0}" \
+            "${reminder_count:-0}" \
+            "${note_count:-0}" \
+            "${last_msg:-unknown}"
+    done <<< "$conv_rows"
+}
+
 main() {
     if [[ $# -lt 1 ]]; then
         usage
@@ -4174,6 +4258,10 @@ main() {
         wind)
             check_root
             cmd_wind "$@"
+            ;;
+        stats)
+            check_root
+            cmd_stats "$@"
             ;;
         security)
             cmd_security "$@"
