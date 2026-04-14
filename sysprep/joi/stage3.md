@@ -93,6 +93,14 @@ chmod 750 /var/lib/joi
 
 ## 5. Configure Joi Environment File
 
+Generate the memory encryption key (skip if already done):
+
+```bash
+sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh
+```
+
+Verify it exists and confirm `JOI_MEMORY_KEY_FILE=/etc/joi/memory.key` is set in `/etc/default/joi-api`.
+
 Review and edit `/etc/default/joi-api` for this host (Nebula endpoints, HMAC, model settings, etc.), then lock down permissions:
 
 ```bash

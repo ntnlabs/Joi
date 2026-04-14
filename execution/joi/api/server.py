@@ -272,7 +272,6 @@ llm = OllamaClient(
 # Initialize memory store
 memory = MemoryStore(
     db_path=os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
-    encryption_key=os.getenv("JOI_MEMORY_KEY"),
 )
 
 # Initialize nonce store for replay protection (separate unencrypted DB - nonces are ephemeral)

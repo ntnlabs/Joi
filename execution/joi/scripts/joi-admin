@@ -373,20 +373,6 @@ EOF
             fi
         fi
 
-        # Fallback: JOI_MEMORY_KEY env var (raw string key, no hex validation)
-        local env_key="${JOI_MEMORY_KEY:-}"
-        if [[ -n "$env_key" ]]; then
-            if "$SQLCIPHER_BIN" "$MEMORY_DB" <<EOF >/dev/null 2>&1
-PRAGMA key = '$env_key';
-SELECT count(*) FROM sqlite_master WHERE type='table';
-EOF
-            then
-                DB_KEY="$env_key"
-                DB_MODE="sqlcipher_key"
-                return
-            fi
-        fi
-
         # Fallback: sqlcipher can also open plaintext DBs.
         if "$SQLCIPHER_BIN" "$MEMORY_DB" "SELECT count(*) FROM sqlite_master WHERE type='table';" >/dev/null 2>&1; then
             DB_MODE="sqlcipher_plain"

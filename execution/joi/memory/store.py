@@ -40,24 +40,29 @@ _STOPWORDS = {
     "pri", "pre", "bez", "nad", "pod", "cez", "ako", "aby",
 }
 
-# Default path for encryption key file
-DEFAULT_KEY_FILE = "/etc/joi/memory.key"
-
-
 def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
     """
     Load encryption key from file.
 
-    Args:
-        key_file: Path to key file (default: /etc/joi/memory.key)
+    Requires JOI_MEMORY_KEY_FILE env var to be set, or an explicit key_file argument.
+    Returns None if not configured — MemoryStore enforces via JOI_REQUIRE_ENCRYPTED_DB.
 
-    Returns:
-        Encryption key string or None if not available
+    Generate the key file with:
+        sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh
     """
-    key_path = Path(key_file or os.getenv("JOI_MEMORY_KEY_FILE", DEFAULT_KEY_FILE))
+    key_file_path = key_file or os.getenv("JOI_MEMORY_KEY_FILE")
+    if not key_file_path:
+        return None
+
+    key_path = Path(key_file_path)
 
     try:
         if not key_path.exists():
+            logger.warning(
+                "Key file %s not found — generate with: "
+                "sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh",
+                key_path,
+            )
             return None
 
         # Check permissions (should be 600 or stricter)
@@ -65,18 +70,25 @@ def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
         if mode > 0o600:
             logger.warning(
                 "Key file %s has insecure permissions %o (should be 600 or stricter)",
-                key_path, mode
+                key_path, mode,
             )
 
         key = key_path.read_text().strip()
+        if not key:
+            logger.warning("Key file %s is empty", key_path)
+            return None
         if len(key) < 32:
             logger.warning("Encryption key is shorter than recommended (32+ chars)")
-        return key if key else None
+        if not re.fullmatch(r"[0-9a-fA-F]+", key):
+            logger.warning(
+                "Key file %s does not contain a hex string — "
+                "regenerate with: sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh",
+                key_path,
+            )
+        return key
+
     except PermissionError:
-        logger.warning(
-            "Cannot access key file %s (permission denied) - running unencrypted",
-            key_path
-        )
+        logger.warning("Cannot access key file %s (permission denied)", key_path)
         return None
     except Exception as e:
         logger.error("Failed to read encryption key", extra={"path": str(key_path), "error": str(e)})
@@ -568,7 +580,8 @@ class MemoryStore:
             raise RuntimeError(
                 "Encrypted database required but not available. "
                 "Set JOI_REQUIRE_ENCRYPTED_DB=0 to allow unencrypted (NOT RECOMMENDED), "
-                "or install sqlcipher3-binary and provide JOI_MEMORY_KEY_FILE"
+                "or install sqlcipher3-binary and set JOI_MEMORY_KEY_FILE. "
+                "Generate key: sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh"
             )
 
         # Ensure directory exists
@@ -3237,7 +3250,7 @@ def create_memory_store() -> MemoryStore:
 
     Environment variables:
         JOI_MEMORY_DB: Path to database file (default: /var/lib/joi/memory.db)
-        JOI_MEMORY_KEY_FILE: Path to encryption key file (default: /etc/joi/memory.key)
+        JOI_MEMORY_KEY_FILE: Path to encryption key file (required when DB is encrypted)
 
     The encryption key is loaded from the key file, not from environment variables,
     to avoid key leakage in logs or process listings.
