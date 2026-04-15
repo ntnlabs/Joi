@@ -40,19 +40,20 @@ _STOPWORDS = {
     "pri", "pre", "bez", "nad", "pod", "cez", "ako", "aby",
 }
 
+DEFAULT_KEY_FILE = "/etc/joi/memory.key"
+
+
 def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
     """
     Load encryption key from file.
 
-    Requires JOI_MEMORY_KEY_FILE env var to be set, or an explicit key_file argument.
-    Returns None if not configured — MemoryStore enforces via JOI_REQUIRE_ENCRYPTED_DB.
+    Uses JOI_MEMORY_KEY_FILE if set, otherwise falls back to /etc/joi/memory.key.
+    Returns None if key file not found — MemoryStore enforces via JOI_REQUIRE_ENCRYPTED_DB.
 
     Generate the key file with:
         sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh
     """
-    key_file_path = key_file or os.getenv("JOI_MEMORY_KEY_FILE")
-    if not key_file_path:
-        return None
+    key_file_path = key_file or os.getenv("JOI_MEMORY_KEY_FILE", DEFAULT_KEY_FILE)
 
     key_path = Path(key_file_path)
 
@@ -577,12 +578,21 @@ class MemoryStore:
         # Enforce encryption requirement if configured (default: required)
         require_encrypted = os.getenv("JOI_REQUIRE_ENCRYPTED_DB", "1") == "1"
         if require_encrypted and not self._encrypted:
-            raise RuntimeError(
-                "Encrypted database required but not available. "
-                "Set JOI_REQUIRE_ENCRYPTED_DB=0 to allow unencrypted (NOT RECOMMENDED), "
-                "or install sqlcipher3-binary and set JOI_MEMORY_KEY_FILE. "
-                "Generate key: sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh"
-            )
+            if self._encryption_key and not SQLCIPHER_AVAILABLE:
+                logger.critical(
+                    "Encryption key found but sqlcipher3 not installed — "
+                    "install: pip install sqlcipher3-binary",
+                    extra={"action": "startup_fatal"},
+                )
+            else:
+                logger.critical(
+                    "Encrypted database required but no key available. "
+                    "Set JOI_MEMORY_KEY_FILE or place key at %s. "
+                    "Generate: sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh",
+                    DEFAULT_KEY_FILE,
+                    extra={"action": "startup_fatal"},
+                )
+            os._exit(78)
 
         # Ensure directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
