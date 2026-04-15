@@ -66,13 +66,16 @@ def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
             )
             return None
 
-        # Check permissions (should be 600 or stricter)
+        # Check permissions — refuse to use key if too permissive (like ssh/munge)
         mode = key_path.stat().st_mode & 0o777
         if mode > 0o600:
-            logger.warning(
-                "Key file %s has insecure permissions %o (should be 600 or stricter)",
-                key_path, mode,
+            logger.critical(
+                "Key file %s has insecure permissions %o (must be 600 or stricter) — "
+                "fix with: chmod 600 %s",
+                key_path, mode, key_path,
+                extra={"action": "startup_fatal"},
             )
+            os._exit(78)
 
         key = key_path.read_text().strip()
         if not key:
