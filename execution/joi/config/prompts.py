@@ -523,16 +523,16 @@ If truly no facts, return: []
 
 Examples:
 [
-  {{"category": "personal", "key": "name", "value": "NTN's real name is Adrian", "confidence": 1.0, "core": true}},
-  {{"category": "work", "key": "profession", "value": "Adrian is a developer", "confidence": 1.0, "core": true}},
-  {{"category": "routine", "key": "wake_up_time", "value": "NTN wakes up at 6:45 every morning", "confidence": 0.9, "core": false}},
-  {{"category": "event", "key": "tire_service", "value": "NTN has a tire service appointment tomorrow", "confidence": 0.9, "core": false, "ttl_hours": 24}},
-  {{"category": "event", "key": "lunch_plan", "value": "NTN will have lunch at Vapiano today", "confidence": 0.9, "core": false, "ttl_hours": 12}},
-  {{"category": "personal", "key": "birthday", "value": "NTN's birthday is February 28th", "confidence": 1.0, "core": true}},
-  {{"category": "health", "key": "current_mood", "value": "NTN is feeling exhausted", "confidence": 0.9, "core": false, "ttl_hours": 12}},
-  {{"category": "opinion", "key": "ai_view", "value": "NTN thinks most AI assistants are too generic", "confidence": 0.8, "core": false, "ttl_hours": 168}},
-  {{"category": "technical", "key": "homelab", "value": "NTN runs a Proxmox homelab", "confidence": 0.9, "core": false, "ttl_hours": 720}},
-  {{"category": "goal", "key": "fitness_goal", "value": "NTN wants to get back into regular exercise", "confidence": 0.8, "core": false, "ttl_hours": 720}}
+  {{"category": "personal", "key": "name", "value": "Zephyr's real name is Marcus", "confidence": 1.0, "core": true}},
+  {{"category": "work", "key": "profession", "value": "Marcus is a developer", "confidence": 1.0, "core": true}},
+  {{"category": "routine", "key": "wake_up_time", "value": "Zephyr wakes up at 6:45 every morning", "confidence": 0.9, "core": false}},
+  {{"category": "event", "key": "tire_service", "value": "Zephyr has a tire service appointment tomorrow", "confidence": 0.9, "core": false, "ttl_hours": 24}},
+  {{"category": "event", "key": "lunch_plan", "value": "Zephyr will have lunch at Vapiano today", "confidence": 0.9, "core": false, "ttl_hours": 12}},
+  {{"category": "personal", "key": "birthday", "value": "Zephyr's birthday is February 28th", "confidence": 1.0, "core": true}},
+  {{"category": "health", "key": "current_mood", "value": "Zephyr is feeling exhausted", "confidence": 0.9, "core": false, "ttl_hours": 12}},
+  {{"category": "opinion", "key": "ai_view", "value": "Zephyr thinks most AI assistants are too generic", "confidence": 0.8, "core": false, "ttl_hours": 168}},
+  {{"category": "technical", "key": "homelab", "value": "Zephyr runs a Proxmox homelab", "confidence": 0.9, "core": false, "ttl_hours": 720}},
+  {{"category": "goal", "key": "fitness_goal", "value": "Zephyr wants to get back into regular exercise", "confidence": 0.8, "core": false, "ttl_hours": 720}}
 ]
 
 Conversation:
