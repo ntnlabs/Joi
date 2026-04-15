@@ -2276,6 +2276,13 @@ SQL
                 echo "  --- content ---"
                 echo "$content" | fold -s -w 72 | sed 's/^/  /'
             fi
+            local emotional_context
+            emotional_context=$(db_scalar "SELECT COALESCE(emotional_context,'') FROM pending_topics WHERE id = $topic_id;")
+            if [[ -n "$emotional_context" ]]; then
+                echo ""
+                echo "  --- emotional context ---"
+                echo "$emotional_context" | fold -s -w 72 | sed 's/^/  /'
+            fi
             echo ""
             ;;
 
