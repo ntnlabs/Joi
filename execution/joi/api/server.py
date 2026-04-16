@@ -461,6 +461,7 @@ _TASK_TRIGGER = re.compile(
     r"\b(task|tasks|todo|to-do|to do|check off|cross off|cross out|uncheck|grocery|shopping list|task list|my list|todo list)\b",
     re.I,
 )
+_TASK_DYNAMIC_HINT = re.compile(r"\b(add|show|list|done|mark|remove|delete|check)\b", re.I)
 _REMINDER_TIME_VOCAB = (
     "Time word definitions (use these exact hours when resolving):\n"
     f"  early morning={REMINDER_EARLY_MORNING_HOUR:02d}:00,"
@@ -3644,11 +3645,25 @@ def _get_recent_outbound_text(conversation_id: str, limit: int = 3) -> Optional[
         return None
 
 
+def _task_trigger_matches(text: str, conversation_id: str) -> bool:
+    """Return True if this message looks like a task command."""
+    if _TASK_TRIGGER.search(text):
+        return True
+    if not _TASK_DYNAMIC_HINT.search(text):
+        logger.info("Task trigger: no hint match", extra={"action": "task_trigger_debug"})
+        return False
+    known_lists = task_manager.get_all_lists(conversation_id)
+    text_lower = text.lower()
+    matched = any(name.lower() in text_lower for name in known_lists)
+    logger.info("Task trigger: dynamic check", extra={"known_lists": known_lists, "matched": matched, "action": "task_trigger_debug"})
+    return matched
+
+
 def _handle_task_command(text: str, conversation_id: str) -> bool:
     """
     Route task commands. Returns True if a task operation was handled, False otherwise.
     """
-    if not _TASK_TRIGGER.search(text):
+    if not _task_trigger_matches(text, conversation_id):
         return False
 
     text_lower = text.lower()
