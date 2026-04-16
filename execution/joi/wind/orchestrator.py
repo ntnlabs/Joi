@@ -1151,8 +1151,8 @@ class WindOrchestrator:
         """
         Run the curiosity LLM on a batch of messages and create a tension topic if warranted.
 
-        Updates last_tension_mined_message_ts on success.
-        Raises on LLM or parse failure — caller does not catch, so Joi restarts via systemd.
+        Updates last_tension_mined_message_ts on success or parse failure.
+        Raises only on unexpected LLM/infrastructure errors — caller does not catch, so Joi restarts via systemd.
         """
         if not messages:
             return
@@ -1403,7 +1403,7 @@ class WindOrchestrator:
                 last_tension_mined_message_ts=newest_ts,
             )
 
-        except (json.JSONDecodeError, KeyError, ValueError) as e:
+        except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
             logger.warning("Tension mining: parse failure after retry — skipping cycle", extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
