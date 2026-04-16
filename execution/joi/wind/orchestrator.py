@@ -1204,7 +1204,15 @@ class WindOrchestrator:
                 pass
 
         undertaker_block = "\n".join(f"- {f}" for f in undertaker_families) or "(none)"
-        resolved_block = "\n".join(f"- {s.summary_text}" for s in resolved_summaries) or "(none)"
+        def _resolved_title(s) -> str:
+            if s.key_points_json:
+                try:
+                    return json.loads(s.key_points_json).get("topic_title") or s.summary_text[:80]
+                except Exception:
+                    pass
+            return s.summary_text[:80]
+
+        resolved_block = "\n".join(f"- {_resolved_title(s)}" for s in resolved_summaries) or "(none)"
 
         today_str = now.strftime("%Y-%m-%d (%A)")
         prompt = (
