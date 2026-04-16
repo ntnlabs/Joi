@@ -1018,6 +1018,17 @@ class MemoryStore:
                 )
                 conn.commit()
 
+        # Migration v17: wake-up proactive scheduled send time
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='wind_state'")
+        if cursor.fetchone():
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+            if "wakeup_send_at" not in cols:
+                logger.info("Migration v17: Adding 'wakeup_send_at' column to wind_state table")
+                conn.execute(
+                    "ALTER TABLE wind_state ADD COLUMN wakeup_send_at TEXT DEFAULT NULL"
+                )
+                conn.commit()
+
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
 

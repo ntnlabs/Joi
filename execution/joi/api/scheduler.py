@@ -2,6 +2,7 @@
 
 import logging
 import os
+import random
 import time
 import threading
 import uuid
@@ -211,6 +212,8 @@ class Scheduler:
                     self._run_daily_tasks_for(conv_id, now_utc)
                 if self._should_run_wakeup_for(conv_id, now_utc):
                     self._run_wakeup_for(conv_id, now_utc)
+                if self._should_send_wakeup_for(conv_id, now_utc):
+                    self._send_wakeup_proactive(conv_id, now_utc)
         # Global tasks: fire once per calendar day regardless of conversation activity
         if self._should_run_global_tasks(now_utc):
             self._run_global_daily_tasks(now_utc)
@@ -539,21 +542,168 @@ class Scheduler:
                 "conversation_id": conversation_id, "error": str(e),
             })
 
-        # Step 4: Reset Wind impulse so it doesn't fire immediately on return
+        # Step 4: Schedule proactive re-engagement + reset impulse
         try:
+            wakeup_send_at = self._compute_wakeup_send_at(
+                self._wind_orchestrator.config, state, now
+            )
             self._wind_orchestrator.state_manager.update_state(
                 conversation_id,
                 accumulated_impulse=0.0,
                 last_wakeup_at=now,
+                wakeup_send_at=wakeup_send_at,
             )
+            logger.info("Wake-up: proactive scheduled", extra={
+                "conversation_id": conversation_id,
+                "wakeup_send_at": wakeup_send_at.isoformat(),
+            })
         except Exception as e:
-            logger.warning("Wake-up: state reset failed", extra={
+            logger.warning("Wake-up: scheduling failed", extra={
                 "conversation_id": conversation_id, "error": str(e),
             })
 
         logger.info("Wake-up procedure complete", extra={
             "conversation_id": conversation_id,
             "action": "wakeup_done",
+        })
+
+    def _compute_wakeup_send_at(self, config, state, now: datetime) -> datetime:
+        """Return a random UTC datetime in the next full non-quiet window (always tomorrow's)."""
+        tz = ZoneInfo(config.timezone)
+        local_now = now.astimezone(tz)
+        today_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        tomorrow_midnight = today_midnight + timedelta(days=1)
+
+        end_min = config.quiet_hours_end   # e.g. 420 = 07:00
+        start_min = (
+            state.learned_quiet_start_minutes
+            if state and state.learned_quiet_start_minutes is not None
+            else config.quiet_hours_start   # e.g. 1380 = 23:00
+        )
+
+        window_start = tomorrow_midnight + timedelta(minutes=end_min)
+        window_end   = tomorrow_midnight + timedelta(minutes=start_min)
+
+        # Guard: unusual config where quiet window leaves no non-quiet time
+        if window_end <= window_start:
+            return window_start.astimezone(timezone.utc)
+
+        window_seconds = (window_end - window_start).total_seconds()
+        offset = random.uniform(0, window_seconds)
+        return (window_start + timedelta(seconds=offset)).astimezone(timezone.utc)
+
+    def _should_send_wakeup_for(self, conversation_id: str, now: datetime) -> bool:
+        """Return True if the scheduled wake-up proactive is due and outside quiet hours."""
+        if not self._wind_orchestrator:
+            return False
+        state = self._wind_orchestrator.state_manager.get_state(conversation_id)
+        if not state or not state.wakeup_send_at:
+            return False
+        if now < state.wakeup_send_at:
+            return False
+        # Quiet hours check (replicated inline — ImpulseEngine method not accessible here)
+        config = self._wind_orchestrator.config
+        tz = ZoneInfo(config.timezone)
+        local = now.astimezone(tz)
+        current = local.hour * 60 + local.minute
+        start = (
+            state.learned_quiet_start_minutes
+            if state.learned_quiet_start_minutes is not None
+            else config.quiet_hours_start
+        )
+        end = config.quiet_hours_end
+        in_quiet = (current >= start or current < end) if start > end else (start <= current < end)
+        return not in_quiet
+
+    def _send_wakeup_proactive(self, conversation_id: str, now: datetime) -> None:
+        """Send the scheduled proactive re-engagement message after long silence."""
+        logger.info("Sending wake-up proactive", extra={
+            "conversation_id": conversation_id,
+            "action": "wakeup_proactive_send",
+        })
+        state = self._wind_orchestrator.state_manager.get_state(conversation_id)
+        pause_start = state.last_user_interaction_at if state else None
+
+        duration_days = max(1, int((now - pause_start).total_seconds() / 86400)) if pause_start else 1
+        user_mood = None
+        if state and state.user_mood_state and state.user_mood_state != "neutral":
+            user_mood = f"{state.user_mood_state} (intensity {state.user_mood_intensity:.1f})"
+
+        try:
+            if self._message_queue:
+                message_text = self._message_queue.enqueue(
+                    message_id=f"wakeup-{conversation_id}-{int(time.time())}",
+                    handler=lambda msg, _d=duration_days, _m=user_mood, _c=conversation_id: (
+                        self._generate_proactive_message(
+                            topic_title=f"Reconnect after {_d}-day absence",
+                            topic_content=None,
+                            conversation_id=_c,
+                            topic_type="wakeup",
+                            emotional_context=_m,
+                        )
+                    ),
+                    is_owner=False,
+                    timeout=600.0,
+                )
+            else:
+                message_text = self._generate_proactive_message(
+                    topic_title=f"Reconnect after {duration_days}-day absence",
+                    topic_content=None,
+                    conversation_id=conversation_id,
+                    topic_type="wakeup",
+                    emotional_context=user_mood,
+                )
+        except Exception as e:
+            logger.warning("Wake-up proactive: generation failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+            self._wind_orchestrator.state_manager.update_state(
+                conversation_id, wakeup_send_at=None
+            )
+            return
+
+        if not message_text:
+            self._wind_orchestrator.state_manager.update_state(
+                conversation_id, wakeup_send_at=None
+            )
+            return
+
+        is_group = not conversation_id.startswith("+")
+        conv_type = "group" if is_group else "direct"
+        conversation = self._InboundConversation(type=conv_type, id=conversation_id)
+
+        success = self._send_to_mesh(
+            recipient_id="owner",
+            recipient_transport_id=conversation_id,
+            conversation=conversation,
+            text=message_text,
+            reply_to=None,
+            is_critical=False,
+        )
+
+        if success and self._memory:
+            self._memory.store_message(
+                message_id=str(uuid.uuid4()),
+                direction="outbound",
+                content_type="text",
+                content_text=f"[JOI-WAKEUP] {message_text}",
+                timestamp=int(time.time() * 1000),
+                conversation_id=conversation_id,
+            )
+
+        # Deliberately does NOT update proactive_fire_times — wake-up is a one-time special
+        # event per silence gap, not a regular Wind proactive, so it should not count toward
+        # fatigue or the rolling daily cap.
+        self._wind_orchestrator.state_manager.update_state(
+            conversation_id,
+            wakeup_send_at=None,
+            last_proactive_sent_at=now,
+            last_outbound_at=now,
+        )
+        logger.info("Wake-up proactive sent", extra={
+            "conversation_id": conversation_id,
+            "action": "wakeup_proactive_done",
+            "success": success,
         })
 
     def _run_global_daily_tasks(self, now: datetime) -> None:

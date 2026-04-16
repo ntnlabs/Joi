@@ -2161,18 +2161,23 @@ def _generate_proactive_message(
         topic_info += f" — {topic_content}"
 
     # Pull relevant context via FTS (no extra LLM calls — pure SQL/BM25)
-    facts_ctx = memory.get_facts_as_context(
-        query=topic_title,
-        max_tokens=FACTS_FTS_MAX_TOKENS,
-        min_confidence=0.6,
-        conversation_id=conversation_id,
-    )
-    summaries_ctx = memory.get_summaries_as_context(
-        query=topic_title,
-        max_tokens=SUMMARIES_FTS_MAX_TOKENS,
-        days=30,
-        conversation_id=conversation_id,
-    )
+    # Skip for wakeup — it uses important facts directly instead
+    if topic_type != "wakeup":
+        facts_ctx = memory.get_facts_as_context(
+            query=topic_title,
+            max_tokens=FACTS_FTS_MAX_TOKENS,
+            min_confidence=0.6,
+            conversation_id=conversation_id,
+        )
+        summaries_ctx = memory.get_summaries_as_context(
+            query=topic_title,
+            max_tokens=SUMMARIES_FTS_MAX_TOKENS,
+            days=30,
+            conversation_id=conversation_id,
+        )
+    else:
+        facts_ctx = ""
+        summaries_ctx = ""
 
     # Build system prompt
     system_parts = [base_prompt]
@@ -2221,6 +2226,31 @@ def _generate_proactive_message(
             "about them, not because you need an update. "
             "Acknowledge what you sensed without spelling it out clinically. "
             "Could be gentle curiosity, could be warmth, could be just checking in. "
+            "No greeting. No philosophical warm-up. Just the message."
+        )
+    elif topic_type == "wakeup":
+        # Re-engagement after long silence — use core (important) facts instead of FTS
+        important_facts = memory.get_important_facts(
+            conversation_id=conversation_id,
+            min_confidence=0.5,
+        )
+        core_facts_text = ""
+        if important_facts:
+            lines = [f"- {f.key}: {f.value}" for f in important_facts[:20]]
+            core_facts_text = "What you know about them:\n" + "\n".join(lines) + "\n\n"
+        mood_line = (
+            f"Their last observed mood: {emotional_context}\n\n"
+            if emotional_context else ""
+        )
+        # topic_title carries the gap, e.g. "Reconnect after 4-day absence"
+        user_prompt = (
+            f"{core_facts_text}"
+            f"{mood_line}"
+            f"It's been a while — {topic_title.lower()}.\n\n"
+            "Write one short, warm message reaching out. It could be a genuine check-in, "
+            "something you thought of that reminded you of them, or just a simple 'hey'. "
+            "Don't mention the exact number of days or make the absence the main point — "
+            "just be natural, as if you were thinking of them. "
             "No greeting. No philosophical warm-up. Just the message."
         )
     else:

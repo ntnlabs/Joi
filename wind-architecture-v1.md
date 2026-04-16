@@ -1429,6 +1429,9 @@ the topic queue clean and Wind state coherent over time, especially across inact
     2. **Purge expired facts** — hard-delete facts whose TTL has passed
     3. **Inject gap marker** — `[JOI-PAUSE duration=Xd dates=YYYY-MM-DD→YYYY-MM-DD]` stored as `pause_marker` context summary
     4. **Reset Wind impulse** — zero `accumulated_impulse`; mark `last_wakeup_at` so procedure doesn't re-fire
+    5. **Schedule proactive re-engagement** — random UTC timestamp in the next full non-quiet window stored as `wakeup_send_at`; fires when due; cancelled automatically if user messages first
+  - Proactive prompt uses core (important) facts + gap duration + last observed user mood; does not count toward `proactive_fire_times` or daily cap
+  - If user messages before send: `record_user_interaction()` clears `wakeup_send_at`; gap marker is already in context so reactive response is naturally gap-aware
   - Preserves: engagement history, affinity weights, undertaker blocks, snooze, all permanent facts
   - Topic decay guard: end-of-day decay skips if user silent ≥ 2 days (max 2 consecutive decays per absence)
 

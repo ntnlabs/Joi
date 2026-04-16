@@ -247,7 +247,7 @@ These variables configure Wind behaviour at the process level (set in `joi-api.d
 ## Wake-Up Procedure (Phase 5)
 
 When a conversation has been silent for an extended period, Wind runs a clean re-entry procedure
-to avoid stale context and suppress an immediate proactive send on the user's return.
+and schedules a proactive re-engagement message for a random time in the next non-quiet window.
 
 The silence threshold is `max(floor, min(cap, convo_gap_ema * multiplier))`. With defaults:
 - Daily users (EMA≈2h): max(72h, min(96h, 6h)) = **72h** (3 days)
@@ -259,7 +259,16 @@ The procedure runs **once per silence gap**, gated by `last_wakeup_at > last_use
 1. Compact context (reuse existing method — same as pre-Wind send)
 2. Purge expired facts (hard-delete facts whose TTL has passed)
 3. Inject gap marker into context summaries (`[JOI-PAUSE duration=Xd dates=YYYY-MM-DD→YYYY-MM-DD]`)
-4. Reset Wind impulse to 0 (prevents immediate proactive send when user returns)
+4. Reset Wind impulse to 0 (prevents double-fire once user returns)
+5. Schedule proactive — pick a random UTC time in the **next full non-quiet window** (tomorrow's `quiet_hours_end` → `quiet_hours_start`), store as `wakeup_send_at`
+
+**Proactive message** uses core (important=True) facts + gap duration + last observed user mood.
+It does **not** count toward `proactive_fire_times` or the rolling daily cap — it is a one-time
+re-engagement event, not a regular Wind proactive.
+
+**Cancellation** — if the user messages before `wakeup_send_at` arrives, `record_user_interaction()`
+automatically clears it. The gap marker is already in context, so the reactive response is
+naturally gap-aware without any extra handling.
 
 | Key | Default | Description |
 |-----|---------|-------------|
