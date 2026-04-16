@@ -43,7 +43,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Wind phase 5 (queue health): hot/heated conversation suppression (two-tier EMA), rolling 24h daily cap
 - ✅ Wind adaptive quiet hours (HH:MM config precision + learned quiet start from inbound message history)
 - ⏳ Wind phase 4d: daily mood momentum, day-of-week personality, 30-day cycle
-- ✅ Wind phase 5: topic priority decay (queue depth-scaled sqrt decay, end-of-day)
+- ✅ Wind phase 5: topic priority decay + affinity protection (queue depth-scaled sqrt decay, liked families resist decay, organic undertaker release)
 - ⏳ Wind phase 5 (remaining): wake-up procedure
 
 ### Memory
@@ -93,7 +93,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - **Prompt injection scanning** — scan fact writes for invisible Unicode and injection patterns before committing to the facts table (user text → facts is an injection surface)
 - **Wind phase 4c remaining** — emotional follow-up, adaptive quiet hours
 - **Wind phase 4d** — daily mood momentum, day-of-week personality, 30-day cycle
-- **Wind phase 5 remaining** — similar topic merge, topic priority decay, wake-up procedure
+- **Wind phase 5 remaining** — wake-up procedure
 
 ### Medium-term
 
