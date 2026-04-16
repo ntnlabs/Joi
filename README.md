@@ -91,7 +91,6 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 - **Wind cron hint** — inject "no user present, do not ask questions" into Wind's proactive LLM call to prevent half-responses that trail off waiting for a reply
 - **Prompt injection scanning** — scan fact writes for invisible Unicode and injection patterns before committing to the facts table (user text → facts is an injection surface)
-- **Wind phase 4c remaining** — emotional follow-up, adaptive quiet hours
 - **Wind phase 4d** — daily mood momentum, day-of-week personality, 30-day cycle
 - **Wind phase 5 remaining** — wake-up procedure
 
