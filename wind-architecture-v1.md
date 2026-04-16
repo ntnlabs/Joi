@@ -1419,17 +1419,18 @@ the topic queue clean and Wind state coherent over time, especially across inact
   - Config: `topic_priority_decay_points`, `topic_priority_decay_reference`,
     `topic_priority_affinity_factor`, `topic_priority_undertaker_release_threshold`
 
-- **Wake-up procedure** ❌ *Not implemented*
-  - Triggered when `current_silence > max(72h, convo_gap_ema_seconds * multiplier)`
-  - 72h floor covers the natural Friday–Monday gap without false positives on daily users
-  - Threshold is self-calibrating: heavy users (EMA=2h) trigger at ~20h above floor; light users (EMA=24h) at ~10 days
-  - No config knob needed — driven entirely by observed conversation rhythm
+- **Wake-up procedure** ✅ *Implemented (2026-04-16)*
+  - Threshold: `max(floor, min(cap, convo_gap_ema * multiplier))` with floor=72h, cap=96h, multiplier=3.0
+  - Range is always 3–4 days regardless of conversation frequency (daily users → 72h, weekly+ → 96h)
+  - Gated by `last_wakeup_at > last_user_interaction_at` — fires once per silence gap
+  - Config: `wakeup_floor_hours`, `wakeup_cap_hours`, `wakeup_ema_multiplier`
   - Procedure (in order):
     1. **Compact context** — summarize pre-pause history so it's preserved but not raw noise
-    2. **Expire stale facts** — run TTL check; ephemeral facts die naturally, permanent facts survive
-    3. **Inject gap marker** — append `[JOI-PAUSE duration=Xd dates=YYYY-MM-DD→YYYY-MM-DD]` to context so Joi is aware of the gap during generation without hardcoded behavior
-    4. **Reset short-term Wind state** — zero accumulated impulse and fatigue so Wind doesn't fire the moment silence ends
+    2. **Purge expired facts** — hard-delete facts whose TTL has passed
+    3. **Inject gap marker** — `[JOI-PAUSE duration=Xd dates=YYYY-MM-DD→YYYY-MM-DD]` stored as `pause_marker` context summary
+    4. **Reset Wind impulse** — zero `accumulated_impulse`; mark `last_wakeup_at` so procedure doesn't re-fire
   - Preserves: engagement history, affinity weights, undertaker blocks, snooze, all permanent facts
+  - Topic decay guard: end-of-day decay skips if user silent ≥ 2 days (max 2 consecutive decays per absence)
 
 ## Integration Points (Current Codebase)
 

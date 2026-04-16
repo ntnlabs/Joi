@@ -244,6 +244,31 @@ These variables configure Wind behaviour at the process level (set in `joi-api.d
 
 ---
 
+## Wake-Up Procedure (Phase 5)
+
+When a conversation has been silent for an extended period, Wind runs a clean re-entry procedure
+to avoid stale context and suppress an immediate proactive send on the user's return.
+
+The silence threshold is `max(floor, min(cap, convo_gap_ema * multiplier))`. With defaults:
+- Daily users (EMA≈2h): max(72h, min(96h, 6h)) = **72h** (3 days)
+- Weekly users (EMA≈168h): max(72h, min(96h, 504h)) = **96h** (4 days)
+
+The procedure runs **once per silence gap**, gated by `last_wakeup_at > last_user_interaction_at`.
+
+**Procedure steps:**
+1. Compact context (reuse existing method — same as pre-Wind send)
+2. Purge expired facts (hard-delete facts whose TTL has passed)
+3. Inject gap marker into context summaries (`[JOI-PAUSE duration=Xd dates=YYYY-MM-DD→YYYY-MM-DD]`)
+4. Reset Wind impulse to 0 (prevents immediate proactive send when user returns)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `wakeup_floor_hours` | `72.0` | Minimum silence (hours) before wake-up triggers. Wake-up never fires sooner than this. |
+| `wakeup_cap_hours` | `96.0` | Maximum threshold (hours). Wake-up always fires within 4 days regardless of EMA. |
+| `wakeup_ema_multiplier` | `3.0` | EMA gap multiplier. Nudges threshold between floor and cap for users with varying frequency. |
+
+---
+
 ## Example Configs
 
 ### Active companion (evening/night, responsive)

@@ -92,6 +92,11 @@ class WindConfig:
     topic_priority_affinity_factor: float = 0.5               # Fraction of decayed points restored for liked families (0 = disable)
     topic_priority_undertaker_release_threshold: float = 0.5  # Preference score at which an undertaker family is organically released
 
+    # Phase 5: Wake-up procedure (triggered after long silence)
+    wakeup_floor_hours: float = 72.0   # Minimum silence (hours) before wake-up triggers
+    wakeup_cap_hours: float = 96.0     # Maximum threshold (hours) — wake-up always within 4 days
+    wakeup_ema_multiplier: float = 3.0  # EMA gap multiplier (nudges threshold between floor and cap)
+
     # Minimum silence before daily housekeeping tasks fire (separate from min_silence_minutes)
     daily_tasks_silence_minutes: int = 30
 
@@ -161,6 +166,9 @@ class WindConfig:
             topic_priority_decay_reference=int(data.get("topic_priority_decay_reference", 8)),
             topic_priority_affinity_factor=float(data.get("topic_priority_affinity_factor", 0.5)),
             topic_priority_undertaker_release_threshold=float(data.get("topic_priority_undertaker_release_threshold", 0.5)),
+            wakeup_floor_hours=float(data.get("wakeup_floor_hours", 72.0)),
+            wakeup_cap_hours=float(data.get("wakeup_cap_hours", 96.0)),
+            wakeup_ema_multiplier=float(data.get("wakeup_ema_multiplier", 3.0)),
             daily_tasks_silence_minutes=data.get("daily_tasks_silence_minutes", 30),
             end_of_day_time=_parse_quiet_minutes(data.get("end_of_day_time", 180), 180),
             emotional_mining_enabled=data.get("emotional_mining_enabled", True),
@@ -217,6 +225,9 @@ class WindConfig:
             "topic_priority_decay_reference": self.topic_priority_decay_reference,
             "topic_priority_affinity_factor": self.topic_priority_affinity_factor,
             "topic_priority_undertaker_release_threshold": self.topic_priority_undertaker_release_threshold,
+            "wakeup_floor_hours": self.wakeup_floor_hours,
+            "wakeup_cap_hours": self.wakeup_cap_hours,
+            "wakeup_ema_multiplier": self.wakeup_ema_multiplier,
             "daily_tasks_silence_minutes": self.daily_tasks_silence_minutes,
             "end_of_day_time": self.end_of_day_time,
             "emotional_mining_enabled": self.emotional_mining_enabled,
