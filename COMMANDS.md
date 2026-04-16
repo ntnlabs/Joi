@@ -164,7 +164,7 @@ joi-admin notes delete-all               # archive all notes
 
 ---
 
-## Task Lists (owner, DM only)
+## Task Lists (DM only)
 
 Named lists of checkable items. List names are created automatically on first add.
 
