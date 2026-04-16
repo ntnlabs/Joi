@@ -164,6 +164,78 @@ joi-admin notes delete-all               # archive all notes
 
 ---
 
+## Task Lists (owner, DM only)
+
+Named lists of checkable items. List names are created automatically on first add.
+
+**Add an item:**
+
+```
+add milk to my shopping list
+put Weather display on the epaper list
+append "call dentist" to todo
+```
+
+**Show a list:**
+
+```
+show my shopping list
+open the epaper list
+what's on my todo?
+```
+
+**Show all lists:**
+
+```
+what lists do I have?
+show all lists
+```
+
+**Mark an item done:**
+
+```
+mark 2 done on shopping list
+check off "milk" from shopping
+cross out item 1
+```
+
+**Reopen a done item:**
+
+```
+uncheck item 2 on shopping list
+reopen "milk" on shopping
+```
+
+**Remove an item:**
+
+```
+remove "milk" from shopping list
+delete item 3 from todo
+```
+
+**Delete an entire list:**
+
+```
+delete my shopping list
+remove the epaper list
+```
+
+**Admin (joi-admin):**
+
+```
+joi-admin tasks list                            # All active undone tasks
+joi-admin tasks list --done                     # Include done items
+joi-admin tasks list --archived                 # Include archived items
+joi-admin tasks list --list epaper              # Items in one list
+joi-admin tasks list --conversation +123        # Tasks for one conversation
+joi-admin tasks show <id>                       # Show task metadata
+joi-admin tasks delete <id>                     # Archive a single task item
+joi-admin tasks delete-all --list shopping      # Archive entire list
+joi-admin tasks delete-all --conversation +123  # Archive all tasks for conversation
+```
+
+---
+
 ## Group Addressing
 
 In group chats, Joi only responds when directly addressed:
