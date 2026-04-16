@@ -663,6 +663,7 @@ class WindOrchestrator:
             period_start = int(topic.created_at.timestamp() * 1000) if topic.created_at else now_ms
             key = topic.title.lower().replace(" ", "_")[:60]
 
+            first_sentence = (summary_text.split(".")[0] + ".").strip()[:120]
             self.memory.store_summary(
                 summary_type="wind_outcome",
                 period_start=period_start,
@@ -673,6 +674,7 @@ class WindOrchestrator:
                     "topic_key": key,
                     "topic_title": topic.title,
                     "topic_id": topic.id,
+                    "description": first_sentence,
                 }),
             )
             logger.info("Stored topic outcome summary", extra={
@@ -1207,10 +1209,17 @@ class WindOrchestrator:
         def _resolved_title(s) -> str:
             if s.key_points_json:
                 try:
-                    return json.loads(s.key_points_json).get("topic_title") or s.summary_text[:80]
+                    kp = json.loads(s.key_points_json)
+                    title = kp.get("topic_title") or s.summary_text[:80]
+                    desc = kp.get("description")
+                    if desc and desc.lower() != title.lower():
+                        return f"{title}: {desc}"
+                    return title
                 except Exception:
                     pass
-            return s.summary_text[:80]
+            # fallback for old records with no key_points_json
+            first = (s.summary_text.split(".")[0] + ".").strip()[:120]
+            return first
 
         resolved_block = "\n".join(f"- {_resolved_title(s)}" for s in resolved_summaries) or "(none)"
 
