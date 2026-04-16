@@ -1007,6 +1007,17 @@ class MemoryStore:
                 )
                 conn.commit()
 
+        # Migration v16: wake-up procedure tracking
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='wind_state'")
+        if cursor.fetchone():
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+            if "last_wakeup_at" not in cols:
+                logger.info("Migration v16: Adding 'last_wakeup_at' column to wind_state table")
+                conn.execute(
+                    "ALTER TABLE wind_state ADD COLUMN last_wakeup_at TEXT DEFAULT NULL"
+                )
+                conn.commit()
+
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
 
@@ -2285,6 +2296,28 @@ class MemoryStore:
             )
             for row in cursor.fetchall()
         ]
+
+    def purge_expired_facts(self, conversation_id: str) -> int:
+        """Hard-delete facts whose TTL has expired for a conversation."""
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        cursor = conn.execute(
+            """
+            DELETE FROM user_facts
+            WHERE conversation_id = ?
+              AND expires_at IS NOT NULL
+              AND expires_at < ?
+            """,
+            (conversation_id, now_ms),
+        )
+        conn.commit()
+        count = cursor.rowcount
+        if count > 0:
+            logger.info("Purged expired facts", extra={
+                "conversation_id": conversation_id,
+                "count": count,
+            })
+        return count
 
     # --- Context Summaries Operations ---
 

@@ -82,6 +82,7 @@ class WindState:
     # Adaptive quiet start (minutes since midnight), learned from last N inbound messages
     learned_quiet_start_minutes: Optional[int] = None
     last_daily_tasks_at: Optional[datetime] = None  # When end-of-day tasks last ran
+    last_wakeup_at: Optional[datetime] = None        # When wake-up procedure last ran
 
 
 from .utils import _parse_datetime, _format_datetime
@@ -145,7 +146,8 @@ class WindStateManager:
                    mood_state, mood_intensity, mood_updated_at,
                    user_mood_state, user_mood_intensity, user_mood_updated_at,
                    learned_quiet_start_minutes,
-                   last_daily_tasks_at
+                   last_daily_tasks_at,
+                   last_wakeup_at
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -194,6 +196,7 @@ class WindStateManager:
             user_mood_updated_at=_parse_datetime(row["user_mood_updated_at"]),
             learned_quiet_start_minutes=row["learned_quiet_start_minutes"],
             last_daily_tasks_at=_parse_datetime(row["last_daily_tasks_at"]),
+            last_wakeup_at=_parse_datetime(row["last_wakeup_at"]),
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -232,6 +235,7 @@ class WindStateManager:
         "user_mood_state", "user_mood_intensity", "user_mood_updated_at",
         "learned_quiet_start_minutes",
         "last_daily_tasks_at",
+        "last_wakeup_at",
     })
 
     def update_state(self, conversation_id: str, **updates) -> None:

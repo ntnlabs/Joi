@@ -91,6 +91,12 @@ JOI_REQUIRE_ENCRYPTED_DB=1
 #WIND_TOPIC_PRIORITY_AFFINITY_FACTOR=0.5
 # Preference score (interest - rejection) at which an undertaker family is organically released
 #WIND_TOPIC_PRIORITY_UNDERTAKER_RELEASE_THRESHOLD=0.5
+# Wake-up procedure: minimum silence (hours) before triggering
+#WIND_WAKEUP_FLOOR_HOURS=72
+# Wake-up procedure: maximum threshold — wake-up always fires within this window (hours)
+#WIND_WAKEUP_CAP_HOURS=96
+# Wake-up procedure: EMA gap multiplier (nudges threshold between floor and cap)
+#WIND_WAKEUP_EMA_MULTIPLIER=3.0
 
 # --- RAG ---
 # Set to 0 to disable knowledge retrieval

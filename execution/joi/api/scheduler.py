@@ -209,6 +209,8 @@ class Scheduler:
             for conv_id in (self._wind_orchestrator.config.allowlist or []):
                 if self._should_run_daily_tasks_for(conv_id, now_utc):
                     self._run_daily_tasks_for(conv_id, now_utc)
+                if self._should_run_wakeup_for(conv_id, now_utc):
+                    self._run_wakeup_for(conv_id, now_utc)
         # Global tasks: fire once per calendar day regardless of conversation activity
         if self._should_run_global_tasks(now_utc):
             self._run_global_daily_tasks(now_utc)
@@ -439,29 +441,119 @@ class Scheduler:
             logger.warning("Daily tasks: feedback decay failed", extra={
                 "conversation_id": conversation_id, "error": str(e),
             })
-        try:
-            # Topic priority decay + affinity protection — runs last so dedup and mining are settled
-            base_pts = getattr(self._wind_orchestrator.config, 'topic_priority_decay_points', 4)
-            ref_count = getattr(self._wind_orchestrator.config, 'topic_priority_decay_reference', 8)
-            decayed_points = self._wind_orchestrator.topic_manager.apply_priority_decay(
-                conversation_id, base_pts, ref_count
-            )
-            affinity_factor = getattr(self._wind_orchestrator.config, 'topic_priority_affinity_factor', 0.5)
-            undertaker_threshold = getattr(self._wind_orchestrator.config, 'topic_priority_undertaker_release_threshold', 0.5)
-            self._wind_orchestrator.topic_manager.apply_affinity_protection(
-                conversation_id, decayed_points, self._wind_orchestrator.feedback_manager,
-                affinity_factor, undertaker_threshold
-            )
-        except Exception as e:
-            logger.warning("Daily tasks: topic priority decay failed", extra={
-                "conversation_id": conversation_id, "error": str(e),
-            })
+        # Skip topic decay if user has been silent more than 2 days — no point penalising
+        # topics when the user isn't around, and it leaves room for the wake-up procedure.
+        state = self._wind_orchestrator.state_manager.get_state(conversation_id)
+        silence_days = 0.0
+        if state and state.last_user_interaction_at:
+            silence_days = (now - state.last_user_interaction_at).total_seconds() / 86400
+        decay_allowed = silence_days < 2
+        if decay_allowed:
+            try:
+                # Topic priority decay + affinity protection — runs last so dedup and mining are settled
+                base_pts = getattr(self._wind_orchestrator.config, 'topic_priority_decay_points', 4)
+                ref_count = getattr(self._wind_orchestrator.config, 'topic_priority_decay_reference', 8)
+                decayed_points = self._wind_orchestrator.topic_manager.apply_priority_decay(
+                    conversation_id, base_pts, ref_count
+                )
+                affinity_factor = getattr(self._wind_orchestrator.config, 'topic_priority_affinity_factor', 0.5)
+                undertaker_threshold = getattr(self._wind_orchestrator.config, 'topic_priority_undertaker_release_threshold', 0.5)
+                self._wind_orchestrator.topic_manager.apply_affinity_protection(
+                    conversation_id, decayed_points, self._wind_orchestrator.feedback_manager,
+                    affinity_factor, undertaker_threshold
+                )
+            except Exception as e:
+                logger.warning("Daily tasks: topic priority decay failed", extra={
+                    "conversation_id": conversation_id, "error": str(e),
+                })
         self._wind_orchestrator.state_manager.update_state(
             conversation_id, last_daily_tasks_at=now
         )
         logger.info("End-of-day tasks complete", extra={
             "conversation_id": conversation_id,
             "action": "daily_tasks_done",
+        })
+
+    def _should_run_wakeup_for(self, conversation_id: str, now: datetime) -> bool:
+        """Return True if this conversation has been silent long enough to warrant a wake-up."""
+        if not self._wind_orchestrator:
+            return False
+        config = self._wind_orchestrator.config
+        state = self._wind_orchestrator.state_manager.get_state(conversation_id)
+        if not state or not state.last_user_interaction_at:
+            return False
+        # Already woken up in this silence gap
+        if state.last_wakeup_at and state.last_wakeup_at > state.last_user_interaction_at:
+            return False
+        floor_s = getattr(config, 'wakeup_floor_hours', 72.0) * 3600
+        cap_s = getattr(config, 'wakeup_cap_hours', 96.0) * 3600
+        multiplier = getattr(config, 'wakeup_ema_multiplier', 3.0)
+        ema_threshold = (state.convo_gap_ema_seconds or 0) * multiplier
+        threshold_s = max(floor_s, min(cap_s, ema_threshold))
+        current_silence = (now - state.last_user_interaction_at).total_seconds()
+        return current_silence >= threshold_s
+
+    def _run_wakeup_for(self, conversation_id: str, now: datetime) -> None:
+        """Run the wake-up procedure for a conversation returning from long silence."""
+        logger.info("Running wake-up procedure", extra={
+            "conversation_id": conversation_id,
+            "action": "wakeup_start",
+        })
+        state = self._wind_orchestrator.state_manager.get_state(conversation_id)
+        pause_start = state.last_user_interaction_at if state else None
+
+        # Step 1: Compact context
+        try:
+            self._compact_before_wind(conversation_id)
+        except Exception as e:
+            logger.warning("Wake-up: context compaction failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+
+        # Step 2: Purge expired facts
+        try:
+            if self._memory:
+                self._memory.purge_expired_facts(conversation_id)
+        except Exception as e:
+            logger.warning("Wake-up: fact purge failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+
+        # Step 3: Inject gap marker into context
+        try:
+            if self._memory and pause_start:
+                tz = ZoneInfo(self._wind_orchestrator.config.timezone)
+                duration_days = max(1, int((now - pause_start).total_seconds() / 86400))
+                start_str = pause_start.astimezone(tz).strftime("%Y-%m-%d")
+                end_str = now.astimezone(tz).strftime("%Y-%m-%d")
+                marker = f"[JOI-PAUSE duration={duration_days}d dates={start_str}\u2192{end_str}]"
+                self._memory.store_summary(
+                    summary_type="pause_marker",
+                    period_start=int(pause_start.timestamp() * 1000),
+                    period_end=int(now.timestamp() * 1000),
+                    summary_text=marker,
+                    conversation_id=conversation_id,
+                )
+        except Exception as e:
+            logger.warning("Wake-up: gap marker injection failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+
+        # Step 4: Reset Wind impulse so it doesn't fire immediately on return
+        try:
+            self._wind_orchestrator.state_manager.update_state(
+                conversation_id,
+                accumulated_impulse=0.0,
+                last_wakeup_at=now,
+            )
+        except Exception as e:
+            logger.warning("Wake-up: state reset failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+
+        logger.info("Wake-up procedure complete", extra={
+            "conversation_id": conversation_id,
+            "action": "wakeup_done",
         })
 
     def _run_global_daily_tasks(self, now: datetime) -> None:
