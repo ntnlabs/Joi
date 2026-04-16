@@ -374,6 +374,64 @@ class TopicManager:
         topics = self.get_pending_topics(conversation_id, limit=1)
         return topics[0] if topics else None
 
+    def apply_priority_decay(self, conversation_id: str, base_points: int = 4, reference_count: int = 8) -> int:
+        """
+        Decay priority of all pending topics each day.
+
+        Decay rate scales with queue depth (sqrt): larger queues decay faster so
+        neglected topics sink and engaged ones float to the top naturally.
+        Formula: points = max(base_points, round(base_points * sqrt(pending / reference_count)))
+
+        Topics created today are excluded so freshly mined topics are not immediately penalised.
+        Topics floor at 0. Only STATUS_PENDING, non-expired topics are touched.
+        """
+        import math
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        now_str = now.isoformat()
+        today_start_str = today_start.isoformat()
+        conn = self._connect()
+
+        row = conn.execute(
+            """
+            SELECT COUNT(*) FROM pending_topics
+            WHERE conversation_id = ?
+              AND status = ?
+              AND (expires_at IS NULL OR expires_at > ?)
+              AND created_at < ?
+            """,
+            (conversation_id, self.STATUS_PENDING, now_str, today_start_str),
+        ).fetchone()
+        pending_count = row[0] if row else 0
+
+        if pending_count == 0:
+            return 0
+
+        ref = max(1, reference_count)
+        points = max(base_points, round(base_points * math.sqrt(pending_count / ref)))
+
+        cursor = conn.execute(
+            """
+            UPDATE pending_topics
+            SET priority = MAX(0, priority - ?)
+            WHERE conversation_id = ?
+              AND status = ?
+              AND (expires_at IS NULL OR expires_at > ?)
+              AND created_at < ?
+            """,
+            (points, conversation_id, self.STATUS_PENDING, now_str, today_start_str),
+        )
+        conn.commit()
+        count = cursor.rowcount
+        if count > 0:
+            logger.info("Applied topic priority decay", extra={
+                "conversation_id": conversation_id,
+                "pending_count": pending_count,
+                "points": points,
+                "topics_updated": count,
+            })
+        return count
+
     def count_pending(self, conversation_id: str) -> int:
         """Count pending topics for a conversation."""
         conn = self._connect()

@@ -83,6 +83,10 @@ JOI_REQUIRE_ENCRYPTED_DB=1
 #JOI_WIND_OUTCOME_TTL_DAYS=90
 # How far back to search conversation history when generating topic outcome summaries (days)
 #JOI_WIND_OUTCOME_HISTORY_DAYS=180
+# Topic priority decay: base points subtracted per day (scales with queue depth via sqrt)
+#WIND_TOPIC_PRIORITY_DECAY_POINTS=4
+# Queue depth at which decay equals base_points exactly (set to 0 to disable decay)
+#WIND_TOPIC_PRIORITY_DECAY_REFERENCE=8
 
 # --- RAG ---
 # Set to 0 to disable knowledge retrieval

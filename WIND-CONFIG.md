@@ -199,6 +199,24 @@ Ghost probe lifecycle:
 - **ignored** → 90-day cooldown applied
 - **deflected** → undertaker promotion (family permanently blocked)
 
+### Topic Priority Decay (Phase 5)
+
+Each end-of-day maintenance pass, pending topics lose priority points. The decay rate scales
+with queue depth so neglected topics sink faster when the backlog is large, letting the topics
+the user engages with naturally float to the top.
+
+Formula: `points = max(base, round(base × sqrt(pending_count / reference)))`
+
+Topics created today are excluded — freshly mined topics are not immediately penalised.
+Priority floors at 0. Only `pending`, non-expired topics are affected.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `topic_priority_decay_points` | `4` | Base decay points per day. |
+| `topic_priority_decay_reference` | `8` | Queue depth at which decay equals base exactly. Set to `0` to disable. |
+
+Example decay at base=4, reference=8: 8 topics→4 pts/day, 30 topics→8 pts/day, 100 topics→14 pts/day.
+
 ---
 
 ## Environment Variables
