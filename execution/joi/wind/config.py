@@ -86,9 +86,11 @@ class WindConfig:
     # End-of-day LLM dedup pass for near-duplicate pending topics
     topic_dedup_enabled: bool = True
 
-    # Phase 5: Topic priority decay (end-of-day)
-    topic_priority_decay_points: int = 4   # Base decay points/day; scales up with queue depth via sqrt
-    topic_priority_decay_reference: int = 8  # Queue depth at which decay equals base_points exactly (0 = disable)
+    # Phase 5: Topic priority decay + affinity protection (end-of-day)
+    topic_priority_decay_points: int = 4                      # Base decay points/day; scales up with queue depth via sqrt
+    topic_priority_decay_reference: int = 8                   # Queue depth at which decay equals base_points exactly (0 = disable)
+    topic_priority_affinity_factor: float = 0.5               # Fraction of decayed points restored for liked families (0 = disable)
+    topic_priority_undertaker_release_threshold: float = 0.5  # Preference score at which an undertaker family is organically released
 
     # Minimum silence before daily housekeeping tasks fire (separate from min_silence_minutes)
     daily_tasks_silence_minutes: int = 30
@@ -157,6 +159,8 @@ class WindConfig:
             topic_dedup_enabled=data.get("topic_dedup_enabled", True),
             topic_priority_decay_points=int(data.get("topic_priority_decay_points", 4)),
             topic_priority_decay_reference=int(data.get("topic_priority_decay_reference", 8)),
+            topic_priority_affinity_factor=float(data.get("topic_priority_affinity_factor", 0.5)),
+            topic_priority_undertaker_release_threshold=float(data.get("topic_priority_undertaker_release_threshold", 0.5)),
             daily_tasks_silence_minutes=data.get("daily_tasks_silence_minutes", 30),
             end_of_day_time=_parse_quiet_minutes(data.get("end_of_day_time", 180), 180),
             emotional_mining_enabled=data.get("emotional_mining_enabled", True),
@@ -211,6 +215,8 @@ class WindConfig:
             "topic_dedup_enabled": self.topic_dedup_enabled,
             "topic_priority_decay_points": self.topic_priority_decay_points,
             "topic_priority_decay_reference": self.topic_priority_decay_reference,
+            "topic_priority_affinity_factor": self.topic_priority_affinity_factor,
+            "topic_priority_undertaker_release_threshold": self.topic_priority_undertaker_release_threshold,
             "daily_tasks_silence_minutes": self.daily_tasks_silence_minutes,
             "end_of_day_time": self.end_of_day_time,
             "emotional_mining_enabled": self.emotional_mining_enabled,
