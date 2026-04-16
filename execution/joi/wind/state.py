@@ -83,6 +83,7 @@ class WindState:
     learned_quiet_start_minutes: Optional[int] = None
     last_daily_tasks_at: Optional[datetime] = None  # When end-of-day tasks last ran
     last_wakeup_at: Optional[datetime] = None        # When wake-up procedure last ran
+    wakeup_send_at: Optional[datetime] = None        # Scheduled proactive re-engagement send time
 
 
 from .utils import _parse_datetime, _format_datetime
@@ -147,7 +148,8 @@ class WindStateManager:
                    user_mood_state, user_mood_intensity, user_mood_updated_at,
                    learned_quiet_start_minutes,
                    last_daily_tasks_at,
-                   last_wakeup_at
+                   last_wakeup_at,
+                   wakeup_send_at
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -197,6 +199,7 @@ class WindStateManager:
             learned_quiet_start_minutes=row["learned_quiet_start_minutes"],
             last_daily_tasks_at=_parse_datetime(row["last_daily_tasks_at"]),
             last_wakeup_at=_parse_datetime(row["last_wakeup_at"]),
+            wakeup_send_at=_parse_datetime(row["wakeup_send_at"]),
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -236,6 +239,7 @@ class WindStateManager:
         "learned_quiet_start_minutes",
         "last_daily_tasks_at",
         "last_wakeup_at",
+        "wakeup_send_at",
     })
 
     def update_state(self, conversation_id: str, **updates) -> None:
@@ -355,6 +359,7 @@ class WindStateManager:
         updates: dict = {
             "last_user_interaction_at": now,
             "unanswered_proactive_count": 0,
+            "wakeup_send_at": None,  # cancel pending wake-up proactive if user beats us to it
         }
 
         if state and state.last_user_interaction_at:

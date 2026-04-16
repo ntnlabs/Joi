@@ -44,7 +44,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Wind adaptive quiet hours (HH:MM config precision + learned quiet start from inbound message history)
 - ⏳ Wind phase 4d: daily mood momentum, day-of-week personality, 30-day cycle
 - ✅ Wind phase 5: topic priority decay + affinity protection (queue depth-scaled sqrt decay, liked families resist decay, organic undertaker release)
-- ✅ Wind phase 5: wake-up procedure (context compact + fact purge + gap marker + impulse reset after 3–4 day silence)
+- ✅ Wind phase 5: wake-up procedure (context compact + fact purge + gap marker + impulse reset + proactive re-engagement at random time in next non-quiet window)
 
 ### Memory
 - ✅ Conversation context (configurable window)
