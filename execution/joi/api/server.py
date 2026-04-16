@@ -3680,14 +3680,14 @@ def _handle_task_command(text: str, conversation_id: str) -> bool:
         w in text_lower for w in ("list", "task", "todo")
     ):
         intent = "reopen"
-    elif any(w in text_lower for w in ("delete", "remove", "clear")) and any(
-        w in text_lower for w in ("list", "todo", "tasks")
-    ) and any(w in text_lower for w in ("list", "all")):
-        intent = "delete_list"
     elif any(w in text_lower for w in ("remove", "delete")) and any(
         w in text_lower for w in ("from", "off")
     ) and any(w in text_lower for w in ("list", "todo")):
         intent = "delete_item"
+    elif any(w in text_lower for w in ("delete", "remove", "clear")) and any(
+        w in text_lower for w in ("list", "todo", "tasks")
+    ) and any(w in text_lower for w in ("all", "entire", "whole", "everything")):
+        intent = "delete_list"
     elif any(w in text_lower for w in ("what lists", "my lists", "show lists", "all lists", "which lists")):
         intent = "list_lists"
     elif any(w in text_lower for w in ("show", "open", "what's on", "whats on", "see my", "view")):
