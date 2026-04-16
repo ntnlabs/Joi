@@ -440,10 +440,18 @@ class Scheduler:
                 "conversation_id": conversation_id, "error": str(e),
             })
         try:
-            # Topic priority decay — runs last so dedup boosts and mining additions are settled
+            # Topic priority decay + affinity protection — runs last so dedup and mining are settled
             base_pts = getattr(self._wind_orchestrator.config, 'topic_priority_decay_points', 4)
             ref_count = getattr(self._wind_orchestrator.config, 'topic_priority_decay_reference', 8)
-            self._wind_orchestrator.topic_manager.apply_priority_decay(conversation_id, base_pts, ref_count)
+            decayed_points = self._wind_orchestrator.topic_manager.apply_priority_decay(
+                conversation_id, base_pts, ref_count
+            )
+            affinity_factor = getattr(self._wind_orchestrator.config, 'topic_priority_affinity_factor', 0.5)
+            undertaker_threshold = getattr(self._wind_orchestrator.config, 'topic_priority_undertaker_release_threshold', 0.5)
+            self._wind_orchestrator.topic_manager.apply_affinity_protection(
+                conversation_id, decayed_points, self._wind_orchestrator.feedback_manager,
+                affinity_factor, undertaker_threshold
+            )
         except Exception as e:
             logger.warning("Daily tasks: topic priority decay failed", extra={
                 "conversation_id": conversation_id, "error": str(e),

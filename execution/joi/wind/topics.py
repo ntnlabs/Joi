@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
+from .feedback import normalize_topic_family
+
 logger = logging.getLogger("joi.wind.topics")
 
 REDISCOVERY_DAYS = 30  # Days before a mentioned discovery topic can be re-created
@@ -430,7 +432,91 @@ class TopicManager:
                 "points": points,
                 "topics_updated": count,
             })
-        return count
+        return points
+
+    def apply_affinity_protection(
+        self,
+        conversation_id: str,
+        decayed_points: int,
+        feedback_manager,
+        affinity_factor: float = 0.5,
+        undertaker_release_threshold: float = 0.5,
+    ) -> int:
+        """
+        Partially restore priority for topics from families the user likes.
+
+        Runs after apply_priority_decay(). Topics from families with positive preference
+        (interest_weight - rejection_weight > 0) get back a fraction of the decayed points,
+        so well-liked topics resist decay and float to the top naturally.
+
+        If a family is in the undertaker but preference has climbed above
+        undertaker_release_threshold (user started engaging with it organically),
+        the family is released from the undertaker — user-driven signal trumps the block.
+
+        Restore formula: round(decayed_points × affinity_factor × min(1.0, preference_score))
+        """
+        if decayed_points <= 0 or affinity_factor <= 0:
+            return 0
+
+        now = datetime.now(timezone.utc)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        now_str = now.isoformat()
+        today_start_str = today_start.isoformat()
+        conn = self._connect()
+
+        rows = conn.execute(
+            """
+            SELECT id, topic_type, title FROM pending_topics
+            WHERE conversation_id = ?
+              AND status = ?
+              AND (expires_at IS NULL OR expires_at > ?)
+              AND created_at < ?
+            """,
+            (conversation_id, self.STATUS_PENDING, now_str, today_start_str),
+        ).fetchall()
+
+        restored = 0
+        undertaker_released = 0
+        for row in rows:
+            family = normalize_topic_family(row["topic_type"], row["title"])
+            fb = feedback_manager.get_feedback(conversation_id, family)
+            if fb is None:
+                continue
+            preference = max(0.0, fb.interest_weight - fb.rejection_weight)
+            if preference <= 0:
+                continue
+
+            # If family is in undertaker but user has started engaging with it organically,
+            # release it — user-driven signal trumps the permanent block.
+            if fb.undertaker and preference >= undertaker_release_threshold:
+                feedback_manager.restore_from_undertaker(conversation_id, family)
+                logger.info("Undertaker family released via organic user engagement", extra={
+                    "conversation_id": conversation_id,
+                    "topic_family": family,
+                    "preference_score": round(preference, 3),
+                })
+                undertaker_released += 1
+                # Fall through — also restore priority on this topic
+
+            restore = round(decayed_points * affinity_factor * min(1.0, preference))
+            if restore <= 0:
+                continue
+            conn.execute(
+                "UPDATE pending_topics SET priority = MIN(100, priority + ?) WHERE id = ?",
+                (restore, row["id"]),
+            )
+            restored += 1
+
+        if restored > 0 or undertaker_released > 0:
+            conn.commit()
+            logger.info("Applied topic affinity protection", extra={
+                "conversation_id": conversation_id,
+                "topics_restored": restored,
+                "undertaker_released": undertaker_released,
+                "decayed_points": decayed_points,
+                "affinity_factor": affinity_factor,
+            })
+        return restored
 
     def count_pending(self, conversation_id: str) -> int:
         """Count pending topics for a conversation."""

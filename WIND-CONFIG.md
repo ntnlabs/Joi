@@ -217,6 +217,20 @@ Priority floors at 0. Only `pending`, non-expired topics are affected.
 
 Example decay at base=4, reference=8: 8 topics→4 pts/day, 30 topics→8 pts/day, 100 topics→14 pts/day.
 
+After decay, an **affinity protection** pass partially restores priority for topics from families
+the user likes. Restore formula: `round(points × affinity_factor × min(1.0, preference_score))`
+where `preference_score = interest_weight - rejection_weight`. Neutral or disliked families get
+no restoration. Topics created today are excluded from both passes.
+
+If a family is in the undertaker but `preference_score` has climbed above
+`undertaker_release_threshold` (user started engaging with it organically), the family is
+released from the undertaker automatically — user-driven signal trumps the permanent block.
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `topic_priority_affinity_factor` | `0.5` | Fraction of decayed points restored for liked families. `0` disables affinity protection entirely. |
+| `topic_priority_undertaker_release_threshold` | `0.5` | Preference score at which an undertaker family is organically released. |
+
 ---
 
 ## Environment Variables

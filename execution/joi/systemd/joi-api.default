@@ -87,6 +87,10 @@ JOI_REQUIRE_ENCRYPTED_DB=1
 #WIND_TOPIC_PRIORITY_DECAY_POINTS=4
 # Queue depth at which decay equals base_points exactly (set to 0 to disable decay)
 #WIND_TOPIC_PRIORITY_DECAY_REFERENCE=8
+# Fraction of decay restored for topic families the user likes (0.0–1.0, 0 = disable)
+#WIND_TOPIC_PRIORITY_AFFINITY_FACTOR=0.5
+# Preference score (interest - rejection) at which an undertaker family is organically released
+#WIND_TOPIC_PRIORITY_UNDERTAKER_RELEASE_THRESHOLD=0.5
 
 # --- RAG ---
 # Set to 0 to disable knowledge retrieval
