@@ -3683,10 +3683,12 @@ def _handle_task_command(text: str, conversation_id: str) -> bool:
     elif any(w in text_lower for w in ("remove", "delete")) and any(
         w in text_lower for w in ("from", "off")
     ) and any(w in text_lower for w in ("list", "todo")):
+        # "delete X from shopping list" — item removal
         intent = "delete_item"
     elif any(w in text_lower for w in ("delete", "remove", "clear")) and any(
         w in text_lower for w in ("list", "todo", "tasks")
-    ) and any(w in text_lower for w in ("all", "entire", "whole", "everything")):
+    ) and not any(w in text_lower for w in ("from", "off")):
+        # "delete my shopping list" — list deletion (no "from"/"off" = not item removal)
         intent = "delete_list"
     elif any(w in text_lower for w in ("what lists", "my lists", "show lists", "all lists", "which lists")):
         intent = "list_lists"
