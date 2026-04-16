@@ -229,9 +229,12 @@ joi-admin tasks list --archived                 # Include archived items
 joi-admin tasks list --list epaper              # Items in one list
 joi-admin tasks list --conversation +123        # Tasks for one conversation
 joi-admin tasks show <id>                       # Show task metadata
-joi-admin tasks delete <id>                     # Archive a single task item
-joi-admin tasks delete-all --list shopping      # Archive entire list
-joi-admin tasks delete-all --conversation +123  # Archive all tasks for conversation
+joi-admin tasks delete <id>                          # Archive a single task item
+joi-admin tasks delete-all --list shopping           # Archive entire list
+joi-admin tasks delete-all --conversation +123       # Archive all tasks for conversation
+joi-admin tasks unarchive <id>                       # Restore a single archived item
+joi-admin tasks unarchive-all --list shopping        # Restore entire archived list
+joi-admin tasks unarchive-all --conversation +123    # Restore all archived tasks for conversation
 ```
 
 ---
