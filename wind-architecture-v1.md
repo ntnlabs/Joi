@@ -1401,17 +1401,23 @@ the topic queue clean and Wind state coherent over time, especially across inact
   - Fatigue factor also uses the rolling count instead of `proactive_sent_today`
   - Old columns (`proactive_sent_today`, `proactive_day_bucket`) kept in schema for compatibility
 
-- **Similar Topic Merge** ❌ *Not implemented*
-  - Prevent queue pollution when the curiosity miner extracts near-duplicate tension topics across batches
-  - v1: lexical title similarity + `novelty_key` match — skip or merge into the existing topic
-  - v2+: embedding similarity as additional signal (never cross-conversation)
-  - On merge: keep canonical (older/higher-priority), update content if new version is richer
+- **Similar Topic Merge** ✅ *Implemented*
+  - `normalize_topic_family()` groups topics by type + normalised title into families
+  - `novelty_key` deduplication prevents duplicate probes per family per time window
+  - End-of-day LLM dedup pass (`deduplicate_topics_for`) merges near-duplicate pending topics
 
-- **Topic priority decay** ❌ *Not implemented*
-  - All non-expired pending topics lose 4 priority points per day of silence
-  - No hard archiving — topics fade below selection threshold naturally
-  - A priority-50 tension topic becomes irrelevant after ~12 days; priority-80 after ~20 days
-  - Expired topics (TTL-based) still get archived as before — decay only affects dynamic priority
+- **Topic priority decay + affinity protection** ✅ *Implemented*
+  - Pending topics lose priority each day; rate scales with queue depth via sqrt:
+    `points = max(base, round(base × sqrt(pending_count / reference)))`
+    Defaults: base=4, reference=8 → 8 topics=4 pts/day, 30→8, 100→14
+  - Topics created today excluded (freshly mined topics not penalised on day 0)
+  - Priority floors at 0 — topics remain selectable, just lower priority
+  - **Affinity protection:** after decay, partially restores priority for topics from families
+    the user likes (`restore = round(points × affinity_factor × preference_score)`)
+  - **Organic undertaker release:** if an undertaker family's preference climbs above threshold,
+    family is released automatically — user-driven engagement signal trumps the block
+  - Config: `topic_priority_decay_points`, `topic_priority_decay_reference`,
+    `topic_priority_affinity_factor`, `topic_priority_undertaker_release_threshold`
 
 - **Wake-up procedure** ❌ *Not implemented*
   - Triggered when `current_silence > max(72h, convo_gap_ema_seconds * multiplier)`
