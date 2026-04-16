@@ -112,7 +112,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 - **Important facts budget strategy** — `important=1` facts are currently always injected unconditionally; as the set grows they can push out FTS-matched facts entirely. Needs a proper multi-signal solution: tiered importance score, access frequency, category budgets. A simple heuristic (oldest N = core, newest N = fresh) doesn't scale. FTS5 session search (above) would provide the access-frequency signal needed to do this properly.
 
-See [`hermes-agent-ideas.md`](hermes-agent-ideas.md) for the full writeup on ideas sourced from [Nous Research's Hermes Agent](https://github.com/nousresearch/hermes-agent).
+See [`hermes-agent-ideas.md`](ideas/hermes-agent-ideas.md) for the full writeup on ideas sourced from [Nous Research's Hermes Agent](https://github.com/nousresearch/hermes-agent).
 
 ## Key Features
 
