@@ -1409,6 +1409,11 @@ class WindOrchestrator:
                 "error": str(e),
                 "action": "tension_mining_parse_fail",
             })
+            # Advance pointer so the same messages are not retried on the next cycle
+            self.state_manager.update_state(
+                conversation_id,
+                last_tension_mined_message_ts=newest_ts,
+            )
         except Exception as e:
             logger.critical("Tension mining: LLM call failed - SHUTTING DOWN", extra={
                 "conversation_id": conversation_id,
