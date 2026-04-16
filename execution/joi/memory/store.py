@@ -144,6 +144,7 @@ class ContextSummary:
     summary_text: str
     message_count: int
     created_at: int
+    key_points_json: Optional[str] = None
 
 
 @dataclass
@@ -2339,7 +2340,7 @@ class MemoryStore:
             cursor = conn.execute(
                 """
                 SELECT id, summary_type, period_start, period_end, summary_text,
-                       message_count, created_at
+                       message_count, created_at, key_points_json
                 FROM context_summaries
                 WHERE conversation_id = ? AND summary_type = ? AND period_end > ?
                 ORDER BY period_end DESC
@@ -2351,7 +2352,7 @@ class MemoryStore:
             cursor = conn.execute(
                 """
                 SELECT id, summary_type, period_start, period_end, summary_text,
-                       message_count, created_at
+                       message_count, created_at, key_points_json
                 FROM context_summaries
                 WHERE summary_type = ? AND period_end > ?
                 ORDER BY period_end DESC
@@ -2369,6 +2370,7 @@ class MemoryStore:
                 summary_text=row["summary_text"],
                 message_count=row["message_count"] or 0,
                 created_at=row["created_at"],
+                key_points_json=row["key_points_json"],
             )
             for row in cursor.fetchall()
         ]
