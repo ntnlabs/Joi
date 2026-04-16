@@ -1861,9 +1861,9 @@ def receive_message(msg: InboundMessage):
                 return InboundResponse(status="ok", message_id=msg.message_id)
             reminder_result = _handle_temporal_task(user_text, msg.conversation.id)
 
-        # Note commands: owner + DM only, runs after reminders, before fact extraction.
+        # Note commands: DM only, runs after reminders, before fact extraction.
         note_handled = False
-        if is_owner and msg.conversation.type == "direct" and user_text:
+        if msg.conversation.type == "direct" and user_text:
             if not msg.store_only and queue_msg.cancelled:
                 return InboundResponse(status="ok", message_id=msg.message_id)
             note_handled = _handle_note_command(user_text, msg.conversation.id)

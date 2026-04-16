@@ -52,7 +52,7 @@ Facts prefixed with `always remember` / `never forget` or in personal categories
 
 ---
 
-## Reminders (owner, DM only)
+## Reminders (DM only)
 
 Joi creates reminders from natural language. No special syntax required.
 
@@ -93,7 +93,7 @@ show me my upcoming reminders
 
 ---
 
-## Notes (owner, DM only)
+## Notes (DM only)
 
 Personal named notes — longer-form text, searchable, editable.
 
