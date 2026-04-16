@@ -4,7 +4,7 @@ Commands you can send to Joi via Signal. All matching is case-insensitive.
 
 ---
 
-## Wind Snooze (owner, DM only)
+## Wind Snooze (DM only)
 
 Silence proactive Wind messages without affecting the topic queue or daily cap.
 
