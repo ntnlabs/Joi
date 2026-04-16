@@ -43,7 +43,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Wind phase 5 (queue health): hot/heated conversation suppression (two-tier EMA), rolling 24h daily cap
 - ✅ Wind adaptive quiet hours (HH:MM config precision + learned quiet start from inbound message history)
 - ⏳ Wind phase 4d: daily mood momentum, day-of-week personality, 30-day cycle
-- ⏳ Wind phase 5 (remaining): similar topic merge, topic priority decay, wake-up procedure
+- ⏳ Wind phase 5 (remaining): wake-up procedure
 
 ### Memory
 - ✅ Conversation context (configurable window)
@@ -107,10 +107,6 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 - **Async queuing for high volume** — decouple signal-cli I/O from the HTTP handler with a priority queue and backpressure handling; current single-threaded approach is sufficient for low volume
 - **Circuit breaker** — hard cap on LLM calls per hour (inbound rate limiting may already suffice)
-
-### Open design problems
-
-- **Important facts budget strategy** — `important=1` facts are currently always injected unconditionally; as the set grows they can push out FTS-matched facts entirely. Needs a proper multi-signal solution: tiered importance score, access frequency, category budgets. A simple heuristic (oldest N = core, newest N = fresh) doesn't scale. FTS5 session search (above) would provide the access-frequency signal needed to do this properly.
 
 See [`hermes-agent-ideas.md`](ideas/hermes-agent-ideas.md) for the full writeup on ideas sourced from [Nous Research's Hermes Agent](https://github.com/nousresearch/hermes-agent).
 

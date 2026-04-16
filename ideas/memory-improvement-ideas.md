@@ -105,6 +105,18 @@ Formalize which model may: write memory, classify mood/intent, summarize, answer
 
 ---
 
+### 11. Important Facts Budget
+
+`important=1` facts are unconditionally injected into every prompt. As the set grows they crowd out FTS-matched contextual facts.
+
+**Planned approach:** split into two tiers:
+- **Core**: always injected — small set of truly permanent facts (name, language, hard preferences)
+- **Non-core important**: FTS5-searched by relevance like regular facts, not always present
+
+This replaces the need for a multi-signal scoring system. FTS5 session search (see `memory-scaling-ideas.md`) would further improve non-core retrieval by providing access-frequency signal.
+
+---
+
 ## Priority Order
 
 1. Eval harness for memory and Wind behavior.

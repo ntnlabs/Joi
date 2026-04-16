@@ -439,6 +439,15 @@ class Scheduler:
             logger.warning("Daily tasks: feedback decay failed", extra={
                 "conversation_id": conversation_id, "error": str(e),
             })
+        try:
+            # Topic priority decay — runs last so dedup boosts and mining additions are settled
+            base_pts = getattr(self._wind_orchestrator.config, 'topic_priority_decay_points', 4)
+            ref_count = getattr(self._wind_orchestrator.config, 'topic_priority_decay_reference', 8)
+            self._wind_orchestrator.topic_manager.apply_priority_decay(conversation_id, base_pts, ref_count)
+        except Exception as e:
+            logger.warning("Daily tasks: topic priority decay failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
         self._wind_orchestrator.state_manager.update_state(
             conversation_id, last_daily_tasks_at=now
         )
