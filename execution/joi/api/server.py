@@ -3650,13 +3650,10 @@ def _task_trigger_matches(text: str, conversation_id: str) -> bool:
     if _TASK_TRIGGER.search(text):
         return True
     if not _TASK_DYNAMIC_HINT.search(text):
-        logger.info("Task trigger: no hint match", extra={"action": "task_trigger_debug"})
         return False
     known_lists = task_manager.get_all_lists(conversation_id)
     text_lower = text.lower()
-    matched = any(name.lower() in text_lower for name in known_lists)
-    logger.info("Task trigger: dynamic check", extra={"known_lists": known_lists, "matched": matched, "action": "task_trigger_debug"})
-    return matched
+    return any(name.lower() in text_lower for name in known_lists)
 
 
 def _handle_task_command(text: str, conversation_id: str) -> bool:
