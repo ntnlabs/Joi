@@ -1868,9 +1868,9 @@ def receive_message(msg: InboundMessage):
                 return InboundResponse(status="ok", message_id=msg.message_id)
             note_handled = _handle_note_command(user_text, msg.conversation.id)
 
-        # Task commands: owner + DM only, runs after note handler, before fact extraction.
+        # Task commands: DM only, runs after note handler, before fact extraction.
         task_handled = False
-        if is_owner and msg.conversation.type == "direct" and user_text and not note_handled:
+        if msg.conversation.type == "direct" and user_text and not note_handled:
             if not msg.store_only and queue_msg.cancelled:
                 return InboundResponse(status="ok", message_id=msg.message_id)
             task_handled = _handle_task_command(user_text, msg.conversation.id)
