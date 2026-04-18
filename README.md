@@ -63,10 +63,10 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ SQLCipher database encryption (key-file based)
 
 ### User Features
-- ✅ Reminders — natural language, multi-reminder input, snooze, reschedule, cancel
-- ✅ Notes — named notes, append, update, search, delete (DM)
-- ✅ Task lists — named lists, add/done/reopen/delete per item or list (DM)
-- ✅ Wind snooze — silence proactive messages for a duration or until morning
+- ✅ [Reminders](reminder-engine.md) — natural language, multi-reminder input, snooze, reschedule, cancel
+- ✅ [Notes](COMMANDS.md#notes-dm-only) — named notes, append, update, search, delete (DM)
+- ✅ [Task lists](COMMANDS.md#task-lists-dm-only) — named lists, add/done/reopen/delete per item or list (DM)
+- ✅ [Wind snooze](COMMANDS.md#wind-snooze-dm-only) — silence proactive messages for a duration or until morning
 
 ### Config & Security
 - ✅ One-way config push (Joi → mesh, stateless mesh)
@@ -197,10 +197,6 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - **Messaging**: Signal via signal-cli
 - **Mesh VPN**: Nebula
 - **Database**: SQLite + SQLCipher
-
-## Known Limitations
-
-- **Emoji reactions**: signal-cli only includes reaction data in its JSON output if the reacted-to message exists in its local database. If the signal-cli database is cleared or reset, incoming reactions arrive as empty DataMessages with no emoji field and Joi cannot respond to them.
 
 ## License
 
