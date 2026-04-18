@@ -85,7 +85,6 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ### Near-term
 
-- **Wind time injection** — inject current time into Wind's proactive LLM call so morning/evening context is available on the first proactive (same as reactive responses already have)
 - **Prompt injection scanning** — scan fact writes for invisible Unicode and injection patterns before committing to the facts table
 - **Wind phase 4d** — daily mood momentum, day-of-week personality, 30-day cycle
 
@@ -197,6 +196,10 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - **Messaging**: Signal via signal-cli
 - **Mesh VPN**: Nebula
 - **Database**: SQLite + SQLCipher
+
+## Known Limitations
+
+- **Emoji reactions**: signal-cli only includes reaction data in its JSON output if the reacted-to message exists in its local database. If the signal-cli database is cleared or reset, incoming reactions arrive as empty DataMessages with no emoji field and Joi cannot respond to them.
 
 ## License
 
