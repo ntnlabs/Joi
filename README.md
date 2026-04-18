@@ -18,8 +18,6 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ## Status
 
-**Phase 1 Complete** - Core infrastructure with defense-in-depth security.
-
 ### Infrastructure
 - ✅ Joi VM with LUKS full-disk encryption
 - ✅ Nebula mesh VPN (mesh ↔ joi encrypted tunnel)
@@ -34,17 +32,22 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Policy-based sender filtering (with user feedback on rate limit)
 - ✅ Message queue with owner priority
 - ✅ Async mesh → joi forwarding (fire-and-forget)
-- ⚠️ Signal @mention detection (limited - signal-cli doesn't provide mentions array reliably)
 - ✅ Group message handling (context-aware responses)
 - ✅ Per-user and per-group system prompts
 - ✅ Reaction responses (contextual acknowledgments)
-- ✅ Response cooldown (5s DMs, 2s groups - configurable)
-- ✅ Wind proactive messaging (phases 4a+4b+4c: impulse, engagement feedback, affinity/decay, special dates, spontaneous sharing, tension extraction, outcome curiosity, emotional follow-up)
-- ✅ Wind phase 5 (queue health): hot/heated conversation suppression (two-tier EMA), rolling 24h daily cap
-- ✅ Wind adaptive quiet hours (HH:MM config precision + learned quiet start from inbound message history)
-- ⏳ Wind phase 4d: daily mood momentum, day-of-week personality, 30-day cycle
-- ✅ Wind phase 5: topic priority decay + affinity protection (queue depth-scaled sqrt decay, liked families resist decay, organic undertaker release)
-- ✅ Wind phase 5: wake-up procedure (context compact + fact purge + gap marker + impulse reset + proactive re-engagement at random time in next non-quiet window)
+- ✅ Response cooldown (configurable per DM/group)
+- ⚠️ Signal @mention detection (limited — signal-cli doesn't provide mentions array reliably)
+
+### Wind (proactive messaging)
+- ✅ Impulse-based scheduler with accumulator, threshold drift, soft trigger
+- ✅ Engagement feedback (ignored/deflected proactives suppress future sends)
+- ✅ Topic affinity & decay (liked families surface more, rejected families suppressed)
+- ✅ Special dates, spontaneous sharing, tension extraction, outcome curiosity, emotional follow-up
+- ✅ Hot/heated conversation suppression (two-tier EMA)
+- ✅ Adaptive quiet hours (learned from inbound message history)
+- ✅ Topic priority decay with affinity protection
+- ✅ Wake-up procedure (gap marker + proactive re-engagement after long silence)
+- ⏳ Daily mood momentum, day-of-week personality, 30-day cycle
 
 ### Memory
 - ✅ Conversation context (configurable window)
@@ -53,21 +56,17 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 - ✅ Memory consolidation (LLM extracts facts + summarizes on context overflow)
 - ✅ RAG knowledge retrieval (FTS5 full-text search)
 - ✅ Multi-turn FTS context window (last N user turns used as search query)
-- ✅ Dynamic FTS window boost for fast conversations (hot/heated tiers via Wind EMA)
+- ✅ Dynamic FTS window boost for fast conversations
 - ✅ Per-user/group RAG scopes with access control
 - ✅ Document ingestion into scoped RAG (including attachments)
 - ✅ Auto-ingestion via watched directory
 - ✅ SQLCipher database encryption (key-file based)
 
-### Reminders
-
-- ✅ Natural language reminder creation ("remind me tomorrow at 9 to call X")
-- ✅ Multi-reminder input in one message (agenda-set)
-- ✅ Reminder list query ("what reminders do I have?")
-- ✅ Post-fire snooze ("snooze 30m", "remind me again in 1h")
-- ✅ Reschedule and cancel via chat
-- ✅ Configurable time-of-day vocabulary (morning, tonight, etc.)
-- ✅ Daily cleanup of old fired/expired/cancelled reminders
+### User Features
+- ✅ Reminders — natural language, multi-reminder input, snooze, reschedule, cancel
+- ✅ Notes — named notes, append, update, search, delete (DM)
+- ✅ Task lists — named lists, add/done/reopen/delete per item or list (DM)
+- ✅ Wind snooze — silence proactive messages for a duration or until morning
 
 ### Config & Security
 - ✅ One-way config push (Joi → mesh, stateless mesh)
@@ -79,44 +78,37 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ### Pending
 - ⏳ System Channel integration
-
-### Nice to Have
 - ⏳ LLM Services (imagegen, websearch, etc.)
-- ⏳ Circuit breaker (120 LLM calls/hr) - inbound rate limiting may suffice
 - ⏳ Voice message transcription (Whisper)
 
 ## Roadmap
 
 ### Near-term
 
-- **Wind cron hint** — inject "no user present, do not ask questions" into Wind's proactive LLM call to prevent half-responses that trail off waiting for a reply
-- **Prompt injection scanning** — scan fact writes for invisible Unicode and injection patterns before committing to the facts table (user text → facts is an injection surface)
+- **Wind time injection** — inject current time into Wind's proactive LLM call so morning/evening context is available on the first proactive (same as reactive responses already have)
+- **Prompt injection scanning** — scan fact writes for invisible Unicode and injection patterns before committing to the facts table
 - **Wind phase 4d** — daily mood momentum, day-of-week personality, 30-day cycle
 
 ### Medium-term
 
-- **Vision model support** — image analysis via vision-capable model (moondream or similar); mesh forwards attachment, Joi analyses and responds, attachment deleted after processing
-- **Business mode: DM → group knowledge** — in companion mode a user's DMs only access their own facts; business mode would allow users to also query knowledge from groups they are active members of, with membership auto-expiring after configurable inactivity
-- **Background review agent** — after every N turns, a silent sub-call reviews the conversation and autonomously updates facts; no user curation required
-- **FTS5 session search** — index past conversations in SQLite FTS5; LLM can query them via a tool call when the user references past events ("like we discussed last month")
+- **Vision model support** — image analysis via vision-capable model; mesh forwards attachment, Joi analyses and responds, attachment deleted after processing
+- **Background review agent** — after every N turns, a silent sub-call reviews the conversation and autonomously updates facts
+- **FTS5 session search** — index past conversations; LLM queries them when user references past events
 - **System Channel integration**
-- **Voice message transcription** — Whisper integration for audio messages
+- **Voice message transcription** — Whisper integration
 
-### Longer-term / infrastructure
+### Longer-term
 
-- **Async queuing for high volume** — decouple signal-cli I/O from the HTTP handler with a priority queue and backpressure handling; current single-threaded approach is sufficient for low volume
-- **Circuit breaker** — hard cap on LLM calls per hour (inbound rate limiting may already suffice)
-
-See [`hermes-agent-ideas.md`](ideas/hermes-agent-ideas.md) for the full writeup on ideas sourced from [Nous Research's Hermes Agent](https://github.com/nousresearch/hermes-agent).
+- **Async queuing** — decouple signal-cli I/O from HTTP handler with priority queue and backpressure
+- **Circuit breaker** — hard cap on LLM calls per hour
 
 ## Key Features
 
 - **Air-gapped**: Joi VM has no direct internet access
 - **Signal messaging**: Human communication via secure proxy VM
-- **System Channel**: Type-agnostic interface for external systems (openhab, Zabbix, actuators)
-- **LLM Services**: Isolated VMs for image generation, web search, and more
+- **Wind**: Proactive, organic engagement — not push notifications, genuine initiative
+- **Long-term memory**: Facts, summaries, and RAG knowledge per user/group
 - **Two-layer security**: Protection Layer (automation) + LLM Agent Layer (decisions)
-- **Behavior modes**: Companion (proactive) or Assistant (request-response only)
 - **GPU accelerated**: AI accelerator card via Thunderbolt eGPU
 - **International text**: Full UTF-8 support for all languages (Slovak, Cyrillic, CJK, emoji)
 
@@ -171,7 +163,7 @@ See [`hermes-agent-ideas.md`](ideas/hermes-agent-ideas.md) for the full writeup 
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | **companion** | Proactive, organic engagement ("Wind" behavior) | Personal use |
-| **business** | Multi-user / shared deployment mode (policy-controlled DM group knowledge) | Professional/enterprise |
+| **business** | Multi-user / shared deployment mode | Professional/enterprise |
 
 ## Communication Channels
 
@@ -180,33 +172,23 @@ See [`hermes-agent-ideas.md`](ideas/hermes-agent-ideas.md) for the full writeup 
 | **Interactive** | Human communication (Signal) | Bidirectional |
 | **System** | Machine-to-machine (openhab, Zabbix, etc.) | Read/Write/Both per source |
 
-## LLM Services (Isolated VMs)
-
-| Service | Purpose | Mode |
-|---------|---------|------|
-| imagegen | Image generation (SD, SDXL, Flux) | Async |
-| websearch | LLM-powered internet search | Async |
-| tts | Text-to-speech | Async |
-| codeexec | Sandboxed code execution | Async |
-
 ## Documentation
 
 | Document | Description |
 |----------|-------------|
-| [PROJECT_SUMMARY.md](PROJECT_SUMMARY.md) | Quick overview |
 | [Joi-architecture-v3.md](Joi-architecture-v3.md) | Current architecture (stateless mesh) |
 | [Joi-threat-model.md](Joi-threat-model.md) | Threat analysis and mitigations |
-| [system-channel.md](system-channel.md) | System Channel & LLM Services specification |
+| [COMMANDS.md](COMMANDS.md) | User-facing Signal commands |
+| [WIND-CONFIG.md](WIND-CONFIG.md) | Wind configuration reference & tuning guide |
+| [wind-architecture-v1.md](wind-architecture-v1.md) | Wind proactive messaging architecture & phases |
+| [memory-store-schema.md](memory-store-schema.md) | Database schema |
 | [api-contracts.md](api-contracts.md) | API specifications |
 | [policy-engine.md](policy-engine.md) | Security policy rules |
-| [memory-store-schema.md](memory-store-schema.md) | Database schema |
 | [agent-loop-design.md](agent-loop-design.md) | Agent behavior & modes |
-| [wind-architecture-v1.md](wind-architecture-v1.md) | Wind proactive messaging architecture & phases |
-| [reminder-engine.md](reminder-engine.md) | Reminder engine design |
-| [WIND-CONFIG.md](WIND-CONFIG.md) | Wind configuration reference & tuning guide |
+| [system-channel.md](system-channel.md) | System Channel & LLM Services specification |
 | [prompt-injection-defenses.md](prompt-injection-defenses.md) | Prompt injection mitigations |
 
-## Tech Stack (minimum)
+## Tech Stack
 
 - **LLM**: Llama 3.1 8B (uncensored variant)
 - **Runtime**: Ollama (native API)
@@ -215,7 +197,6 @@ See [`hermes-agent-ideas.md`](ideas/hermes-agent-ideas.md) for the full writeup 
 - **Messaging**: Signal via signal-cli
 - **Mesh VPN**: Nebula
 - **Database**: SQLite + SQLCipher
-- **Home Automation**: openHAB (read-only)
 
 ## Known Limitations
 
@@ -225,11 +206,9 @@ See [`hermes-agent-ideas.md`](ideas/hermes-agent-ideas.md) for the full writeup 
 
 GPL-3.0 - See [LICENSE](LICENSE) for details.
 
-This means you can use, modify, and distribute this project, but any derivative work must also be open source under GPL-3.0.
-
 ## Contributing
 
-This is a personal project in early development. Feel free to open issues for questions or suggestions.
+This is a personal project in active development. Feel free to open issues for questions or suggestions.
 
 ## Feedback
 
