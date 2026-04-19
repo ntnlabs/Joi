@@ -407,6 +407,21 @@
 
   <div class="arrow"></div>
 
+  <!-- WAKE-UP PROACTIVE -->
+  <div class="block c-topic">
+    <div class="block-title">Wake-Up Proactive Check <span class="tag t-cond">per conversation · parallel path to impulse</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">trigger</span><span class="kv-val"><em>_should_send_wakeup_for()</em> — fires when conversation has been silent after a long gap (gap marker previously sent)</span>
+        <span class="kv-key">scheduling</span><span class="kv-val">target time stored in <em>wakeup_send_at</em> · only fires outside quiet hours · skipped if Wind snoozed</span>
+        <span class="kv-key">content</span><span class="kv-val">re-engagement proactive — Joi acknowledges the silence and restarts the conversation naturally</span>
+        <span class="kv-key">after send</span><span class="kv-val"><em>last_wakeup_at</em> updated · wakeup_send_at cleared · topic generated for follow-up if available</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="arrow"></div>
+
   <!-- MESSAGE GENERATION -->
   <div class="block c-llm">
     <div class="block-title">Proactive Message Generation <span class="tag t-llm">LLM · joi-engagement model</span></div>
@@ -449,7 +464,7 @@
     <div class="block-title">User Message Arrives <span class="tag t-always">server.py:on_message()</span></div>
     <div class="block-body">
       <div class="kv">
-        <span class="kv-key">snooze check</span><span class="kv-val">"shh" → 8 h snooze · "shhh" → 24 h snooze · "wake/awake/clear" → clear snooze immediately</span>
+        <span class="kv-key">snooze check</span><span class="kv-val">snooze keywords (shh / quiet / hush / mute / pause) → snooze for configurable duration (default <em>4 h</em>) · wake / unsnooze / unmute / resume → clear immediately</span>
         <span class="kv-key">record interaction</span><span class="kv-val"><em>record_user_interaction()</em> — updates last_user_interaction_at · resets unanswered_proactive_count = 0 · updates convo_gap_ema</span>
         <span class="kv-key">user mood</span><span class="kv-val">per-message mood classification <span class="tag t-detector" style="font-size:10px;">DETECTOR LLM · joi-detector</span> → stored as user_mood_state + user_mood_intensity in wind_state</span>
       </div>
@@ -549,6 +564,7 @@
         <span class="kv-key">deduplication</span><span class="kv-val"><span class="tag t-llm" style="font-size:10px;">joi-curiosity</span> LLM pass over all pending topics per conversation · near-duplicate topics merged or discarded</span>
         <span class="kv-key">mood rollup</span><span class="kv-val">Joi's mood intensity decayed by 15% toward middle — <em>intensity × 0.85 + 0.15 × 0.5</em> — prevents permanent extremes</span>
         <span class="kv-key">feedback decay</span><span class="kv-val">rejection_weight and interest_weight on topic families gradually forgiven — prevents permanent blocks from old data</span>
+        <span class="kv-key">priority decay</span><span class="kv-val">pending topics decayed toward minimum priority using sqrt scaling by queue depth · affinity-protected topics decay more slowly</span>
         <span class="kv-key">HMAC rotation</span><span class="kv-val">mesh authentication key rotated</span>
         <span class="kv-key">maintenance</span><span class="kv-val">nonce cleanup · send-cache pruning · FTS index integrity check</span>
       </div>
@@ -569,7 +585,7 @@
       <div class="block-title" style="color:#8b949e;">wind_state <span class="tag t-db">per conversation · PRIMARY KEY = conversation_id</span></div>
       <div class="block-body">
         <div class="kv">
-          <span class="kv-key">timing</span><span class="kv-val">last_user_interaction_at · last_proactive_sent_at · wind_snooze_until · convo_gap_ema_seconds</span>
+          <span class="kv-key">timing</span><span class="kv-val">last_user_interaction_at · last_proactive_sent_at · wind_snooze_until · convo_gap_ema_seconds · wakeup_send_at · last_wakeup_at</span>
           <span class="kv-key">counters</span><span class="kv-val">unanswered_proactive_count · proactive_fire_times[] (rolling 24 h) · total_proactives_sent / engaged / ignored / deflected</span>
           <span class="kv-key">quality</span><span class="kv-val">engagement_score (EMA) · mood_state (Plutchik) · mood_intensity · user_mood_state · user_mood_intensity</span>
           <span class="kv-key">windmood</span><span class="kv-val">threshold_offset · accumulated_impulse</span>

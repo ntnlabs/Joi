@@ -331,11 +331,36 @@
     </div>
 
     <div class="block c-small" style="margin-bottom:8px;">
-      <div class="block-title">Fact Detection <span class="tag t-detector">DETECTOR LLM · joi-detector</span> <span class="tag t-cond">if keyword match · skipped if reminder fired</span></div>
+      <div class="block-title">Note Command <span class="tag t-detector">DETECTOR LLM · joi-detector</span> <span class="tag t-cond">direct · regex gate</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">gate</span><span class="kv-val">_NOTE_TRIGGER — note · notes · jot · write down · my note · note called · note about</span>
+          <span class="kv-key">intents</span><span class="kv-val">create · append · update · retrieve · delete · list · set_reminder (on a note)</span>
+          <span class="kv-key">output</span><span class="kv-val">note written/updated/deleted in DB · context injected for LLM response · sets note_handled=true</span>
+          <span class="kv-key">fallthrough</span><span class="kv-val">note_handled=true prevents task handler and fact extractor from running</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="block c-small" style="margin-bottom:8px;">
+      <div class="block-title">Task Command <span class="tag t-detector">DETECTOR LLM · joi-detector</span> <span class="tag t-cond">direct · regex + dynamic list name gate</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">gate (static)</span><span class="kv-val">_TASK_TRIGGER — task · todo · grocery · shopping list · my list · check off · cross off · …</span>
+          <span class="kv-key">gate (dynamic)</span><span class="kv-val">if static misses: check task verb present (add · show · list · done · mark · …) then match against known list names from DB</span>
+          <span class="kv-key">intents</span><span class="kv-val">add · show · done · reopen · delete_item · delete_list · list_lists</span>
+          <span class="kv-key">output</span><span class="kv-val">item added/updated/archived in DB · context injected for LLM response · sets task_handled=true</span>
+          <span class="kv-key">fallthrough</span><span class="kv-val">task_handled=true prevents fact extractor from running</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="block c-small" style="margin-bottom:8px;">
+      <div class="block-title">Fact Detection <span class="tag t-detector">DETECTOR LLM · joi-detector</span> <span class="tag t-cond">if keyword match · skipped if reminder, note, or task handled</span></div>
       <div class="block-body">
         <div class="kv">
           <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
-          <span class="kv-key">gate</span><span class="kv-val">keyword filter first — skips LLM if no trigger words · entirely skipped if reminder_result is set</span>
+          <span class="kv-key">gate</span><span class="kv-val">keyword filter first — skips LLM if no trigger words · entirely skipped if reminder_result, note_handled, or task_handled is set</span>
           <span class="kv-key">prompt</span><span class="kv-val">"Analyze this message: &quot;{user_text}&quot;"</span>
           <span class="kv-key">output</span><span class="kv-val">{remember, category, key, value} · confidence=0.95</span>
           <span class="kv-key">side-effect</span><span class="kv-val">stores fact to DB immediately</span>
