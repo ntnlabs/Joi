@@ -90,6 +90,7 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ### Medium-term
 
+- **Vector search** — replace Python-side cosine similarity loop with `sqlite-vss` for in-SQLite vector search; add semantic layer to fact retrieval so keyword mismatches stop losing relevant memories
 - **Vision model support** — image analysis via vision-capable model; mesh forwards attachment, Joi analyses and responds, attachment deleted after processing
 - **Background review agent** — after every N turns, a silent sub-call reviews the conversation and autonomously updates facts
 - **FTS5 session search** — index past conversations; LLM queries them when user references past events
