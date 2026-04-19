@@ -19,7 +19,7 @@
 | Principle | Implementation |
 |-----------|----------------|
 | **Joi is authoritative** | All config lives on Joi, pushed to mesh |
-| **Mesh is stateless** | No config files on disk, memory only |
+| **Mesh is stateless** | No config files on disk (exception: rotated HMAC secret persisted for restart recovery) |
 | **Defense-in-depth** | Nebula + HMAC + policy validation |
 | **Fail-secure** | Empty policy denies all; rotation has grace period |
 | **No traces** | Mesh restart = clean slate |
@@ -84,7 +84,7 @@
 
 ## Stateless Mesh Architecture
 
-**Mesh stores nothing on disk.** All configuration comes from Joi via config push.
+**Mesh stores nothing on disk** (exception: rotated HMAC secret persisted to `/var/lib/signal-cli/hmac.secret` for restart recovery). All configuration comes from Joi via config push.
 
 ### On Mesh Startup
 1. Mesh starts with empty policy (denies all messages)
@@ -93,9 +93,10 @@
 4. Applies config in memory
 
 ### On Mesh Restart
-1. All config is lost (by design - no traces)
-2. Messages are dropped until config received
-3. **Automatic recovery:** Joi polls mesh `/config/status` every tick (~60s)
+1. Policy/config is lost (by design - no traces)
+2. HMAC secret: loaded from `/var/lib/signal-cli/hmac.secret` if present; falls back to `MESH_HMAC_SECRET` env var
+3. Messages are dropped until config received
+4. **Automatic recovery:** Joi polls mesh `/config/status` every tick (~60s)
    - Mesh returns empty hash → Joi detects restart → pushes config
    - Mesh returns wrong hash → Joi detects drift → pushes fresh config
    - Mesh unreachable → Joi retries next tick
@@ -112,7 +113,8 @@
 |------|---------|------------|
 | `/etc/default/mesh-signal-worker` | Env vars (HMAC seed, Signal account) | Yes |
 | `/var/lib/signal-cli/` | Signal account data | Yes |
-| (memory only) | Policy, rotated HMAC keys | No |
+| (memory only) | Policy | No |
+| `/var/lib/signal-cli/hmac.secret` | Rotated HMAC key (persisted after rotation · survives restart) | Yes |
 
 ---
 
@@ -193,7 +195,7 @@ X-HMAC-SHA256: HMAC-SHA256(nonce + timestamp + body, secret)
 |----------|---------|
 | Joi: `/etc/default/joi-api` | `JOI_HMAC_SECRET` env var |
 | Mesh: `/etc/default/mesh-signal-worker` | `MESH_HMAC_SECRET` env var (seed) |
-| Mesh: memory | Rotated keys (lost on restart) |
+| Mesh: `/var/lib/signal-cli/hmac.secret` | Rotated keys (persisted after rotation · survives restart) |
 
 ---
 
@@ -222,7 +224,7 @@ Weekly automatic rotation with 60-second grace period.
 
 ### On Mesh Restart During Rotation
 
-Mesh uses env var seed. Joi will push current key on next sync.
+Mesh loads the persisted key from `/var/lib/signal-cli/hmac.secret`. If the file is absent (e.g. first boot), it falls back to the `MESH_HMAC_SECRET` env var seed — Joi will then push the current key on next sync.
 
 ---
 
@@ -310,7 +312,7 @@ Systemd restarts the service, which re-initializes fingerprints from current sta
 | Inbound per user | 120/hr, 20/min | Mesh (memory) |
 | Outbound cooldown | 5s DM, 2s group | Joi (per-conversation) |
 
-Note: Outbound rate limiting (messages/hour) is not implemented. Only per-conversation cooldown prevents rapid-fire responses.
+Outbound rate limiting is implemented via `OutboundRateLimiter` (sliding window, default 120 msg/hour, configurable via `JOI_OUTBOUND_MAX_PER_HOUR`). Critical messages can bypass the limit via the `is_critical` flag.
 
 ---
 

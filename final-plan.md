@@ -123,7 +123,7 @@ This PoC aims to demonstrate Joi's proactive, 'living' behavior in a controlled 
     *   Before calling the LLM, retrieve the last N messages to provide conversational context.
 *   **State Management:**
     *   Implement `Quiet Hours` system from `agent-loop-design.md`.
-    *   Implement `Behavior Mode Toggle` (`companion` vs `assistant`).
+    *   Implement `Behavior Mode Toggle` (`companion` vs `business`).
 
 ### Workload Estimates & Hardware Requirements
 
