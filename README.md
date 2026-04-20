@@ -102,6 +102,7 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 - **FTS5 session search** — index past conversations; LLM queries them when user references past events
 - **System Channel integration**
 - **Voice message transcription** — Whisper integration
+- **Values architecture** — generate-then-critique loop with a Judge LLM scoring responses against a value tree (Truth, Non-harm, Autonomy); mood system as a reward/punishment mechanism via context injection; anti-erosion ratchet; see `values.md`
 
 ### Longer-term
 
