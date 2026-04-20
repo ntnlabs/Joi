@@ -7,7 +7,6 @@ reviews/
 
 # Personal/private files
 CLAUDE.md
-values.md
 hardware-budget-analysis.md
 dev-notes.md
 execution/joi/ollama/Modelfile
