@@ -19,7 +19,7 @@ This stage configures who can talk to Joi and how Joi behaves.
 
 - Joi API running and healthy (`curl http://localhost:8443/health`)
 - Mesh worker running and forwarding messages
-- HMAC secrets match on both sides
+- `JOI_HMAC_SECRET` set in `/etc/default/joi-api` (mesh receives its key automatically via bootstrap push)
 - At least one phone number to allow as sender
 
 ---
@@ -361,7 +361,7 @@ journalctl -u mesh-signal-worker -f
 Common issues:
 - Sender not in `allowed_senders` (for DMs)
 - Sender not in group `participants`
-- HMAC mismatch between mesh and Joi
+- HMAC bootstrap not completed: check `/config/status` for `hmac_configured: false`; trigger a manual push with `joi-admin config push`
 
 ### Joi not responding in group
 

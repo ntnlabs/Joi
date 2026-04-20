@@ -1,10 +1,12 @@
 import base64
 import glob
 import hashlib
+import hmac as _hmac_lib
 import json
 import logging
 import os
 import re
+import secrets
 import sys
 import threading
 import time
@@ -529,11 +531,19 @@ class ConfigPushClient:
                 return True, current_hash
 
             config = self._policy.get_config_for_push()
+
+            # Always include bootstrap fields so mesh can accept the key if it has none.
+            # On normal authenticated pushes these are ignored by mesh (key already set).
+            current_secret = _get_current_hmac_secret()
+            bootstrap_challenge = secrets.token_hex(16)
+            if current_secret:
+                config["bootstrap_hmac_key"] = current_secret.hex()
+            config["bootstrap_challenge"] = bootstrap_challenge
+
             body = json.dumps(config).encode("utf-8")
 
             headers = {"Content-Type": "application/json"}
-            # Get current secret dynamically (supports rotation)
-            current_secret = _get_current_hmac_secret()
+            # Sign request if we have a key (normal / post-bootstrap pushes)
             if current_secret:
                 hmac_headers = create_request_headers(body, current_secret)
                 headers.update(hmac_headers)
@@ -555,6 +565,21 @@ class ConfigPushClient:
                             "local_hash": current_hash[:16],
                             "mesh_hash": mesh_hash[:16]
                         })
+
+                    # Verify challenge response (confirms mesh applied the key)
+                    if current_secret:
+                        expected_response = _hmac_lib.new(
+                            current_secret,
+                            bootstrap_challenge.encode(),
+                            hashlib.sha256,
+                        ).hexdigest()
+                        actual_response = data.get("data", {}).get("challenge_response")
+                        if actual_response != expected_response:
+                            logger.warning("Bootstrap challenge verification failed — mesh may have wrong key", extra={
+                                "action": "bootstrap_challenge_mismatch"
+                            })
+                        else:
+                            logger.debug("Bootstrap challenge verified", extra={"action": "bootstrap_challenge_ok"})
 
                     self._last_push_hash = mesh_hash
                     self._last_push_time = time.time()

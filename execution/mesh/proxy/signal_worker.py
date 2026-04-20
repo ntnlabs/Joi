@@ -1,7 +1,9 @@
 import hashlib
+import hmac as _hmac_lib
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -19,7 +21,6 @@ from forwarder import forward_to_joi, forward_document_to_joi, forward_typing, s
 from hmac_auth import (
     InMemoryNonceStore,
     get_shared_secret,
-    save_shared_secret,
     verify_hmac,
     verify_timestamp,
     DEFAULT_TIMESTAMP_TOLERANCE_MS,
@@ -31,9 +32,16 @@ from policy import MeshPolicy
 logger = logging.getLogger("mesh.signal_worker")
 
 # HMAC authentication
-_hmac_secret = get_shared_secret()  # Initial secret from env (fallback)
+_hmac_secret = get_shared_secret()  # Initial secret from env (emergency fallback only)
 _nonce_store = InMemoryNonceStore()  # Always create - needed when HMAC becomes available
 _hmac_timestamp_tolerance = int(os.getenv("MESH_HMAC_TIMESTAMP_TOLERANCE_MS", str(DEFAULT_TIMESTAMP_TOLERANCE_MS)))
+
+# Staleness detection: how many consecutive missed Joi contact cycles before clearing key
+MESH_CONFIG_STALENESS_CHECKS = int(os.getenv("MESH_CONFIG_STALENESS_CHECKS", "2"))
+
+# Track last inbound request from Joi (updated on every request — UFW ensures only Joi reaches port 8444)
+_last_joi_contact: float = 0.0
+_joi_missed_checks: int = 0
 
 # Document handling configuration
 # Note: Only extensions supported by ingestion.py (txt, md)
@@ -300,10 +308,11 @@ class ConfigState:
         self._config_hash: str = ""
         self._last_update: float = 0
 
-        # HMAC rotation support (in-memory only)
+        # HMAC rotation support (in-memory only — never written to disk)
         self._old_hmac_secret: Optional[bytes] = None
         self._old_hmac_expires: float = 0
         self._new_hmac_secret: Optional[bytes] = None
+        self._hmac_configured: bool = False  # True once key has been pushed by Joi
 
         # Reference to MeshPolicy instance (set by main)
         self._mesh_policy: Optional[MeshPolicy] = None
@@ -323,13 +332,35 @@ class ConfigState:
         """Set reference to RoutingState instance for routing updates."""
         self._routing_state = routing_state
 
-    def apply_config(self, config: Dict[str, Any]) -> str:
+    def apply_config(self, config: Dict[str, Any]) -> Tuple[str, Optional[str]]:
         """
         Apply new config from Joi (memory only, no disk persistence).
 
-        Returns config hash.
+        Returns (config_hash, challenge_response). challenge_response is None
+        if no bootstrap_challenge was included in the payload.
         """
         with self._lock:
+            # Handle bootstrap key (only when not yet configured)
+            bootstrap_key_hex = config.pop("bootstrap_hmac_key", None)
+            bootstrap_challenge = config.pop("bootstrap_challenge", None)
+            challenge_response: Optional[str] = None
+
+            if bootstrap_key_hex and not self._hmac_configured:
+                try:
+                    self._new_hmac_secret = bytes.fromhex(bootstrap_key_hex)
+                    self._hmac_configured = True
+                    logger.info("Bootstrap HMAC key accepted from Joi", extra={"action": "hmac_bootstrap"})
+                except ValueError:
+                    logger.error("Bootstrap HMAC key is not valid hex — ignoring", extra={"action": "hmac_bootstrap_error"})
+
+            # Compute challenge response (always, if challenge provided and key is available)
+            if bootstrap_challenge and self._new_hmac_secret:
+                challenge_response = _hmac_lib.new(
+                    self._new_hmac_secret,
+                    bootstrap_challenge.encode(),
+                    hashlib.sha256,
+                ).hexdigest()
+
             # Handle HMAC rotation if present
             rotation = config.pop("hmac_rotation", None)
             if rotation:
@@ -372,7 +403,20 @@ class ConfigState:
             if self._routing_state:
                 self._routing_state.update_from_config(routing)
 
-            return self._config_hash
+            return self._config_hash, challenge_response
+
+    def is_hmac_configured(self) -> bool:
+        """Return True if an HMAC key has been pushed by Joi."""
+        with self._lock:
+            return self._hmac_configured
+
+    def clear_hmac(self) -> None:
+        """Clear HMAC key — mesh returns to waiting-for-bootstrap state."""
+        with self._lock:
+            self._new_hmac_secret = None
+            self._old_hmac_secret = None
+            self._hmac_configured = False
+            logger.info("HMAC key cleared — waiting for Joi push", extra={"action": "hmac_cleared"})
 
     def is_kill_switch_active(self) -> bool:
         """Check if kill switch is active (forwarding disabled)."""
@@ -391,15 +435,13 @@ class ConfigState:
 
         if new_secret_hex:
             # Save current secret as old (for grace period)
-            # Use in-memory key if set (from previous rotation), otherwise env
+            # Use in-memory key if set (from previous rotation), otherwise env fallback
             self._old_hmac_secret = self._new_hmac_secret if self._new_hmac_secret else get_shared_secret()
             self._old_hmac_expires = time.time() + (grace_period_ms / 1000)
 
-            # Store new secret in memory for immediate use
+            # Store new secret in memory only — never write to disk
             self._new_hmac_secret = bytes.fromhex(new_secret_hex)
-
-            # Persist to file for restart recovery
-            save_shared_secret(new_secret_hex)
+            self._hmac_configured = True
 
             logger.info("HMAC rotation: new key active", extra={
                 "action": "hmac_rotation",
@@ -533,12 +575,14 @@ def _restart_signal_cli() -> bool:
 
 def _watchdog_loop():
     """
-    Watchdog thread that monitors signal-cli health.
+    Watchdog thread that monitors signal-cli health and Joi contact staleness.
 
     Periodically checks if signal-cli is alive and responding.
     Triggers restart if unhealthy.
+    Also clears the HMAC key after MESH_CONFIG_STALENESS_CHECKS consecutive cycles
+    with no contact from Joi (mesh returns to bootstrap-waiting state).
     """
-    global _rpc_last_health_check, _rpc_healthy
+    global _rpc_last_health_check, _rpc_healthy, _joi_missed_checks
 
     logger.info("Watchdog started", extra={"interval_seconds": WATCHDOG_INTERVAL_SECONDS})
 
@@ -546,6 +590,25 @@ def _watchdog_loop():
         time.sleep(WATCHDOG_INTERVAL_SECONDS)
 
         try:
+            # --- Joi staleness check ---
+            if _config_state.is_hmac_configured():
+                if _last_joi_contact < time.time() - WATCHDOG_INTERVAL_SECONDS:
+                    _joi_missed_checks += 1
+                    logger.warning("No contact from Joi this cycle", extra={
+                        "missed_checks": _joi_missed_checks,
+                        "max_before_clear": MESH_CONFIG_STALENESS_CHECKS,
+                        "action": "joi_contact_missed",
+                    })
+                    if _joi_missed_checks >= MESH_CONFIG_STALENESS_CHECKS:
+                        logger.warning("Consecutive missed Joi contact checks reached limit — clearing HMAC key", extra={
+                            "missed_checks": _joi_missed_checks,
+                            "action": "config_stale",
+                        })
+                        _config_state.clear_hmac()
+                        _joi_missed_checks = 0
+                else:
+                    _joi_missed_checks = 0
+
             with _rpc_lock:
                 if not _rpc:
                     continue
@@ -580,21 +643,21 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)  # Quiet werkzeug reques
 
 def _is_hmac_available() -> bool:
     """Check if HMAC authentication is available (dynamic check)."""
-    # Check config_state for rotated secret
-    try:
-        current, _ = _config_state.get_hmac_secrets()
-        if current:
-            return True
-    except Exception:
-        pass
-
-    # Fall back to module-level or env
+    # Key pushed by Joi via bootstrap or rotation
+    if _config_state.is_hmac_configured():
+        return True
+    # Emergency fallback: env var (existing deployments during transition)
     return get_shared_secret() is not None
 
 
 @flask_app.before_request
 def verify_hmac_auth():
     """Verify HMAC authentication for incoming requests from Joi."""
+    global _last_joi_contact
+    # Update contact time on every inbound request — UFW guarantees only Joi reaches port 8444.
+    # Must be before the early-return exemptions so /config/status polls count as heartbeats.
+    _last_joi_contact = time.time()
+
     # Skip health and read-only status endpoints
     if request.path in ("/health", "/config/status"):
         return None
@@ -605,9 +668,15 @@ def verify_hmac_auth():
     if content_length and content_length > MAX_BODY:
         return jsonify({"status": "error", "error": "request_too_large"}), 413
 
-    # Check if HMAC is available (dynamic check - not just startup state)
+    # Bootstrap exception: Joi pushes the key on first contact; no key means no auth yet.
+    # UFW + Nebula restrict this port to Joi's IP, so unauthenticated bootstrap is safe.
     if not _is_hmac_available():
-        # Fail-closed: reject if no HMAC configured
+        if request.path == "/config/sync":
+            logger.info("Bootstrap: allowing unauthenticated /config/sync (no key yet)", extra={
+                "action": "hmac_bootstrap_allow"
+            })
+            return None
+        # Fail-closed for all other paths
         logger.error("HMAC auth failed: no secret configured (fail-closed)", extra={
             "action": "auth_failed",
             "reason": "hmac_not_configured"
@@ -759,22 +828,23 @@ def config_sync():
     if "identity" not in data:
         return jsonify({"status": "error", "error": "missing_identity"}), 400
 
-    # Apply config and get hash
+    # Apply config and get hash (and optional challenge response for bootstrap confirmation)
     try:
-        config_hash = _config_state.apply_config(data)
+        config_hash, challenge_response = _config_state.apply_config(data)
     except Exception as e:
         logger.error("Config sync failed", extra={"error": str(e)})
         return jsonify({"status": "error", "error": "apply_failed"}), 500
 
     logger.info("Config sync applied", extra={"config_hash": config_hash[:16]})
 
-    return jsonify({
-        "status": "ok",
-        "data": {
-            "config_hash": config_hash,
-            "applied_at": int(time.time() * 1000),
-        }
-    })
+    response_data: Dict[str, Any] = {
+        "config_hash": config_hash,
+        "applied_at": int(time.time() * 1000),
+    }
+    if challenge_response is not None:
+        response_data["challenge_response"] = challenge_response
+
+    return jsonify({"status": "ok", "data": response_data})
 
 
 @flask_app.route("/config/status", methods=["GET"])
@@ -784,6 +854,7 @@ def config_status():
         "status": "ok",
         "data": {
             "config_hash": _config_state.get_hash(),
+            "hmac_configured": _config_state.is_hmac_configured(),
         }
     })
 

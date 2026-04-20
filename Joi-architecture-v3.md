@@ -2,7 +2,7 @@
 
 > **Status:** Current authoritative architecture document.
 > **Supersedes:** Joi-architecture-v2.md
-> **Last updated:** 2026-02-18
+> **Last updated:** 2026-04-19
 
 ## Goals
 
@@ -19,10 +19,10 @@
 | Principle | Implementation |
 |-----------|----------------|
 | **Joi is authoritative** | All config lives on Joi, pushed to mesh |
-| **Mesh is stateless** | No config files on disk (exception: rotated HMAC secret persisted for restart recovery) |
+| **Mesh is stateless** | No config files on disk; HMAC key is memory-only, always pushed by Joi |
 | **Defense-in-depth** | Nebula + HMAC + policy validation |
-| **Fail-secure** | Empty policy denies all; rotation has grace period |
-| **No traces** | Mesh restart = clean slate |
+| **Fail-secure** | Empty policy denies all; rotation has grace period; bootstrap protected by UFW |
+| **No traces** | Mesh restart = clean slate; key gone when VM stops |
 
 ---
 
@@ -84,19 +84,20 @@
 
 ## Stateless Mesh Architecture
 
-**Mesh stores nothing on disk** (exception: rotated HMAC secret persisted to `/var/lib/signal-cli/hmac.secret` for restart recovery). All configuration comes from Joi via config push.
+**Mesh stores nothing on disk.** All configuration — including the HMAC key — comes from Joi via config push and lives in memory only. When mesh restarts, the key is gone. Joi re-bootstraps within ~60 s.
 
 ### On Mesh Startup
-1. Mesh starts with empty policy (denies all messages)
-2. Uses `MESH_HMAC_SECRET` from environment for initial auth
-3. Waits for Joi to push config via `/config/sync`
-4. Applies config in memory
+1. Mesh starts with empty policy (denies all messages) and no HMAC key (waiting state)
+2. Waits for Joi to push config via `/config/sync` (bootstrap push)
+3. Bootstrap `/config/sync` is allowed through unauthenticated — UFW restricts port 8444 to Joi's Nebula IP only, so this is safe
+4. Mesh stores policy and HMAC key in memory; sends back a challenge response to confirm key receipt
+5. From this point all pushes are HMAC-authenticated
 
 ### On Mesh Restart
-1. Policy/config is lost (by design - no traces)
-2. HMAC secret: loaded from `/var/lib/signal-cli/hmac.secret` if present; falls back to `MESH_HMAC_SECRET` env var
-3. Messages are dropped until config received
-4. **Automatic recovery:** Joi polls mesh `/config/status` every tick (~60s)
+1. Policy/config and HMAC key are lost (by design - no traces)
+2. Mesh returns to waiting state (no key)
+3. **Automatic recovery:** Joi polls mesh `/config/status` every tick (~60 s)
+   - `hmac_configured: false` → Joi sends bootstrap push → recovered
    - Mesh returns empty hash → Joi detects restart → pushes config
    - Mesh returns wrong hash → Joi detects drift → pushes fresh config
    - Mesh unreachable → Joi retries next tick
@@ -111,10 +112,9 @@
 
 | Path | Purpose | Persistent |
 |------|---------|------------|
-| `/etc/default/mesh-signal-worker` | Env vars (HMAC seed, Signal account) | Yes |
+| `/etc/default/mesh-signal-worker` | Env vars (Signal account, Joi endpoint) | Yes |
 | `/var/lib/signal-cli/` | Signal account data | Yes |
-| (memory only) | Policy | No |
-| `/var/lib/signal-cli/hmac.secret` | Rotated HMAC key (persisted after rotation · survives restart) | Yes |
+| (memory only) | Policy + HMAC key | No |
 
 ---
 
@@ -155,7 +155,9 @@ Joi pushes config to mesh on:
     "privacy_mode": true,
     "kill_switch": false
   },
-  "hmac_rotation": {
+  "bootstrap_hmac_key": "<64-char-hex>",  // Always included; mesh stores only if no key yet
+  "bootstrap_challenge": "<32-char-hex>", // Nonce; mesh returns HMAC(key, nonce) as confirmation
+  "hmac_rotation": {                      // Optional: key rotation
     "new_secret": "<64-char-hex>",
     "effective_at_ms": 1708300060000,
     "grace_period_ms": 60000
@@ -167,8 +169,8 @@ Joi pushes config to mesh on:
 
 | Endpoint | Direction | Auth | Purpose |
 |----------|-----------|------|---------|
-| `POST mesh:8444/config/sync` | joi → mesh | HMAC | Push config |
-| `GET mesh:8444/config/status` | joi → mesh | None | Get config hash |
+| `POST mesh:8444/config/sync` | joi → mesh | HMAC (or none on bootstrap) | Push config + bootstrap key |
+| `GET mesh:8444/config/status` | joi → mesh | None | Get config hash + hmac_configured |
 
 ---
 
@@ -193,9 +195,17 @@ X-HMAC-SHA256: HMAC-SHA256(nonce + timestamp + body, secret)
 
 | Location | Purpose |
 |----------|---------|
-| Joi: `/etc/default/joi-api` | `JOI_HMAC_SECRET` env var |
-| Mesh: `/etc/default/mesh-signal-worker` | `MESH_HMAC_SECRET` env var (seed) |
-| Mesh: `/var/lib/signal-cli/hmac.secret` | Rotated keys (persisted after rotation · survives restart) |
+| Joi: `/etc/default/joi-api` | `JOI_HMAC_SECRET` env var (persistent, Joi is the source of truth) |
+| Mesh: RAM only | Key pushed by Joi on every bootstrap; never written to disk |
+| Mesh: `MESH_HMAC_SECRET` env var | Emergency fallback only (existing deployments during transition) |
+
+### Bootstrap Protocol
+
+On every config push, Joi includes `bootstrap_hmac_key` (current key) and `bootstrap_challenge` (random nonce) in the payload. Mesh:
+- Stores the key if it has none yet (`_hmac_configured = False`)
+- Computes `HMAC(key, challenge)` and returns it as `challenge_response`
+
+Joi verifies the response to confirm mesh received and applied the correct key. This happens on every push — bootstrap and normal authenticated pushes alike.
 
 ---
 
@@ -207,8 +217,8 @@ Weekly automatic rotation with 60-second grace period.
 
 ```
 1. Joi generates new 32-byte secret
-2. Joi pushes config with hmac_rotation field
-3. Mesh stores new key, keeps old key for grace period
+2. Joi pushes config with hmac_rotation field (HMAC-authenticated with current key)
+3. Mesh stores new key in memory, keeps old key for grace period
 4. Both keys valid during grace period
 5. Joi updates /etc/default/joi-api
 6. Old key expires after 60 seconds
@@ -222,9 +232,15 @@ Weekly automatic rotation with 60-second grace period.
 | During grace (60s) | Valid | Valid |
 | After grace | Rejected | Valid |
 
-### On Mesh Restart During Rotation
+### On Mesh Restart During or After Rotation
 
-Mesh loads the persisted key from `/var/lib/signal-cli/hmac.secret`. If the file is absent (e.g. first boot), it falls back to the `MESH_HMAC_SECRET` env var seed — Joi will then push the current key on next sync.
+Mesh returns to waiting state (no key). Joi detects `hmac_configured: false` on the next `/config/status` poll and sends a bootstrap push with the current key. Recovered within ~60 s.
+
+### Key Staleness Watchdog
+
+If Joi goes silent for 2 consecutive watchdog cycles (~120 s), mesh clears the HMAC key and returns to waiting state. A single missed cycle is tolerated (network blip). When Joi returns, a bootstrap push restores the key automatically.
+
+The number of missed cycles required to clear is configurable: `MESH_CONFIG_STALENESS_CHECKS` (default: 2).
 
 ---
 
@@ -469,11 +485,14 @@ ReadWritePaths=/var/lib/signal-cli
 - [ ] Mesh receives and applies config
 - [ ] Messages flow correctly
 
-### HMAC Rotation
-- [ ] Rotation triggered (manual or weekly)
-- [ ] Both keys work during grace period
+### HMAC Bootstrap & Rotation
+- [ ] Mesh starts with no key (waiting state — `hmac_configured: false` in /config/status)
+- [ ] Joi sends bootstrap push → mesh accepts unauthenticated /config/sync
+- [ ] Challenge response verified in Joi logs
+- [ ] Rotation triggered (manual or weekly) — both keys work during grace period
 - [ ] Old key rejected after grace period
-- [ ] Mesh restart uses env seed
+- [ ] Mesh restart → key gone → Joi re-bootstraps within ~60 s
+- [ ] No `/var/lib/signal-cli/hmac.secret` file exists on mesh
 
 ### Security Controls
 - [ ] Privacy mode redacts phone numbers

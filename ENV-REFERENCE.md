@@ -130,7 +130,7 @@ Prompts directory structure:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `JOI_HMAC_SECRET` | (required) | Shared secret — must match `MESH_HMAC_SECRET` on Mesh VM |
+| `JOI_HMAC_SECRET` | (required) | Joi's HMAC secret — persistent source of truth on Joi VM |
 | `JOI_HMAC_TIMESTAMP_TOLERANCE_MS` | `300000` | Timestamp tolerance in ms (default: 5 minutes) |
 | `JOI_HMAC_SECRET_FILE` | `/var/lib/joi/hmac.secret` | Path to rotated HMAC secret file (managed by joi-admin) |
 
@@ -174,7 +174,8 @@ Prompts directory structure:
 | `MESH_ENABLE_FORWARD` | `0` | Set to `1` to enable forwarding to Joi |
 | `MESH_JOI_URL` | (required) | Joi API base URL (e.g. `http://10.42.0.10:8443`) |
 | `MESH_FORWARD_TIMEOUT` | `120` | Timeout for Joi requests in seconds |
-| `MESH_HMAC_SECRET` | (required) | Shared secret — must match `JOI_HMAC_SECRET` on Joi VM |
+| `MESH_HMAC_SECRET` | (none) | Emergency fallback secret (env var only; mesh normally gets key from Joi bootstrap push) |
+| `MESH_CONFIG_STALENESS_CHECKS` | `2` | Consecutive watchdog cycles with no Joi contact before HMAC key is cleared (~120 s) |
 
 ---
 
@@ -197,7 +198,7 @@ Prompts directory structure:
 
 | Path | Purpose |
 |------|---------||
-| `/etc/default/mesh-signal-worker` | Environment variables (incl. initial HMAC secret) |
+| `/etc/default/mesh-signal-worker` | Environment variables (Signal account, Joi endpoint) |
 | `/var/lib/signal-cli/` | Signal account data |
 
-Note: Mesh is stateless - policy and rotated HMAC keys are pushed from Joi and stored in memory only.
+Note: Mesh is fully stateless — policy and HMAC key are pushed from Joi and stored in memory only. No HMAC file is ever written to disk on mesh.

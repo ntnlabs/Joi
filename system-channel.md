@@ -6,7 +6,9 @@
 
 ## Overview
 
-The System Channel provides a unified interface for Joi to communicate with external systems (openhab, Zabbix, calendars, actuators, etc.) within the trusted Joi ecosystem. Unlike the Interactive Channel (Signal), the System Channel is not exposed externally.
+The System Channel provides a unified interface for Joi to communicate with enclave-internal systems (openhab, Zabbix, calendars, actuators, etc.) within the trusted Joi ecosystem. Unlike the Interactive Channel (Signal), the System Channel is not exposed externally.
+
+> **"External" means external to Joi VM, not external to the enclave.** All System Channel targets are Nebula mesh nodes inside a fully closed private network. None are internet-facing or in a DMZ. The same Nebula + certificate trust model that protects Joi ↔ mesh applies here.
 
 ## Two-Layer Architecture
 
@@ -136,7 +138,7 @@ The Protection Layer ensures that even if the LLM is prompt-injected, jailbroken
 
 2. **LLM-Gated Writes** - All *intentional* writes to external systems go through the LLM. The LLM decides when and what to write based on context. Protection Layer automation (rate limits, circuit breakers) is separate and LLM has no say in those.
 
-3. **Trusted LLM for Operations** - Within protection bounds, writes do not require owner approval. The LLM is trusted to make good decisions. Quality comes from good prompts, context, and guardrails.
+3. **Trusted LLM for Operations** - Within protection bounds, writes do not require owner approval. The LLM is trusted to make good decisions within the enclave. This is consistent with Wind, which already sends proactive messages autonomously. Quality comes from good prompts, context, and guardrails.
 
 4. **LLM-Decided Notifications** - If a system event or write result should inform the owner, the LLM decides that. The System Channel never directly notifies humans.
 

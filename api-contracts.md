@@ -319,7 +319,9 @@ Pushes policy config from Joi to mesh. Mesh applies in memory (no disk persisten
   "validation": {
     "max_text_length": 1500
   },
-  "hmac_rotation": {                    // Optional: HMAC key rotation
+  "bootstrap_hmac_key": "<64-char-hex>",  // Always included — mesh stores only if no key yet
+  "bootstrap_challenge": "<32-char-hex>", // Nonce for mutual confirmation
+  "hmac_rotation": {                      // Optional: HMAC key rotation
     "new_secret": "<64-char-hex>",
     "effective_at_ms": 1708300060000,
     "grace_period_ms": 60000
@@ -327,15 +329,23 @@ Pushes policy config from Joi to mesh. Mesh applies in memory (no disk persisten
 }
 ```
 
+> **Bootstrap security:** The first push (when mesh has no key) is unauthenticated. UFW restricts
+> port 8444 to Joi's Nebula IP, so unauthenticated bootstrap is safe within that constraint.
+> All subsequent pushes carry full HMAC auth headers.
+
 **Response:**
 ```json
 {
   "status": "ok",
   "data": {
-    "config_hash": "<sha256-hex>"
+    "config_hash": "<sha256-hex>",
+    "challenge_response": "<sha256-hex>"  // Present when bootstrap_challenge was provided
   }
 }
 ```
+
+> Joi verifies `challenge_response == HMAC(current_key, bootstrap_challenge)` to confirm
+> mesh received and applied the correct key.
 
 ### 3.2 Config Status
 
@@ -351,10 +361,13 @@ Returns current config hash. Used by Joi to detect drift.
   "status": "ok",
   "data": {
     "config_hash": "<sha256-hex>",
+    "hmac_configured": true,           // false = mesh has no key (waiting for bootstrap push)
     "applied_at_ms": 1708300000500
   }
 }
 ```
+
+> Joi uses `hmac_configured: false` to detect a mesh restart and trigger a bootstrap push.
 
 ### 3.3 Delivery Status
 
@@ -441,8 +454,8 @@ Called by mesh over Nebula tunnel.
 | `/health` | GET | None | Health check |
 | `/api/v1/message/outbound` | POST | HMAC | Send message via Signal |
 | `/api/v1/delivery/status` | GET | HMAC | Query delivery/read status |
-| `/config/sync` | POST | HMAC | Receive config push from Joi |
-| `/config/status` | GET | HMAC | Return current config hash |
+| `/config/sync` | POST | HMAC (or none on bootstrap) | Receive config push from Joi |
+| `/config/status` | GET | None | Return current config hash + hmac_configured |
 | `/groups/members` | GET | HMAC | List groups with members |
 
 ---

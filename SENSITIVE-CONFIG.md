@@ -13,9 +13,6 @@
 # Signal account phone number (E.164 format)
 SIGNAL_ACCOUNT=+<COUNTRY><NUMBER>
 
-# HMAC shared secret (64 hex chars, must match Joi)
-MESH_HMAC_SECRET=<64-char-hex>
-
 # Forwarding to Joi
 MESH_ENABLE_FORWARD=1
 MESH_JOI_URL=http://10.42.0.10:8443
@@ -24,8 +21,10 @@ MESH_JOI_URL=http://10.42.0.10:8443
 See `ENV-REFERENCE.md` for full variable listing and defaults.
 
 **Notes**:
-- `MESH_HMAC_SECRET` is the initial seed. Rotated keys are pushed from Joi and stored in memory.
-- On mesh restart, it uses env var until Joi pushes current config.
+- **No HMAC secret needed on mesh.** The key is pushed by Joi on first contact (bootstrap).
+  Mesh holds the key in RAM only — restart clears it, Joi re-bootstraps within ~60 s.
+- `MESH_HMAC_SECRET` env var may be set as an emergency fallback for existing deployments
+  during transition, but is not required for new installs.
 
 ### /var/lib/signal-cli/
 
@@ -45,7 +44,7 @@ Signal account data directory. Contains:
 Start from `execution/joi/systemd/joi-api.default` and set the secrets:
 
 ```bash
-# HMAC shared secret (64 hex chars, must match MESH_HMAC_SECRET on Mesh VM)
+# HMAC shared secret (64 hex chars) — Joi's persistent key; pushed to mesh on every config sync
 # Generate with: openssl rand -hex 32
 JOI_HMAC_SECRET=<64-char-hex>
 
@@ -124,7 +123,8 @@ Before deploying, verify:
 
 ### HMAC Secret
 Generate: `openssl rand -hex 32`
-Set on both VMs: `JOI_HMAC_SECRET` (Joi) and `MESH_HMAC_SECRET` (Mesh).
+Set on Joi only: `JOI_HMAC_SECRET` in `/etc/default/joi-api`.
+Mesh receives the key automatically via bootstrap push from Joi — no manual setup needed.
 Use `joi-admin hmac rotate` to rotate without restart.
 
 ### Signal Account
