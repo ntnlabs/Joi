@@ -194,6 +194,7 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 | [agent-loop-design.md](agent-loop-design.md) | Agent behavior & modes |
 | [system-channel.md](system-channel.md) | System Channel & LLM Services specification |
 | [prompt-injection-defenses.md](prompt-injection-defenses.md) | Prompt injection mitigations |
+| [values.md](values.md) | Values architecture — value tree, judge loop, mood system |
 
 ## Tech Stack
 
