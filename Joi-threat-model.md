@@ -26,7 +26,6 @@ This document identifies threats to the Joi system and proposes mitigations. It 
 | imagegen VM | Image generation service | Inappropriate content, resource abuse |
 | websearch VM | Internet search agent | Fetch malicious content, exfiltration vector |
 | tts/stt VMs | Speech services | Audio manipulation |
-| codeexec VM | Sandboxed code execution | Sandbox escape, resource abuse |
 
 ## 2. Threat Actors
 
@@ -228,15 +227,14 @@ The System Channel is a type-agnostic interface for machine-to-machine communica
 
 ### 4.5 LLM Services (Isolated VMs)
 
-LLM Services are compute services on isolated VMs (imagegen, websearch, tts, codeexec).
+LLM Services are compute services on isolated VMs (imagegen, websearch, tts).
 
 | ID | Threat | Impact | Likelihood | Risk |
 |----|--------|--------|------------|------|
 | LS1 | imagegen produces inappropriate content | Offensive/harmful images | Medium | Medium |
 | LS2 | websearch fetches malicious content | Prompt injection via web page | Medium | **High** |
 | LS3 | websearch used for data exfiltration | Leak conversation/memory via search queries | Low | **High** |
-| LS4 | codeexec sandbox escape | Attacker gains control of codeexec VM | Low | **High** |
-| LS5 | LLM Service VM compromised | Lateral movement attempt to Joi | Low | Medium |
+| LS4 | LLM Service VM compromised | Lateral movement attempt to Joi | Low | Medium |
 | LS6 | Resource exhaustion on LLM Service | DoS on image/video generation | Medium | Low |
 | LS7 | Malicious output from LLM Service | Trojaned image, malicious code result | Low | Medium |
 
@@ -244,8 +242,7 @@ LLM Services are compute services on isolated VMs (imagegen, websearch, tts, cod
 - LS1: Content policy in Protection Layer blocks forbidden prompts; model-level safety
 - LS2: websearch VM isolated; results sanitized before reaching Joi LLM; structured output format
 - LS3: Audit log on all search queries; query validation; no raw memory/conversation in queries
-- LS4: Minimal sandbox (gVisor/Firecracker); no network; resource limits; isolated VM
-- LS5: LLM Service VMs have NO access to Joi core; Nebula mesh only; separate certs
+- LS4: LLM Service VMs have NO access to Joi core; Nebula mesh only; separate certs
 - LS6: Per-service rate limits (e.g., imagegen 10/hr); queue depth limits
 - LS7: Validate all output; don't execute returned code without sandbox; image format validation
 

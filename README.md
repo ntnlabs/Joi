@@ -84,7 +84,7 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 
 ### Pending
 - ⏳ System Channel integration
-- ⏳ LLM Services (imagegen, websearch, etc.)
+- ⏳ LLM Services (imagegen, websearch, tts)
 - ⏳ Voice message transcription (Whisper)
 
 ## Roadmap
