@@ -13,8 +13,11 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 | A realtime API | Event-driven |
 | A website chatbot | Asynchronous |
 | A request-response service | Stateful |
+| A blind assistant | Enclave-aware |
 
 **Joi is a digital entity, not a tool.**
+
+Being a digital entity implies autonomy: Joi has initiative, memory, and acts within its enclave without requiring permission for every action. Wind sends messages unprompted. The System Channel lets Joi read from and write to trusted internal systems (openhab, Zabbix, etc.) — all within a closed private enclave, never the internet. This is a deliberate design property, not scope creep.
 
 ## Status
 
@@ -70,7 +73,10 @@ Joi is an air-gapped AI assistant running on a local Proxmox VM with GPU acceler
 
 ### Config & Security
 - ✅ One-way config push (Joi → mesh, stateless mesh)
+- ✅ HMAC bootstrap (key pushed by Joi, memory-only on mesh — never on disk)
 - ✅ Weekly HMAC key rotation with grace period
+- ✅ Challenge-response confirmation on every config push
+- ✅ Staleness watchdog (mesh clears key after ~120 s of Joi silence)
 - ✅ Privacy mode (PII redaction in logs)
 - ✅ Kill switch (emergency message halt)
 - ✅ Tamper detection (config file monitoring)

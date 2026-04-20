@@ -293,7 +293,7 @@ sudo systemctl start joi-api
 
 | Path | Contents |
 |------|----------|
-| `/etc/default/mesh-signal-worker` | HMAC secret, account |
+| `/etc/default/mesh-signal-worker` | Signal account, Joi endpoint (no HMAC secret — key is pushed by Joi) |
 | `/var/lib/signal-cli/` | Signal account data |
 | `/etc/nebula/` | Nebula keys and config |
 

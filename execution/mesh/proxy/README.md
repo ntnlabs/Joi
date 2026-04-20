@@ -17,8 +17,8 @@ On restart:
 
 1. **Configure environment** in `/etc/default/mesh-signal-worker`:
    - `SIGNAL_ACCOUNT` - Your Signal phone number
-   - `MESH_HMAC_SECRET` - Shared secret (must match Joi)
-   - `MESH_JOI_INBOUND_URL` - Joi's inbound endpoint
+   - `MESH_JOI_URL` - Joi's base URL (e.g. `http://10.42.0.10:8443`)
+   - No HMAC secret needed — mesh receives the key from Joi on first contact (bootstrap)
 
 2. **Configure policy on Joi** at `/var/lib/joi/policy/mesh-policy.json`:
 
@@ -119,12 +119,13 @@ curl -X POST "http://127.0.0.1:8444/send_test?recipient=+<REDACTED>&message=hell
 ## Environment Variables
 
 - `SIGNAL_ACCOUNT` (required - Signal phone number)
-- `MESH_HMAC_SECRET` (required - shared secret for auth)
+- `MESH_JOI_URL` (required - Joi base URL)
 - `MESH_WORKER_HTTP_PORT` (default: 8444)
-- `MESH_SIGNAL_POLL_SECONDS` (default: 5)
 - `SIGNAL_CLI_BIN` (default: /usr/local/bin/signal-cli)
 - `SIGNAL_CLI_CONFIG_DIR` (default: /var/lib/signal-cli)
 - `MESH_LOG_LEVEL` (default: INFO)
+- `MESH_HMAC_SECRET` (optional - emergency fallback for existing deployments only)
+- `MESH_CONFIG_STALENESS_CHECKS` (default: 2 - consecutive missed Joi contact cycles before key cleared)
 
 ## HMAC Authentication
 
@@ -133,12 +134,21 @@ All requests between Joi and mesh are authenticated with HMAC-SHA256:
 - Timestamp tolerance: 5 minutes
 - Nonce replay protection: 15 minutes
 
-**Key rotation** is handled automatically by Joi (weekly by default). During rotation:
-1. Joi pushes new key via config sync
-2. Mesh accepts both old and new key during 60-second grace period
-3. Old key expires after grace period
+**Bootstrap (first contact / after mesh restart):**
+1. Mesh starts with no HMAC key (waiting state)
+2. Joi sends a `/config/sync` push — allowed through unauthenticated (UFW restricts port 8444 to Joi's IP)
+3. Mesh stores the key in memory and responds with a challenge response
+4. Joi verifies the challenge response — bootstrap confirmed
+5. All subsequent pushes are HMAC-authenticated
 
-Since mesh is stateless, the rotated key is stored in memory only. On restart, mesh uses `MESH_HMAC_SECRET` from environment until Joi pushes the current key.
+**Key rotation** is handled automatically by Joi (weekly by default). During rotation:
+1. Joi pushes new key via HMAC-authenticated config sync (`hmac_rotation` field)
+2. Mesh stores new key in memory; keeps old key for 60-second grace period
+3. Both keys valid during grace period; old key expires after grace period
+
+**Key staleness:** If Joi goes silent for 2 consecutive watchdog cycles (~120 s), mesh clears the key and returns to waiting state. Joi re-bootstraps automatically on next contact.
+
+The HMAC key is never written to disk on mesh. Restart clears it; Joi re-bootstraps within ~60 s.
 
 ## Forwarding to Joi (optional)
 
@@ -167,9 +177,8 @@ sudo nano /etc/default/mesh-signal-worker
 
 Required settings:
 - `SIGNAL_ACCOUNT` - Your Signal phone number
-- `MESH_HMAC_SECRET` - Shared secret (must match Joi)
+- `MESH_JOI_URL` - Joi's base URL
 - `MESH_ENABLE_FORWARD=1` - Enable forwarding to Joi
-- `MESH_JOI_INBOUND_URL` - Joi's inbound endpoint
 
 3. Stop old `signal-cli` daemon service if it is still enabled:
 

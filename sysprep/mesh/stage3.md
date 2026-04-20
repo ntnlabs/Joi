@@ -63,22 +63,12 @@ systemctl daemon-reload
 
 ## 3. Configure Mesh Environment File
 
-Review `/etc/default/mesh-signal-worker` and set the host-specific values (Signal socket path, Joi endpoint/HMAC config, policy path, etc.).
+Review `/etc/default/mesh-signal-worker` and set the host-specific values (Signal account, Joi endpoint, etc.).
 
-### Generate the shared HMAC secret (256-bit)
-
-Generate a 256-bit secret as 64 hex characters (do this once, then use the same value on both Mesh and Joi):
-
-```bash
-openssl rand -hex 32
-```
-
-Put that value into:
-
-- `/etc/default/mesh-signal-worker` (Mesh)
-- `/etc/default/joi-api` (Joi)
-
-Use the same shared secret on both sides.
+**No HMAC secret is needed on mesh.** The key is pushed by Joi on first contact (bootstrap).
+Mesh starts in a waiting state and accepts one unauthenticated `/config/sync` push from Joi.
+After that, all communication is HMAC-authenticated. The key is memory-only; restarting mesh
+clears it and Joi re-bootstraps within 60 s.
 
 Protect permissions after editing:
 
@@ -86,6 +76,12 @@ Protect permissions after editing:
 chmod 640 /etc/default/mesh-signal-worker
 chown root:signal /etc/default/mesh-signal-worker
 ```
+
+> **Migration note (existing mesh):** If a `/var/lib/signal-cli/hmac.secret` file exists
+> from a previous install, remove it after upgrading:
+> ```bash
+> rm -f /var/lib/signal-cli/hmac.secret
+> ```
 
 ## 4. Start mesh-signal-worker
 
