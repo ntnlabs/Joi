@@ -42,7 +42,7 @@ docker exec ollama ollama ps  # Should show GPU in PROCESSOR column
 
 ## Environment Variables
 
-See [ENV-REFERENCE.md](../../ENV-REFERENCE.md) for complete documentation.
+See [env-reference.md](../../env-reference.md) for complete documentation.
 
 ### Core
 | Variable | Default | Description |

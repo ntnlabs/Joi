@@ -562,5 +562,5 @@ ReadWritePaths=/var/lib/signal-cli
 | `memory-store-schema.md` | Database schema |
 | `agent-loop-design.md` | Agent behavior |
 | `system-channel.md` | System Channel spec |
-| `SENSITIVE-CONFIG.md` | Secrets reference |
-| `ENV-REFERENCE.md` | Environment variables |
+| `sensitive-config.md` | Secrets reference |
+| `env-reference.md` | Environment variables |

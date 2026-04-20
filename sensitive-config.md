@@ -18,7 +18,7 @@ MESH_ENABLE_FORWARD=1
 MESH_JOI_URL=http://10.42.0.10:8443
 ```
 
-See `ENV-REFERENCE.md` for full variable listing and defaults.
+See `env-reference.md` for full variable listing and defaults.
 
 **Notes**:
 - **No HMAC secret needed on mesh.** The key is pushed by Joi on first contact (bootstrap).
