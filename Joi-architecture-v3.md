@@ -49,7 +49,7 @@ These invariants are **non-negotiable**. They define what Joi is. Changing them 
 ### 3. LLM Model Policy
 
 - Only **trusted, vetted models** may be used. Chinese-origin models (Qwen, DeepSeek, etc.) are permanently banned — supply chain security.
-- Primary models must be **uncensored** and **Slovak-capable**.
+- Primary models should be **uncensored** and **Slovak-capable** (strongly recommended).
 
 ### 4. What This Project Will Build
 
