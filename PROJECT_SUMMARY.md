@@ -57,7 +57,7 @@ Joi is a **security-focused, offline AI personal assistant** running as a Proxmo
 | **Two-Layer Security** | Protection Layer (automation, LLM cannot bypass) + LLM Agent Layer (trusted decisions) |
 | **Interactive Channel** | Human communication via Signal (bidirectional) |
 | **System Channel** | Machine-to-machine communication (type-agnostic, read/write/both per source) |
-| **LLM Services** | Isolated VMs for image generation, web search, TTS, code execution |
+| **LLM Services** | Isolated VMs for image generation, web search, TTS |
 | **Modes** | `companion` (personal, proactive/Wind) or `business` (professional/shared, request-response; optional DM group knowledge via policy) |
 | **Wind** | Proactive messaging subsystem — topic queue, impulse engine, engagement tracking |
 

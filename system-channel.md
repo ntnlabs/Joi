@@ -101,7 +101,6 @@ The Protection Layer ensures that even if the LLM is prompt-injected, jailbroken
 │                              │     │ │  imagegen [RW]  │ │     │
 │                              │     │ │  websearch[RW]  │ │     │
 │                              │     │ │  tts      [RW]  │ │     │
-│                              │     │ │  codeexec [RW]  │ │     │
 │                              │     │ └─────────────────┘ │     │
 │                              │     └─────────────────────┘     │
 │  ┌───────────────────────────┴───────────────────────────────┐  │
@@ -528,12 +527,12 @@ LLM Services are a special category of System Channel sources: **LLM-based compu
 | Service | VM | Purpose |
 |---------|-----|---------|
 | imagegen | Image Generator VM | Generate images (SD, SDXL, Flux) |
-| videogen | Video Generator VM | Generate videos (Sora-like) |
 | websearch | Search Agent VM | LLM-powered internet search/browsing |
 | tts | TTS VM | Text-to-speech synthesis |
-| stt | STT VM | Speech-to-text transcription |
-| translate | Translation VM | Multi-language translation |
-| codeexec | Sandbox VM | Safe code execution |
+
+> **Scope note:** The connector interface is intentionally generic — any LLM service can be
+> wired in using the same pattern. This project will only implement the services listed above.
+> Code execution (`codeexec`) is explicitly out of scope and will not be implemented.
 
 **Architecture:**
 
@@ -799,22 +798,6 @@ tts:
     voices: [en-female-1, en-male-1, sk-female-1]
 ```
 
-**codeexec (Sandboxed Code Execution):**
-```yaml
-codeexec:
-  mode: read-write
-  async: true
-  outbound:
-    actions: [execute, cancel]
-    rate_limit: 30/hr
-    timeout_seconds: 60
-  sandbox:
-    languages: [python, javascript, bash]
-    max_memory_mb: 512
-    max_cpu_seconds: 30
-    network: false                 # No network in sandbox
-```
-
 ---
 
 ## LLM Integration
@@ -899,16 +882,6 @@ llm_tools:
       async: true
       action_id: string
 
-  # Execute code in sandbox (if available)
-  code_execute:
-    description: "Execute code in an isolated sandbox"
-    source: codeexec
-    parameters:
-      language: string            # python, javascript, bash
-      code: string                # Code to execute
-    returns:
-      async: true
-      action_id: string
 ```
 
 ### Example LLM Decision Flow
@@ -1317,7 +1290,6 @@ protection_layer:
 | imagegen | read-write | Async | Image generation (SD, SDXL, Flux) |
 | websearch | read-write | Async | LLM-powered internet search |
 | tts | read-write | Async | Text-to-speech synthesis |
-| codeexec | read-write | Async | Sandboxed code execution |
 
 All LLM Services run on isolated VMs with:
 - No access to Joi core (Nebula mesh only)

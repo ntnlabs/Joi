@@ -26,6 +26,58 @@
 
 ---
 
+## Architectural Invariants
+
+> **This document is the authoritative source of truth for Joi's architecture.**
+> All other documents (`system-channel.md`, `agent-loop-design.md`, `policy-engine.md`, etc.) describe subsystems in more detail but are subordinate to the boundaries defined here. If any other document contradicts an invariant below, this document wins.
+
+These invariants are **non-negotiable**. They define what Joi is. Changing them requires an explicit, conscious decision — not a gradual feature addition.
+
+### 1. Network Perimeter
+
+- Joi VM has **no direct WAN access** — no outbound internet, no inbound internet connections.
+- All traffic to and from Joi travels over the **Nebula mesh** (encrypted, certificate-authenticated).
+- The Nebula enclave is the trust boundary. "External systems" means external to the Joi VM — all System Channel targets (openhab, Zabbix, actuators, LLM service VMs) are enclave-internal Nebula nodes. Nothing in this project is internet-facing from Joi's side.
+
+### 2. LLM Trust and Autonomy
+
+- The LLM operates within the **Protection Layer** — rate limits, circuit breakers, and validation rules it cannot bypass.
+- Within those bounds, the LLM is **trusted to act autonomously**. This is intentional. Joi is a digital entity with its own initiative — it does not require owner confirmation for every action.
+- The existing precedent is **Wind**: proactive Signal messages are sent without approval on every tick. System Channel operations within the enclave extend the same autonomy model to machine systems; they do not introduce a new trust category.
+- Autonomy is bounded by the enclave. Nothing Joi initiates reaches the internet.
+
+### 3. LLM Model Policy
+
+- Only **trusted, vetted models** may be used. Chinese-origin models (Qwen, DeepSeek, etc.) are permanently banned — supply chain security.
+- Primary models must be **uncensored** and **Slovak-capable**.
+
+### 4. What This Project Will Build
+
+The System Channel connector design is intentionally generic (transport-agnostic, type-agnostic). However, **this project** will only implement services that are explicitly listed below. The connector is open; the roadmap is not.
+
+| Service | Status |
+|---------|--------|
+| openhab (read) | Planned |
+| Zabbix (read/write) | Planned |
+| websearch (DDG + fetch) | Planned |
+| imagegen | Planned |
+| TTS | Planned |
+
+**`codeexec` will never be implemented.** Arbitrary code execution by the LLM on any VM is permanently out of scope for this project, regardless of sandboxing.
+
+### 5. Human Communication Channel
+
+- Signal is the **primary human communication channel** for the foreseeable future.
+- Other messaging transports (Telegram, WhatsApp, etc.) may be added via the mesh's transport abstraction without architectural change.
+- No web UI, no public API, no direct HTTP interface to end users.
+
+### 6. Data Residency
+
+- All user data — conversation context, facts, summaries, RAG — stays on the **Joi VM only**.
+- No data leaves the enclave except as part of a Signal/transport message in response to a user interaction.
+
+---
+
 ## Hardware Platform
 
 - **Host:** ASUS NUC 13 Pro NUC13ANHI7 (i7-1360P, Thunderbolt 4)
