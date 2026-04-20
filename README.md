@@ -67,9 +67,9 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 
 ### User Features
 - ✅ [Reminders](reminder-engine.md) — natural language, multi-reminder input, snooze, reschedule, cancel
-- ✅ [Notes](COMMANDS.md#notes-dm-only) — named notes, append, update, search, delete (DM)
-- ✅ [Task lists](COMMANDS.md#task-lists-dm-only) — named lists, add/done/reopen/delete per item or list (DM)
-- ✅ [Wind snooze](COMMANDS.md#wind-snooze-dm-only) — silence proactive messages for a duration or until morning
+- ✅ [Notes](commands.md#notes-dm-only) — named notes, append, update, search, delete (DM)
+- ✅ [Task lists](commands.md#task-lists-dm-only) — named lists, add/done/reopen/delete per item or list (DM)
+- ✅ [Wind snooze](commands.md#wind-snooze-dm-only) — silence proactive messages for a duration or until morning
 
 ### Config & Security
 - ✅ One-way config push (Joi → mesh, stateless mesh)
@@ -185,8 +185,8 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 |----------|-------------|
 | [Joi-architecture-v3.md](Joi-architecture-v3.md) | Current architecture (stateless mesh) |
 | [Joi-threat-model.md](Joi-threat-model.md) | Threat analysis and mitigations |
-| [COMMANDS.md](COMMANDS.md) | User-facing Signal commands |
-| [WIND-CONFIG.md](WIND-CONFIG.md) | Wind configuration reference & tuning guide |
+| [commands.md](commands.md) | User-facing Signal commands |
+| [wind-config.md](wind-config.md) | Wind configuration reference & tuning guide |
 | [wind-architecture-v1.md](wind-architecture-v1.md) | Wind proactive messaging architecture & phases |
 | [memory-store-schema.md](memory-store-schema.md) | Database schema |
 | [api-contracts.md](api-contracts.md) | API specifications |

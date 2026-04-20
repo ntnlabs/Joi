@@ -153,13 +153,13 @@ sysprep/                    # VM provisioning scripts (stage1–4)
 | File | Purpose |
 |------|---------|
 | `CLAUDE.md` | Claude Code instructions for this project |
-| `AGENTS.md` | Development guidelines, coding standards |
+| `agents.md` | Development guidelines, coding standards |
 | `ENV-REFERENCE.md` | All environment variables with defaults |
 | `COMMS-MATRIX.md` | Network flows, ports, VM IPs |
 | `SENSITIVE-CONFIG.md` | Secrets and deployment checklist (not in git) |
 | `Joi-architecture-v3.md` | Current architecture (security-hardened) |
 | `wind-architecture-v1.md` | Wind proactive messaging full design |
-| `WIND-CONFIG.md` | Wind config reference — all variables, formulas, tuning guide |
+| `wind-config.md` | Wind config reference — all variables, formulas, tuning guide |
 | `system-channel.md` | System Channel & LLM Services specification |
 | `agent-loop-design.md` | Agent behavior, impulse system, behavior modes |
 | `Joi-threat-model.md` | Threat analysis, attack surfaces, mitigations |
