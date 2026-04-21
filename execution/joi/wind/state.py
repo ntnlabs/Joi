@@ -225,6 +225,14 @@ class WindStateManager:
         # Now fetch the state (guaranteed to exist)
         return self.get_state(conversation_id)
 
+    def _ensure_state_exists(self, conversation_id: str) -> None:
+        """Ensure a wind_state row exists without reading it back."""
+        conn = self._connect()
+        conn.execute(
+            "INSERT OR IGNORE INTO wind_state (conversation_id, updated_at) VALUES (?, ?)",
+            (conversation_id, _format_datetime(datetime.now(timezone.utc)))
+        )
+
     _VALID_STATE_COLUMNS = frozenset({
         "last_user_interaction_at", "last_outbound_at", "last_proactive_sent_at",
         "last_impulse_check_at", "proactive_sent_today", "proactive_day_bucket",
@@ -253,8 +261,8 @@ class WindStateManager:
         if not updates:
             return
 
-        # Ensure state exists
-        self.get_or_create_state(conversation_id)
+        # Ensure state row exists (without full SELECT)
+        self._ensure_state_exists(conversation_id)
 
         # Build SET clause
         now = datetime.now(timezone.utc)
@@ -303,7 +311,7 @@ class WindStateManager:
         now = datetime.now(timezone.utc)
         # Shift back 3 h so conversations after midnight still count as "today"
         today_bucket = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
-        self.get_or_create_state(conversation_id)
+        self._ensure_state_exists(conversation_id)
 
         # Read current fire_times BEFORE any write
         state = self.get_state(conversation_id)
@@ -528,7 +536,7 @@ class WindStateManager:
             ema_alpha: EMA weight for new value (default 0.2 = slow adaptation)
         """
         now = datetime.now(timezone.utc)
-        self.get_or_create_state(conversation_id)
+        self._ensure_state_exists(conversation_id)
         conn = self._connect()
 
         # Determine counter to increment and quality for EMA
