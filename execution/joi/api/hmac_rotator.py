@@ -515,12 +515,11 @@ class HMACRotator:
                     logger.debug("HMAC sync check passed", extra={"action": "sync_check", "status": "ok"})
                     return True, "ok"
 
-                # Other errors might be network issues, not HMAC
                 logger.warning("HMAC sync check: unexpected status", extra={
                     "action": "sync_check",
-                    "status_code": resp.status_code
+                    "status_code": resp.status_code,
                 })
-                return True, f"status_{resp.status_code}"  # Assume OK if not 401
+                return False, f"unexpected_status_{resp.status_code}"
 
         except Exception as e:
             logger.warning("HMAC sync check failed", extra={
@@ -597,11 +596,17 @@ class HMACRotator:
 
         # Now verify current key works
         in_sync, msg = self.check_mesh_sync()
-        if not in_sync and msg == "hmac_mismatch":
-            logger.error("Startup sync check: HMAC mismatch with mesh", extra={
-                "action": "startup_sync_failed"
-            })
-            return False
+        if not in_sync:
+            if msg == "hmac_mismatch":
+                logger.error("Startup sync check: HMAC mismatch with mesh", extra={
+                    "action": "startup_sync_failed"
+                })
+                return False
+            else:
+                logger.warning("Startup sync check: could not confirm sync", extra={
+                    "action": "startup_sync_uncertain", "reason": msg
+                })
+                # Don't abort — mesh may be restarting; HMAC will be verified on first real request
 
         logger.info("Startup sync check passed", extra={
             "action": "startup_sync_ok",

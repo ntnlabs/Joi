@@ -258,12 +258,12 @@ def forward_to_backend(payload: Dict[str, Any], backend_name: str, backend_url: 
     worker_idx = hash(convo_id) % _NUM_WORKERS
 
     try:
-        _worker_queues[worker_idx].put_nowait((url, payload, backend_name, secret))
+        _worker_queues[worker_idx].put((url, payload, backend_name, secret), timeout=5.0)
     except queue.Full:
-        logger.warning("Forward queue full, dropping message", extra={
+        logger.error("Forward queue full after 5s wait, dropping message", extra={
             "backend": backend_name,
             "worker": worker_idx,
-            "action": "forward_dropped"
+            "action": "forward_dropped",
         })
 
 

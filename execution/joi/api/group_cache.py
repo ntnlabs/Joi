@@ -101,10 +101,14 @@ class GroupMembershipCache:
                 # Only update if: new data has groups, OR we have no cache yet
                 if data or not self._cache:
                     self._cache = data
+                    self._last_refresh = time.time()
                     logger.debug("Refreshed group membership", extra={"group_count": len(data)})
                 else:
-                    logger.warning("Ignoring empty membership response", extra={"cached_groups": len(self._cache)})
-                self._last_refresh = time.time()
+                    logger.warning(
+                        "Ignoring empty membership response — not advancing refresh clock",
+                        extra={"cached_groups": len(self._cache)},
+                    )
+                    return False
             return True
         except Exception as e:
             logger.warning("Failed to refresh group membership", extra={"error": str(e)})
