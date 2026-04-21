@@ -676,6 +676,32 @@ INSERT INTO system_state (key, value) VALUES
 
 ---
 
+### 12. wind_quiet_samples (Adaptive Quiet Hours Buffer)
+
+Rolling buffer of daily sign-off times used to learn per-conversation quiet hour start. Added in migration v18.
+
+```sql
+CREATE TABLE wind_quiet_samples (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT    NOT NULL,
+    day_date        TEXT    NOT NULL,          -- 'YYYY-MM-DD' local date
+    last_inbound_minutes INTEGER NOT NULL,     -- minutes since midnight (local tz)
+    recorded_at     TEXT    NOT NULL,
+    UNIQUE(conversation_id, day_date)          -- one row per conversation per day
+);
+```
+
+**Behavior:**
+- One row per conversation per calendar day, recorded at the end-of-day Wind run (03:00)
+- Stores the last inbound message time for that day as minutes-since-midnight
+- `_compute_learned_quiet_start()` reads this buffer and applies an exponentially-weighted circular mean (recent days weighted higher)
+- Requires ≥3 samples before overriding the config default; falls back to `WIND_QUIET_START` otherwise
+- Result persisted to `learned_quiet_start_minutes` in `wind_state`
+
+**Retention:** Samples older than 30 days purged daily by scheduler.
+
+---
+
 ## Queries for Common Operations
 
 ### Get Recent Conversation (for LLM context)
