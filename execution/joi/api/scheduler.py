@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Callable, Optional
 
+from reminders import parse_recurrence_interval
+
 logger = logging.getLogger("joi.api.scheduler")
 
 # Tick intervals (assuming 60s base interval)
@@ -888,8 +890,6 @@ class Scheduler:
         if not self._reminder_manager or not self._generate_reminder_message:
             return
         try:
-            from reminders import parse_recurrence_interval
-
             due_reminders = self._reminder_manager.get_due()
         except Exception as e:
             logger.error("Scheduler: failed to fetch due reminders", extra={"error": str(e)}, exc_info=True)

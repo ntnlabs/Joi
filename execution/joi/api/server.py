@@ -1164,8 +1164,6 @@ def _redact_filename_pii(filename: str) -> str:
         +123456789.txt -> +***6789.txt
         XDtVV+4Nz0pW9WCRi00QgY7E5hd29DGPmyKF6i-Z6bY=.txt -> [GRP:XDtV...].txt
     """
-    import re
-
     # Get extension if present
     name, ext = (filename.rsplit('.', 1) + [''])[:2]
     ext = f'.{ext}' if ext else ''

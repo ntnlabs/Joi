@@ -8,6 +8,7 @@ import logging
 import math
 import os
 import random
+import re
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
@@ -790,7 +791,6 @@ class WindOrchestrator:
         days: int,
     ) -> None:
         """Apply cooldown to a topic family with jitter."""
-        import random
         now = datetime.now(timezone.utc)
         jitter = getattr(self.config, 'cooldown_jitter_days', 2)
         actual_days = max(1, days + random.randint(-jitter, jitter))
@@ -934,8 +934,6 @@ class WindOrchestrator:
 
         Returns (month, day) tuple or None if unparseable.
         """
-        import re
-
         value = value.strip()
 
         # ISO full: 1990-03-15 or 2024-03-15
