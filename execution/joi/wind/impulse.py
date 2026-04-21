@@ -10,7 +10,6 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
-from zoneinfo import ZoneInfo
 
 from .config import WindConfig
 from .feedback import TopicFeedbackManager
@@ -205,8 +204,7 @@ class ImpulseEngine:
 
     def _check_not_quiet_hours(self, now: datetime, wind_state=None) -> bool:
         """Check if we're outside quiet hours."""
-        tz = ZoneInfo(self.config.timezone)
-        local_now = now.astimezone(tz)
+        local_now = now.astimezone(self.config._tz)
         current = local_now.hour * 60 + local_now.minute
 
         if wind_state is not None and wind_state.learned_quiet_start_minutes is not None:
