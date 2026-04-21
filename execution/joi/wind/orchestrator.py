@@ -1479,40 +1479,53 @@ class WindOrchestrator:
         return timed_out
 
     _LEARNED_QUIET_MAX_MINUTES = 3 * 60   # hard cap at 03:00
-    _LEARNED_QUIET_SAMPLE_COUNT = 10
+    _LEARNED_QUIET_SAMPLE_DAYS = 14        # use last 14 active days
+
+    def _record_quiet_sample_for(self, conversation_id: str, now: datetime) -> None:
+        """Record the last inbound message time for its calendar day into the rolling buffer."""
+        if not self.memory:
+            return
+        state = self.state_manager.get_state(conversation_id)
+        if not state or not state.last_user_interaction_at:
+            return
+        tz = ZoneInfo(self.config.timezone)
+        last_local = state.last_user_interaction_at.astimezone(tz)
+        # Use the date of the last interaction as the key — not today's date.
+        # End-of-day tasks run at 03:00 (already the next calendar day), so comparing
+        # against 'today' would always mismatch. The UNIQUE constraint handles
+        # deduplication: silent days produce no new row; repeated runs are idempotent.
+        minutes = last_local.hour * 60 + last_local.minute
+        day_str = last_local.strftime("%Y-%m-%d")
+        self.memory.record_quiet_sample(conversation_id, day_str, minutes)
 
     def _compute_learned_quiet_start(self, conversation_id: str) -> Optional[int]:
         """
-        Return learned quiet start (minutes since midnight) from last N inbound messages.
+        Return learned quiet start (minutes since midnight) from the rolling buffer
+        of daily sign-off times (last inbound per day, recorded at end-of-day).
 
         Uses circular mean to handle midnight wrap-around correctly.
-        Returns None if no samples available.
+        Returns None if fewer than 3 samples exist (fall back to config default).
         Caps result at 03:00 (180 min).
         """
         if not self.memory:
             return None
 
-        messages = self.memory.get_recent_messages(
-            conversation_id=conversation_id,
-            limit=self._LEARNED_QUIET_SAMPLE_COUNT * 4,  # over-fetch to allow direction filter
+        samples = self.memory.get_quiet_samples(
+            conversation_id, limit=self._LEARNED_QUIET_SAMPLE_DAYS
         )
-        # Filter to inbound only (get_recent_messages has no direction param)
-        inbound = [m for m in messages if m.direction == "inbound"][:self._LEARNED_QUIET_SAMPLE_COUNT]
-
-        if not inbound:
+        if len(samples) < 3:
             return None
 
-        tz = ZoneInfo(self.config.timezone)
-        samples = []
-        for msg in inbound:
-            local_dt = datetime.fromtimestamp(msg.timestamp / 1000, tz=tz)
-            samples.append(local_dt.hour * 60 + local_dt.minute)
-
-        # Circular mean over 24*60 minutes
+        # Weighted circular mean — recent days count more than older ones.
+        # samples[0] = most recent day, samples[-1] = oldest.
+        # Weight decays exponentially: w_i = decay_rate ^ i
+        decay = 0.9
         period = 24 * 60
+        weights = [decay ** i for i in range(len(samples))]
+        total_w = sum(weights)
         angles = [2 * math.pi * s / period for s in samples]
-        avg_sin = sum(math.sin(a) for a in angles) / len(angles)
-        avg_cos = sum(math.cos(a) for a in angles) / len(angles)
+        avg_sin = sum(w * math.sin(a) for w, a in zip(weights, angles)) / total_w
+        avg_cos = sum(w * math.cos(a) for w, a in zip(weights, angles)) / total_w
         mean_angle = math.atan2(avg_sin, avg_cos)
         if mean_angle < 0:
             mean_angle += 2 * math.pi

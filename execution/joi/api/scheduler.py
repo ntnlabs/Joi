@@ -421,6 +421,12 @@ class Scheduler:
             "action": "daily_tasks_start",
         })
         try:
+            self._wind_orchestrator._record_quiet_sample_for(conversation_id, now)
+        except Exception as e:
+            logger.warning("Daily tasks: quiet sample recording failed", extra={
+                "conversation_id": conversation_id, "error": str(e),
+            })
+        try:
             self._wind_orchestrator.deduplicate_topics_for(conversation_id)
         except Exception as e:
             logger.warning("Daily tasks: topic dedup failed", extra={
@@ -717,6 +723,11 @@ class Scheduler:
         self._check_hmac_rotation()
         self._purge_old_reminders()
         self._purge_old_messages()
+        if self._memory:
+            try:
+                self._memory.purge_old_quiet_samples(keep_days=60)
+            except Exception as e:
+                logger.warning("Global daily tasks: quiet samples purge failed", extra={"error": str(e)})
         logger.info("Global daily tasks complete", extra={"action": "global_daily_tasks_done"})
 
     def _purge_old_messages(self):
