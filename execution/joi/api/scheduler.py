@@ -729,6 +729,12 @@ class Scheduler:
                 self._memory.purge_old_quiet_samples(keep_days=60)
             except Exception as e:
                 logger.warning("Global daily tasks: quiet samples purge failed", extra={"error": str(e)})
+        try:
+            deleted = self._wind_orchestrator.decision_logger.cleanup_old_logs(days=30)
+            if deleted:
+                logger.info("Purged old Wind decision logs", extra={"count": deleted, "action": "purge_wind_logs"})
+        except Exception as e:
+            logger.warning("Global daily tasks: Wind decision log purge failed", extra={"error": str(e)})
         logger.info("Global daily tasks complete", extra={"action": "global_daily_tasks_done"})
 
     def _purge_old_messages(self):
