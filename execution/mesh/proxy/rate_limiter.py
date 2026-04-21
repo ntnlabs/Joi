@@ -35,9 +35,6 @@ class InboundRateLimiter:
             hour_ago = now_ms - 3600_000
             while q and q[0] < hour_ago:
                 q.popleft()
-            if not q:
-                del self._events[key]
-
             if len(q) >= self.max_per_hour:
                 return RateLimitResult(allowed=False, reason="rate_limited_hour")
 

@@ -292,11 +292,11 @@ def forward_to_joi(payload: Dict[str, Any]) -> None:
     worker_idx = hash(convo_id) % _NUM_WORKERS
 
     try:
-        _worker_queues[worker_idx].put_nowait((url, payload, None, secret))
+        _worker_queues[worker_idx].put((url, payload, None, secret), timeout=5.0)
     except queue.Full:
-        logger.warning("Forward queue full, dropping message", extra={
+        logger.error("Forward queue full after 5s wait, dropping message", extra={
             "worker": worker_idx,
-            "action": "forward_dropped"
+            "action": "forward_dropped",
         })
 
 
