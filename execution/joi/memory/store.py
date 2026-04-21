@@ -510,6 +510,16 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_conversation_list ON tasks (conversation_id, list_name, archived);
+
+-- Wind quiet samples table (rolling buffer of daily sign-off times for adaptive quiet hours)
+CREATE TABLE IF NOT EXISTS wind_quiet_samples (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    conversation_id TEXT NOT NULL,
+    day_date TEXT NOT NULL,          -- 'YYYY-MM-DD' local date
+    last_inbound_minutes INTEGER NOT NULL,  -- minutes since midnight (local tz)
+    recorded_at TEXT NOT NULL,
+    UNIQUE(conversation_id, day_date)  -- one row per conversation per day
+);
 """
 
 
@@ -1028,6 +1038,26 @@ class MemoryStore:
                     "ALTER TABLE wind_state ADD COLUMN wakeup_send_at TEXT DEFAULT NULL"
                 )
                 conn.commit()
+
+        # Migration v18: wind quiet samples rolling buffer
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='wind_quiet_samples'"
+        )
+        if not cursor.fetchone():
+            logger.info("Migration v18: Creating 'wind_quiet_samples' table")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS wind_quiet_samples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    conversation_id TEXT NOT NULL,
+                    day_date TEXT NOT NULL,
+                    last_inbound_minutes INTEGER NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    UNIQUE(conversation_id, day_date)
+                )
+                """
+            )
+            conn.commit()
 
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
@@ -3301,6 +3331,45 @@ class MemoryStore:
         if deleted > 0:
             logger.info("Cleaned up old messages", extra={"count": deleted})
         return deleted
+
+
+    def record_quiet_sample(self, conversation_id: str, day_date: str, minutes: int) -> None:
+        """Record or update today's last-inbound time (minutes since midnight)."""
+        conn = self._connect()
+        conn.execute(
+            """
+            INSERT INTO wind_quiet_samples (conversation_id, day_date, last_inbound_minutes, recorded_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(conversation_id, day_date) DO UPDATE SET
+                last_inbound_minutes = excluded.last_inbound_minutes,
+                recorded_at = excluded.recorded_at
+            """,
+            (conversation_id, day_date, minutes, datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
+    def get_quiet_samples(self, conversation_id: str, limit: int = 14) -> list:
+        """Return last N daily sign-off times (minutes since midnight), newest first."""
+        conn = self._connect()
+        rows = conn.execute(
+            """
+            SELECT last_inbound_minutes FROM wind_quiet_samples
+            WHERE conversation_id = ?
+            ORDER BY day_date DESC
+            LIMIT ?
+            """,
+            (conversation_id, limit),
+        ).fetchall()
+        return [row["last_inbound_minutes"] for row in rows]
+
+    def purge_old_quiet_samples(self, keep_days: int = 60) -> None:
+        """Delete quiet samples older than keep_days."""
+        conn = self._connect()
+        conn.execute(
+            "DELETE FROM wind_quiet_samples WHERE day_date < date('now', ?)",
+            (f"-{keep_days} days",),
+        )
+        conn.commit()
 
 
 def create_memory_store() -> MemoryStore:
