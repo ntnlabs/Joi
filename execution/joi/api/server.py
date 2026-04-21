@@ -2179,8 +2179,26 @@ def _generate_proactive_message(
     Uses joi-brain with facts and knowledge to draft a natural message.
     No conversation history - proactive messages are fresh initiations.
     """
-    # Simple base personality for Wind messages
-    base_prompt = "You are Joi, a warm and thoughtful AI companion."
+    # Use the real per-conversation personality prompt and model — same as the reactive path
+    _conv_type = "direct" if conversation_id.startswith("+") else "group"
+    _sender_id = conversation_id if _conv_type == "direct" else ""
+    custom_model = get_model_for_conversation(
+        conversation_type=_conv_type,
+        conversation_id=conversation_id,
+        sender_id=_sender_id,
+    )
+    if custom_model:
+        base_prompt = get_prompt_for_conversation_optional(
+            conversation_type=_conv_type,
+            conversation_id=conversation_id,
+            sender_id=_sender_id,
+        ) or ""
+    else:
+        base_prompt = get_prompt_for_conversation(
+            conversation_type=_conv_type,
+            conversation_id=conversation_id,
+            sender_id=_sender_id,
+        )
 
     topic_info = topic_title
     if topic_content:
@@ -2219,6 +2237,27 @@ def _generate_proactive_message(
         system_parts.append(f"\n\n{facts_ctx}")
     system_prompt = "".join(system_parts)
 
+    # Proactive declaration + structural constraints (apply to all Wind messages)
+    system_prompt = (
+        "You are reaching out to them — this is not a reply to anything they said. "
+        "Write one short message. No greeting. No warm-up. Just the message.\n\n"
+        + system_prompt
+    )
+
+    # Datetime injection (same as _build_enriched_prompt)
+    if TIME_AWARENESS_ENABLED:
+        try:
+            _tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+        except Exception:
+            _tz = ZoneInfo("UTC")
+        _now = datetime.now(_tz)
+        _human_datetime = _now.strftime('%A, %B %-d, %Y, %-I:%M %p')
+        system_prompt = (
+            f"Right now it's {_human_datetime}. "
+            "Don't acknowledge or announce this — just let it naturally shape your responses.\n\n"
+            + system_prompt
+        )
+
     # Build context block for user prompt
     context_parts = []
     if summaries_ctx:
@@ -2232,12 +2271,10 @@ def _generate_proactive_message(
         )
         user_prompt = (
             f"{context_block}"
-            f"Something you've been thinking about: {topic_info}\n\n"
+            f"Checking in on: {topic_info}\n\n"
             f"{emotional_line}"
-            "Write one short, warm message checking in on how it went. "
-            "Show that you actually remember and care. Don't just ask for a status update — "
-            "acknowledge the feeling if it was there. No greeting. No philosophical warm-up. "
-            "Just the message."
+            "Show that you remember and care. Don't ask for a status update — "
+            "acknowledge the feeling if it was there."
         )
     elif topic_type == "emotional":
         emotional_line = (
@@ -2246,13 +2283,11 @@ def _generate_proactive_message(
         )
         user_prompt = (
             f"{context_block}"
-            f"Something you've been thinking about: {topic_info}\n\n"
+            f"On your mind: {topic_info}\n\n"
             f"{emotional_line}"
-            "Write one short, warm message — the kind you'd send because you were thinking "
-            "about them, not because you need an update. "
-            "Acknowledge what you sensed without spelling it out clinically. "
-            "Could be gentle curiosity, could be warmth, could be just checking in. "
-            "No greeting. No philosophical warm-up. Just the message."
+            "Reach out because you were thinking of them, not because you need an update. "
+            "Acknowledge what you sensed without spelling it out clinically — "
+            "gentle curiosity, warmth, or just checking in."
         )
     elif topic_type == "wakeup":
         # Re-engagement after long silence — use core (important) facts instead of FTS
@@ -2273,26 +2308,21 @@ def _generate_proactive_message(
             f"{core_facts_text}"
             f"{mood_line}"
             f"It's been a while — {topic_title.lower()}.\n\n"
-            "Write one short, warm message reaching out. It could be a genuine check-in, "
-            "something you thought of that reminded you of them, or just a simple 'hey'. "
-            "Don't mention the exact number of days or make the absence the main point — "
-            "just be natural, as if you were thinking of them. "
-            "No greeting. No philosophical warm-up. Just the message."
+            "Reach out naturally — a genuine check-in, something that reminded you of them, "
+            "or just a simple 'hey'. Don't make the absence the main point."
         )
     else:
         user_prompt = (
             f"{context_block}"
-            f"You want to bring something up: {topic_info}\n\n"
-            "Write one short message — the kind you'd fire off without overthinking it. "
-            "Could be a question, a passing observation, or something that crossed your mind. "
-            "No greeting. No philosophical warm-up. Get straight to the point. Just the message."
+            f"Something you want to bring up: {topic_info}\n\n"
+            "Fire it off naturally — a question, a passing thought, something that crossed your mind."
         )
 
     try:
-        # Use chat with system prompt for better personality consistency
         response = llm.chat(
             messages=[{"role": "user", "content": user_prompt}],
-            system=system_prompt,
+            system=system_prompt or None,
+            model=custom_model,
         )
         if response.error or not response.text:
             logger.warning("Wind: LLM generation failed", extra={"error": response.error})
