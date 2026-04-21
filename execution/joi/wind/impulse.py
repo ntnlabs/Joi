@@ -26,6 +26,7 @@ class GateResult:
     passed: bool
     failed_gate: Optional[str] = None
     gate_details: Dict[str, bool] = field(default_factory=dict)
+    state: Optional[WindState] = field(default=None, repr=False)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for logging."""
@@ -140,6 +141,7 @@ class ImpulseEngine:
                 passed=False,
                 failed_gate="snoozed",
                 gate_details=gates,
+                state=state,
             )
 
         # Gate 4: Not in quiet hours
@@ -149,6 +151,7 @@ class ImpulseEngine:
                 passed=False,
                 failed_gate="quiet_hours",
                 gate_details=gates,
+                state=state,
             )
 
         # Gate 5: Cooldown satisfied
@@ -158,6 +161,7 @@ class ImpulseEngine:
                 passed=False,
                 failed_gate="cooldown",
                 gate_details=gates,
+                state=state,
             )
 
         # Gate 6: Daily cap not exceeded
@@ -167,6 +171,7 @@ class ImpulseEngine:
                 passed=False,
                 failed_gate="daily_cap_exceeded",
                 gate_details=gates,
+                state=state,
             )
 
         # Gate 7: Unanswered streak OK
@@ -179,6 +184,7 @@ class ImpulseEngine:
                 passed=False,
                 failed_gate="unanswered_streak",
                 gate_details=gates,
+                state=state,
             )
 
         # Gate 8: Sufficient silence since last user interaction
@@ -188,6 +194,7 @@ class ImpulseEngine:
                 passed=False,
                 failed_gate="insufficient_silence",
                 gate_details=gates,
+                state=state,
             )
 
         # Gate 9: User is not currently typing
@@ -197,10 +204,11 @@ class ImpulseEngine:
                 passed=False,
                 failed_gate="user_typing",
                 gate_details=gates,
+                state=state,
             )
 
         # All gates passed
-        return GateResult(passed=True, gate_details=gates)
+        return GateResult(passed=True, gate_details=gates, state=state)
 
     def _check_not_quiet_hours(self, now: datetime, wind_state=None) -> bool:
         """Check if we're outside quiet hours."""
@@ -297,8 +305,8 @@ class ImpulseEngine:
                 factors={},
             )
 
-        # Get current state (includes threshold_offset, accumulated_impulse)
-        state = self.state_manager.get_state(conversation_id)
+        # Reuse state already fetched by check_gates (avoids duplicate DB read)
+        state = gate_result.state
 
         # Calculate current threshold with drift
         current_threshold = self._get_current_threshold(state)
