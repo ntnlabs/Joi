@@ -7,7 +7,6 @@ import time
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from typing import Callable, Optional
 
 from reminders import parse_recurrence_interval
@@ -383,7 +382,7 @@ class Scheduler:
         if not self._wind_orchestrator:
             return False
         config = self._wind_orchestrator.config
-        tz = ZoneInfo(config.timezone)
+        tz = config._tz
         local_now = now.astimezone(tz)
 
         # Clock-time gate: must be at or past end_of_day_time
@@ -408,7 +407,7 @@ class Scheduler:
         if not self._wind_orchestrator:
             return False  # No config to determine end_of_day_time or timezone
         config = self._wind_orchestrator.config
-        tz = ZoneInfo(config.timezone)
+        tz = config._tz
         local_now = now.astimezone(tz)
         current_minutes = local_now.hour * 60 + local_now.minute
         if current_minutes < config.end_of_day_time:
@@ -533,7 +532,7 @@ class Scheduler:
         # Step 3: Inject gap marker into context
         try:
             if self._memory and pause_start:
-                tz = ZoneInfo(self._wind_orchestrator.config.timezone)
+                tz = self._wind_orchestrator.config._tz
                 duration_days = max(1, int((now - pause_start).total_seconds() / 86400))
                 start_str = pause_start.astimezone(tz).strftime("%Y-%m-%d")
                 end_str = now.astimezone(tz).strftime("%Y-%m-%d")
@@ -577,7 +576,7 @@ class Scheduler:
 
     def _compute_wakeup_send_at(self, config, state, now: datetime) -> datetime:
         """Return a random UTC datetime in the next full non-quiet window (always tomorrow's)."""
-        tz = ZoneInfo(config.timezone)
+        tz = config._tz
         local_now = now.astimezone(tz)
         today_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow_midnight = today_midnight + timedelta(days=1)
@@ -611,7 +610,7 @@ class Scheduler:
             return False
         # Quiet hours check (replicated inline — ImpulseEngine method not accessible here)
         config = self._wind_orchestrator.config
-        tz = ZoneInfo(config.timezone)
+        tz = config._tz
         local = now.astimezone(tz)
         current = local.hour * 60 + local.minute
         start = (
@@ -716,7 +715,7 @@ class Scheduler:
 
     def _run_global_daily_tasks(self, now: datetime) -> None:
         """Run global daily maintenance tasks (once per calendar day, in-memory gate)."""
-        tz = ZoneInfo(self._wind_orchestrator.config.timezone)
+        tz = self._wind_orchestrator.config._tz
         today_str = now.astimezone(tz).strftime("%Y-%m-%d")
         self._last_global_tasks_date = today_str
         if self._memory:

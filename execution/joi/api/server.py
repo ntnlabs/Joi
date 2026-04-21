@@ -339,6 +339,10 @@ BRAIN_DEBUG_DIR = os.getenv("JOI_BRAIN_DEBUG_DIR", "/var/lib/joi/llm_debug")
 # Time awareness - inject current datetime into system prompt
 TIME_AWARENESS_ENABLED = os.getenv("JOI_TIME_AWARENESS", "0") == "1"  # Default: disabled
 TIME_AWARENESS_TIMEZONE = os.getenv("JOI_TIMEZONE", "Europe/Bratislava")  # User timezone
+try:
+    _LOCAL_TZ = _LOCAL_TZ
+except Exception:
+    _LOCAL_TZ = ZoneInfo("UTC")
 
 # Response cooldown - minimum seconds between sends to same conversation
 RESPONSE_COOLDOWN_DM_SECONDS = float(os.getenv("JOI_RESPONSE_COOLDOWN_SECONDS", "5.0"))
@@ -2244,11 +2248,7 @@ def _generate_proactive_message(
 
     # Datetime injection (same as _build_enriched_prompt)
     if TIME_AWARENESS_ENABLED:
-        try:
-            _tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
-        except Exception:
-            _tz = ZoneInfo("UTC")
-        _now = datetime.now(_tz)
+        _now = datetime.now(_LOCAL_TZ)
         _human_datetime = _now.strftime('%A, %B %-d, %Y, %-I:%M %p')
         system_prompt = (
             f"Right now it's {_human_datetime}. "
@@ -2596,11 +2596,7 @@ def _build_enriched_prompt(
 
     # Add current datetime if time awareness is enabled
     if TIME_AWARENESS_ENABLED:
-        try:
-            tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
-        except Exception:
-            tz = ZoneInfo("UTC")
-        now = datetime.now(tz)
+        now = datetime.now(_LOCAL_TZ)
         human_datetime = now.strftime('%A, %B %-d, %Y, %-I:%M %p')
         datetime_hint = (
             f"Right now it's {human_datetime}. "
@@ -2785,7 +2781,7 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
     Returns (due_at: datetime UTC-aware, title: str) or None.
     """
     now_utc = datetime.now(timezone.utc)
-    now_local = now_utc.astimezone(ZoneInfo(TIME_AWARENESS_TIMEZONE))
+    now_local = now_utc.astimezone(_LOCAL_TZ)
     tz_abbr = now_local.strftime("%Z") or "local"
 
     prompt = (
@@ -2812,7 +2808,7 @@ def _parse_reminder_with_llm(text: str) -> Optional[tuple]:
         if int(data.get("day", 0)) < 1:
             logger.warning("Reminder LLM returned day=0 (no day specified)", extra={"data": str(data)[:120], "action": "reminder_parse_error"})
             return None
-        tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+        tz = _LOCAL_TZ
         due_at = datetime(
             year=int(data["year"]),
             month=int(data["month"]),
@@ -2865,7 +2861,7 @@ def _build_reminders_context(conversation_id: str) -> str:
     reminders = reminder_manager.list_pending(conversation_id)
     if not reminders:
         return "The user has no pending reminders."
-    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+    tz = _LOCAL_TZ
     lines = []
     for r in reminders:
         if r.due_at:
@@ -2882,7 +2878,7 @@ def _build_past_reminders_context(conversation_id: str) -> str:
     reminders = reminder_manager.list_recent(conversation_id, days=7)
     if not reminders:
         return "The user has no pending or recent reminders."
-    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+    tz = _LOCAL_TZ
     lines = []
     for r in reminders:
         if r.due_at:
@@ -2914,7 +2910,7 @@ def _llm_parse_agenda_items(text: str) -> List[tuple]:
     Empty list if nothing parseable.
     """
     now_utc = datetime.now(timezone.utc)
-    now_local = now_utc.astimezone(ZoneInfo(TIME_AWARENESS_TIMEZONE))
+    now_local = now_utc.astimezone(_LOCAL_TZ)
     tz_abbr = now_local.strftime("%Z") or "local"
 
     prompt = (
@@ -2940,7 +2936,7 @@ def _llm_parse_agenda_items(text: str) -> List[tuple]:
         return []
 
     results = []
-    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+    tz = _LOCAL_TZ
     for item in data["items"]:
         try:
             due_at = datetime(
@@ -2972,7 +2968,7 @@ def _handle_agenda_set(text: str, conversation_id: str) -> Optional[List[tuple]]
         return None
 
     results = []
-    tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+    tz = _LOCAL_TZ
     for due_at, title in items:
         reminder_manager.add(conversation_id, title, due_at)
         due_local = due_at.astimezone(tz).strftime("%a %b %d at %H:%M")
@@ -3036,7 +3032,7 @@ def _handle_reminder_command(text: str, conversation_id: str) -> Optional[tuple]
     time_end = -1
 
     if m := _DURATION_TONIGHT.search(text):
-        tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+        tz = _LOCAL_TZ
         now_local = now.astimezone(tz)
         candidate = now_local.replace(hour=REMINDER_TONIGHT_HOUR, minute=0, second=0, microsecond=0)
         if candidate <= now_local:
@@ -3216,7 +3212,7 @@ def _parse_note_with_llm(text: str, intent: str) -> Optional[dict]:
     For 'set_reminder': {"title": str, "remind_at": str}  (ISO8601 UTC)
     """
     now_utc = datetime.now(timezone.utc)
-    now_local = now_utc.astimezone(ZoneInfo(TIME_AWARENESS_TIMEZONE))
+    now_local = now_utc.astimezone(_LOCAL_TZ)
     tz_abbr = now_local.strftime("%Z") or "local"
     now_str = now_local.strftime("%Y-%m-%d %H:%M")
 
@@ -3285,7 +3281,7 @@ def _parse_note_with_llm(text: str, intent: str) -> Optional[dict]:
     if intent == "set_reminder":
         # Convert local time components to UTC ISO string
         try:
-            tz = ZoneInfo(TIME_AWARENESS_TIMEZONE)
+            tz = _LOCAL_TZ
             remind_dt = datetime(
                 year=int(result["year"]),
                 month=int(result["month"]),
@@ -3452,7 +3448,7 @@ def _handle_note_list(conversation_id: str) -> bool:
         return True
     lines = []
     for n in notes:
-        created = datetime.fromtimestamp(n.created_at / 1000, tz=ZoneInfo(TIME_AWARENESS_TIMEZONE)).strftime("%b %d, %Y")
+        created = datetime.fromtimestamp(n.created_at / 1000, tz=_LOCAL_TZ).strftime("%b %d, %Y")
         remind_str = f" [reminder: {n.remind_at[:10]}]" if n.remind_at else ""
         lines.append(f'- "{n.title}" (created {created}){remind_str}')
     _inject_note_context(conversation_id, "The user asked for their notes list. Present this list to them:\n" + "\n".join(lines))
@@ -3475,8 +3471,8 @@ def _handle_note_retrieve(text: str, conversation_id: str) -> bool:
         _inject_note_context(conversation_id, f'No note found matching "{title}".')
         return True  # Handled — LLM will tell user note doesn't exist
 
-    created = datetime.fromtimestamp(note.created_at / 1000, tz=ZoneInfo(TIME_AWARENESS_TIMEZONE)).strftime("%b %d, %Y at %H:%M")
-    updated = datetime.fromtimestamp(note.updated_at / 1000, tz=ZoneInfo(TIME_AWARENESS_TIMEZONE)).strftime("%b %d, %Y at %H:%M")
+    created = datetime.fromtimestamp(note.created_at / 1000, tz=_LOCAL_TZ).strftime("%b %d, %Y at %H:%M")
+    updated = datetime.fromtimestamp(note.updated_at / 1000, tz=_LOCAL_TZ).strftime("%b %d, %Y at %H:%M")
     remind_str = f"\nReminder set: {note.remind_at}" if note.remind_at else ""
     context = (
         f'The user asked to see their note. Show them the full content below — do not summarize, do not paraphrase.\n'

@@ -4,6 +4,7 @@ Wind configuration dataclass.
 
 from dataclasses import dataclass, field
 from typing import List
+from zoneinfo import ZoneInfo
 
 
 def _parse_quiet_minutes(value, default: int) -> int:
@@ -122,6 +123,12 @@ class WindConfig:
 
     # Timezone for quiet hours (IANA format)
     timezone: str = "Europe/Bratislava"
+
+    def __post_init__(self):
+        try:
+            self._tz = ZoneInfo(self.timezone)
+        except Exception:
+            self._tz = ZoneInfo("UTC")
 
     @classmethod
     def from_dict(cls, data: dict) -> "WindConfig":
