@@ -84,11 +84,13 @@ def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
         if len(key) < 32:
             logger.warning("Encryption key is shorter than recommended (32+ chars)")
         if not re.fullmatch(r"[0-9a-fA-F]+", key):
-            logger.warning(
-                "Key file %s does not contain a hex string — "
+            logger.critical(
+                "Key file %s does not contain a valid hex string — "
                 "regenerate with: sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh",
                 key_path,
+                extra={"action": "startup_fatal"},
             )
+            os._exit(78)
         return key
 
     except PermissionError:
@@ -1352,13 +1354,34 @@ class MemoryStore:
         """Insert a new task item. Returns the new task id."""
         now_ms = int(time.time() * 1000)
         list_name = self._normalize_list_name(list_name)
+        item_text = item_text.strip()
         conn = self._connect()
+
+        # Deduplicate: return existing active item rather than inserting duplicate
+        existing = conn.execute(
+            """
+            SELECT id FROM tasks
+            WHERE conversation_id = ? AND list_name = ? AND item_text = ?
+              AND archived = 0 AND done = 0
+            LIMIT 1
+            """,
+            (conversation_id, list_name, item_text),
+        ).fetchone()
+        if existing:
+            logger.debug("Task already exists, skipping insert", extra={
+                "task_id": existing[0],
+                "conversation_id": conversation_id,
+                "list_name": list_name,
+                "action": "task_add_skipped",
+            })
+            return existing[0]
+
         cursor = conn.execute(
             """
             INSERT INTO tasks (conversation_id, list_name, item_text, done, created_at, archived)
             VALUES (?, ?, ?, 0, ?, 0)
             """,
-            (conversation_id, list_name, item_text.strip(), now_ms),
+            (conversation_id, list_name, item_text, now_ms),
         )
         conn.commit()
         task_id = cursor.lastrowid or 0
