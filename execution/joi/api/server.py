@@ -14,6 +14,7 @@ import unicodedata
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -717,23 +718,21 @@ admin_routes.set_dependencies(
 JOI_NAME_DEFAULT = ["Joi"]
 
 
-def _build_address_regex(names: list) -> re.Pattern:
+@lru_cache(maxsize=128)
+def _build_address_regex(names_key: tuple) -> re.Pattern:
     """Build regex pattern for addressing detection from list of names.
 
     Only matches explicit @Name mentions (Signal group mention style).
+    Cached via lru_cache — caller must pass a hashable tuple of sorted names.
     """
     patterns = []
-    for name in names:
+    for name in names_key:
         escaped = re.escape(name)
         patterns.extend([
             rf"^@{escaped}(?:\s|$|[,:.!?])",   # "@Name" at start
             rf"\s@{escaped}(?:\s|$|[,:.!?])",  # "@Name" in middle/end
         ])
     return re.compile("|".join(patterns), re.IGNORECASE)
-
-
-# Cache for compiled regexes per name list
-_address_regex_cache: Dict[tuple, re.Pattern] = {}
 
 
 # Keywords that suggest user might want something remembered (hybrid approach)
@@ -981,14 +980,8 @@ def _is_addressing_joi(text: str, names: Optional[List[str]] = None) -> bool:
     if names is None:
         names = JOI_NAME_DEFAULT
 
-    # Use cached regex if available
     names_key = tuple(sorted(names))
-    if names_key not in _address_regex_cache:
-        if len(_address_regex_cache) >= 100:
-            _address_regex_cache.clear()
-        _address_regex_cache[names_key] = _build_address_regex(names)
-
-    return bool(_address_regex_cache[names_key].search(text))
+    return bool(_build_address_regex(names_key).search(text))
 
 
 # --- Request/Response Models (per api-contracts.md) ---

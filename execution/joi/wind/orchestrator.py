@@ -335,11 +335,10 @@ class WindOrchestrator:
         self.state_manager.prune_typing_timestamps()
 
         # Phase 4b: Generate ghost probes for deeply rejected families
-        # Phase 4c: Generate special date reminders and spontaneous sharing topics
+        # Phase 4c: Generate spontaneous sharing topics
         for conversation_id in self.config.allowlist:
             self._generate_ghost_probes(conversation_id, now)
             self._generate_undertaker_pokes(conversation_id, now)
-            self._generate_special_date_topics(conversation_id, now)
             self._generate_spontaneous_topics(conversation_id, now)
 
         results = self.check_impulse_all(now)
@@ -935,146 +934,6 @@ class WindOrchestrator:
             "topic_family": family,
             "novelty_key": novelty_key,
         })
-
-    def _parse_special_date(self, value: str) -> Optional[tuple]:
-        """
-        Parse a date value string into (month, day).
-
-        Handles:
-        - ISO: "1990-03-15" or "03-15"
-        - Month-day: "March 15", "15 March", "March 15, 1990"
-        - Short numeric: "15/03" or "03/15"
-
-        Returns (month, day) tuple or None if unparseable.
-        """
-        value = value.strip()
-
-        # ISO full: 1990-03-15 or 2024-03-15
-        m = re.match(r'(\d{4})-(\d{1,2})-(\d{1,2})', value)
-        if m:
-            return int(m.group(2)), int(m.group(3))
-
-        # ISO short: 03-15
-        m = re.match(r'^(\d{1,2})-(\d{1,2})$', value)
-        if m:
-            a, b = int(m.group(1)), int(m.group(2))
-            if 1 <= a <= 12 and 1 <= b <= 31:
-                return a, b
-            if 1 <= b <= 12 and 1 <= a <= 31:
-                return b, a
-
-        month_names = {
-            "january": 1, "february": 2, "march": 3, "april": 4,
-            "may": 5, "june": 6, "july": 7, "august": 8,
-            "september": 9, "october": 10, "november": 11, "december": 12,
-            "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6,
-            "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
-        }
-
-        # "March 15" or "March 15, 1990"
-        m = re.match(r'([A-Za-z]+)\s+(\d{1,2})(?:,?\s+\d{4})?', value)
-        if m:
-            month = month_names.get(m.group(1).lower())
-            if month:
-                return month, int(m.group(2))
-
-        # "15 March" or "15 March 1990"
-        m = re.match(r'(\d{1,2})\s+([A-Za-z]+)(?:\s+\d{4})?', value)
-        if m:
-            month = month_names.get(m.group(2).lower())
-            if month:
-                return month, int(m.group(1))
-
-        # Numeric slash: "15/03" or "03/15"
-        m = re.match(r'^(\d{1,2})/(\d{1,2})$', value)
-        if m:
-            a, b = int(m.group(1)), int(m.group(2))
-            if 1 <= a <= 12 and 1 <= b <= 31:
-                return a, b
-            if 1 <= b <= 12 and 1 <= a <= 31:
-                return b, a
-
-        return None
-
-    def _generate_special_date_topics(self, conversation_id: str, now: Optional[datetime] = None) -> None:
-        """
-        Queue reminder topics for upcoming special dates (birthdays, anniversaries, etc.)
-        found in user facts. Runs each tick; novelty keys prevent duplicates.
-        """
-        if now is None:
-            now = datetime.now(timezone.utc)
-
-        if not self.memory:
-            return
-
-        tz = self._get_conversation_tz(conversation_id)
-        local_now = now.astimezone(tz)
-
-        date_keywords = ("birthday", "born", "anniversary", "nameday")
-
-        try:
-            facts = self.memory.get_facts(conversation_id=conversation_id, min_confidence=0.5)
-        except Exception as e:
-            logger.warning("Failed to load facts for special dates", extra={
-                "conversation_id": conversation_id,
-                "error": str(e),
-            })
-            return
-
-        for fact in facts:
-            if not any(kw in fact.key.lower() for kw in date_keywords):
-                continue
-
-            parsed = self._parse_special_date(fact.value)
-            if not parsed:
-                continue
-
-            month, day = parsed
-
-            # Compute next occurrence (using local date to avoid off-by-one near midnight)
-            try:
-                candidate = datetime(local_now.year, month, day)
-            except ValueError:
-                continue  # invalid date (e.g. Feb 30)
-
-            if candidate.date() <= local_now.date():
-                try:
-                    candidate = datetime(local_now.year + 1, month, day)
-                except ValueError:
-                    continue
-
-            days_until = (candidate.date() - local_now.date()).days
-            if days_until > 14:
-                continue
-
-            target_year = candidate.year
-            novelty_key = f"special_date_{fact.key.lower()}_{target_year}"
-
-            try:
-                due_at = datetime(target_year, month, day, 9, 0, tzinfo=tz) - timedelta(days=1)
-                expires_at = datetime(target_year, month, day, tzinfo=tz) + timedelta(days=1)
-                self.topic_manager.add_topic(
-                    conversation_id=conversation_id,
-                    topic_type="reminder",
-                    title=f"Upcoming: {fact.key}",
-                    content=f"{fact.key}: {fact.value} — {days_until} day(s) away",
-                    priority=80,
-                    due_at=due_at,
-                    expires_at=expires_at,
-                    novelty_key=novelty_key,
-                )
-                logger.debug("Generated special date topic", extra={
-                    "conversation_id": conversation_id,
-                    "fact_key": fact.key,
-                    "days_until": days_until,
-                    "novelty_key": novelty_key,
-                })
-            except Exception as e:
-                logger.warning("Failed to add special date topic", extra={
-                    "conversation_id": conversation_id,
-                    "fact_key": fact.key,
-                    "error": str(e),
-                })
 
     def _generate_spontaneous_topics(self, conversation_id: str, now: Optional[datetime] = None) -> None:
         """
