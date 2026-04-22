@@ -84,10 +84,12 @@ See [env-reference.md](../../env-reference.md) for complete documentation.
 | `JOI_RAG_MAX_TOKENS` | 500 | Max tokens for RAG context |
 
 ### Time Awareness
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JOI_TIME_AWARENESS` | 0 | Inject current datetime into system prompt |
-| `JOI_TIMEZONE` | Europe/Bratislava | User timezone (IANA format) |
+
+Timezone and time awareness are per-conversation settings stored in the database
+(not environment variables). Users set their timezone via Signal command:
+`timezone Europe/Prague` or `timezone New York` (LLM-resolved). Time awareness
+(injecting current datetime into prompts) is toggled via `joi-admin time-awareness`.
+Default timezone is UTC when not set.
 
 ### Scheduler
 | Variable | Default | Description |

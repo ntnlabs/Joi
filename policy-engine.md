@@ -550,7 +550,7 @@ time_rules:
   quiet_hours:
     start: 23          # 11 PM
     end: 7             # 7 AM
-    timezone: "UTC"
+    # timezone is per-conversation (set via Signal 'timezone' command)
 
     # During quiet hours:
     actions:
@@ -1288,7 +1288,7 @@ time_rules:
   quiet_hours:
     start: 23
     end: 7
-    timezone: "UTC"
+    # timezone is per-conversation (set via Signal 'timezone' command)
   weekday_adjustments:
     saturday: { quiet_hours_end: 9 }
     sunday: { quiet_hours_end: 9 }

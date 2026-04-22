@@ -97,10 +97,10 @@ Prompts directory structure:
 
 ### Time Awareness
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `JOI_TIME_AWARENESS` | `0` | Inject current datetime into system prompt |
-| `JOI_TIMEZONE` | `Europe/Bratislava` | User timezone (IANA format) |
+> **Removed:** `JOI_TIME_AWARENESS` and `JOI_TIMEZONE` are no longer used.
+> Timezone and time awareness are now per-conversation settings stored in the
+> `conversation_settings` database table. Set timezone via Signal command
+> (`timezone Europe/Prague`), toggle time awareness via `joi-admin time-awareness`.
 
 ### Response Cooldown
 

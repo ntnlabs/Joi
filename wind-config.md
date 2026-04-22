@@ -37,7 +37,8 @@ The **accumulator** is the key mechanism — low per-tick scores still build up 
 | Key | Default | Description |
 |-----|---------|-------------|
 | `allowlist` | `[]` | List of conversation IDs (phone numbers or group IDs) eligible for Wind. Conversations not in this list are hard-gated. |
-| `timezone` | `"Europe/Bratislava"` | IANA timezone for quiet hours evaluation. |
+
+> **Note:** Timezone is now per-conversation (stored in `conversation_settings` table), not a Wind config field. Set via Signal command `timezone <tz>`. Defaults to UTC.
 
 ---
 
