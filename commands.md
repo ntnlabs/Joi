@@ -4,6 +4,21 @@ Commands you can send to Joi via Signal. All matching is case-insensitive.
 
 ---
 
+## Timezone (DM and groups)
+
+Set the conversation's IANA timezone. Affects quiet hours, reminders, day buckets, and time display.
+
+| Message | Effect |
+|---|---|
+| `timezone` / `tz` | Show current timezone and local time |
+| `timezone Europe/Prague` | Set timezone (exact IANA) |
+| `timezone New York` | Set timezone (LLM-resolved from city name) |
+| `set timezone CET` | Set timezone (abbreviation, LLM-resolved) |
+
+Max message length: 8 words. Works in both DMs and groups.
+
+---
+
 ## Wind Snooze (DM only)
 
 Silence proactive Wind messages without affecting the topic queue or daily cap.
@@ -15,7 +30,7 @@ Silence proactive Wind messages without affecting the topic queue or daily cap.
 | `quiet` / `shh` / `hush` | Snooze Wind for 4 hours (default) |
 | `snooze` / `mute` / `pause` | Same |
 | `quiet 2h` / `shh 30m` / `pause 1d` | Snooze for a specific duration |
-| `quiet tonight` | Snooze until next `quiet_hours_end` in configured timezone |
+| `quiet tonight` | Snooze until next `quiet_hours_end` in the conversation's timezone |
 
 Duration suffixes: `Nh` or `N hours`, `Nm` or `N min`, `Nd` or `N days`.
 Limits: minimum 5 minutes, maximum 7 days. Max message length: 8 words.

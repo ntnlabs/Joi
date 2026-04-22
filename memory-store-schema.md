@@ -459,6 +459,7 @@ INSERT INTO user_preferences (key, value, value_type, description, default_value
     ('impulse_threshold', '0.5', 'number', 'Threshold for proactive engagement', '0.5'),
     ('language', '"en"', 'string', 'Preferred language', '"en"'),
     ('timezone', '"UTC"', 'string', 'User timezone', '"UTC"');
+    -- Note: timezone is now per-conversation in conversation_settings table (migration v19)
 ```
 
 ---
@@ -699,6 +700,28 @@ CREATE TABLE wind_quiet_samples (
 - Result persisted to `learned_quiet_start_minutes` in `wind_state`
 
 **Retention:** Samples older than 30 days purged daily by scheduler.
+
+---
+
+### 13. conversation_settings (Per-Conversation Settings)
+
+Stores per-conversation timezone and time awareness settings. Added in migration v19.
+
+```sql
+CREATE TABLE conversation_settings (
+    conversation_id  TEXT PRIMARY KEY,
+    timezone         TEXT,                -- IANA timezone identifier (e.g. 'Europe/Prague')
+    time_awareness   INTEGER DEFAULT 0,   -- 1 = inject datetime into prompts
+    updated_at       TEXT NOT NULL
+);
+```
+
+**Behavior:**
+- Timezone set by users via Signal command: `timezone Europe/Prague` or `timezone New York` (LLM-resolved fuzzy input)
+- Time awareness toggled by admin via `joi-admin time-awareness <conversation_id> on|off`
+- Both settings are independent — timezone affects all time operations (quiet hours, reminders, day buckets), time awareness only controls datetime injection into LLM prompts
+- Default is UTC when no row exists (all code falls back gracefully)
+- Replaces the removed `JOI_TIMEZONE` and `JOI_TIME_AWARENESS` global env vars
 
 ---
 
