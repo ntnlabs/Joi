@@ -50,7 +50,8 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 - ✅ Adaptive quiet hours (learned from inbound message history)
 - ✅ Topic priority decay with affinity protection
 - ✅ Wake-up procedure (gap marker + proactive re-engagement after long silence)
-- ⏳ Daily mood momentum, day-of-week personality, 30-day cycle
+- ✅ Day-of-week mood (workday/weekend background tint)
+- ⏳ Daily mood momentum
 
 ### Memory
 - ✅ Conversation context (configurable window)
@@ -92,7 +93,7 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 ### Near-term
 
 - **Prompt injection scanning** — scan fact writes for invisible Unicode and injection patterns before committing to the facts table
-- **Wind phase 4d** — daily mood momentum, day-of-week personality, 30-day cycle
+- **Wind phase 4d** — daily mood momentum (day-of-week mood done)
 
 ### Medium-term
 
