@@ -1,6 +1,7 @@
 """Admin endpoints for Joi API."""
 
 import logging
+import os
 import time
 from typing import Optional
 
@@ -29,7 +30,11 @@ def set_dependencies(memory, policy_manager, config_push_client, hmac_rotator):
 
 
 def _is_local_request(request: Request) -> bool:
-    """Check if request is from localhost only.
+    """Check if request is from the local machine.
+
+    Accepts 127.0.0.1 and, when the API binds to a specific IP (e.g. Nebula
+    address 10.42.0.10), also accepts that IP — a connection from the bind
+    address to itself is local.
 
     Note: Previously trusted all 10.x.x.x (Nebula network), but that's too
     permissive - any host on the network could access admin endpoints.
@@ -40,7 +45,10 @@ def _is_local_request(request: Request) -> bool:
     In that case, X-Forwarded-For handling would be needed (with proxy stripping/overwriting).
     """
     client_ip = request.client.host if request.client else ""
-    return client_ip == "127.0.0.1"
+    if client_ip == "127.0.0.1":
+        return True
+    bind_host = os.getenv("JOI_BIND_HOST", "")
+    return bool(bind_host and client_ip == bind_host)
 
 
 @router.get("/config/status")
