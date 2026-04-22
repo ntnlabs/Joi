@@ -555,10 +555,10 @@ class ConfigPushClient:
             url = f"{self._mesh_url}/config/sync"
 
             try:
-                with httpx.Client(timeout=10.0) as client:
-                    resp = client.post(url, content=body, headers=headers)
-                    resp.raise_for_status()
-                    data = resp.json()
+                client = _get_mesh_client()
+                resp = client.post(url, content=body, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
 
                 if data.get("status") == "ok":
                     mesh_hash = data.get("data", {}).get("config_hash", "")
@@ -623,10 +623,10 @@ class ConfigPushClient:
         """
         url = f"{self._mesh_url}/config/status"
         try:
-            with httpx.Client(timeout=5.0) as client:
-                resp = client.get(url)
-                resp.raise_for_status()
-                data = resp.json()
+            client = _get_mesh_client()
+            resp = client.get(url, timeout=5.0)
+            resp.raise_for_status()
+            data = resp.json()
 
             if data.get("status") == "ok":
                 mesh_hash = data.get("data", {}).get("config_hash")
@@ -1346,6 +1346,7 @@ def shutdown_event():
         scheduler.stop()
     message_queue.stop()
     memory.close()
+    llm.close()
     logger.info("Joi API shutting down")
 
 
@@ -2666,8 +2667,8 @@ def _send_typing_indicator(msg: InboundMessage) -> None:
         if current_secret:
             hmac_headers = create_request_headers(body, current_secret)
             headers.update(hmac_headers)
-        with httpx.Client(timeout=5.0) as client:
-            resp = client.post(url, content=body, headers=headers)
+        client = _get_mesh_client()
+        resp = client.post(url, content=body, headers=headers, timeout=5.0)
         if resp.status_code != 200:
             logger.warning("Typing indicator rejected by mesh", extra={
                 "status_code": resp.status_code,

@@ -30,6 +30,7 @@ class GroupMembershipCache:
         self._last_refresh: float = 0
         self._lock = threading.Lock()
         self._refreshing = False  # Single-flight flag to prevent thundering herd
+        self._client = httpx.Client(timeout=10.0)
         # Configurable via env (default 15 min, bounds: 1-1440)
         self._refresh_minutes = self._validate_refresh_minutes(
             os.getenv("JOI_MEMBERSHIP_REFRESH_MINUTES", "15")
@@ -91,10 +92,9 @@ class GroupMembershipCache:
                     hmac_headers = create_request_headers(b"", current_secret)
                     headers.update(hmac_headers)
 
-            with httpx.Client(timeout=10.0) as client:
-                resp = client.get(url, headers=headers)
-                resp.raise_for_status()
-                data = resp.json().get("data", {})
+            resp = self._client.get(url, headers=headers)
+            resp.raise_for_status()
+            data = resp.json().get("data", {})
 
             with self._lock:
                 # Don't replace valid cache with empty response (signal-cli might be restarting)
