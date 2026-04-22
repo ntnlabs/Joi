@@ -31,15 +31,15 @@ class OllamaClient:
         self.timeout = timeout
         self.num_ctx = num_ctx  # 0 = use model default
         self.keep_alive = keep_alive  # How long to keep model in VRAM after request
+        self._client = httpx.Client(timeout=self.timeout)
 
     def list_models(self) -> set:
         """Return set of available model names (without :latest tag)."""
         url = f"{self.base_url}/api/tags"
         try:
-            with httpx.Client(timeout=10.0) as client:
-                resp = client.get(url)
-                resp.raise_for_status()
-                data = resp.json()
+            resp = self._client.get(url, timeout=10.0)
+            resp.raise_for_status()
+            data = resp.json()
             names = set()
             for m in data.get("models", []):
                 name = m.get("name", "")
@@ -84,10 +84,9 @@ class OllamaClient:
             payload["options"] = {"num_ctx": self.num_ctx}
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(url, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
+            resp = self._client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
 
             return LLMResponse(
                 text=data.get("response", ""),
@@ -150,10 +149,9 @@ class OllamaClient:
             payload["options"] = {"num_ctx": self.num_ctx}
 
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(url, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
+            resp = self._client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
 
             message = data.get("message", {})
             return LLMResponse(
@@ -186,3 +184,7 @@ class OllamaClient:
                 done=False,
                 error=str(exc),
             )
+
+    def close(self):
+        """Close the persistent HTTP client."""
+        self._client.close()

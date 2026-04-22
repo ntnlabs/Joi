@@ -80,6 +80,7 @@ class HMACRotator:
         # Track failed rotations for retry logic
         self._failed_rotation_count: int = 0
         self._last_failed_rotation: Optional[float] = None
+        self._client = httpx.Client(timeout=10.0)
 
         self._load_state()
         self._recover_pending_state()
@@ -334,10 +335,9 @@ class HMACRotator:
             headers.update(hmac_headers)
 
             url = f"{self._mesh_url}{MESH_ROTATION_ENDPOINT}"
-            with httpx.Client(timeout=10.0) as client:
-                resp = client.post(url, content=body, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
+            resp = self._client.post(url, content=body, headers=headers)
+            resp.raise_for_status()
+            data = resp.json()
 
             if data.get("status") == "ok":
                 return True, ""
@@ -501,25 +501,24 @@ class HMACRotator:
 
             # Use HMAC-protected ping endpoint (not /health which is exempt from auth)
             url = f"{self._mesh_url}/hmac/ping"
-            with httpx.Client(timeout=5.0) as client:
-                resp = client.get(url, headers=headers)
+            resp = self._client.get(url, headers=headers, timeout=5.0)
 
-                if resp.status_code == 401:
-                    logger.error("HMAC sync check failed", extra={
-                        "action": "sync_check",
-                        "status": "hmac_mismatch"
-                    })
-                    return False, "hmac_mismatch"
-
-                if resp.status_code == 200:
-                    logger.debug("HMAC sync check passed", extra={"action": "sync_check", "status": "ok"})
-                    return True, "ok"
-
-                logger.warning("HMAC sync check: unexpected status", extra={
+            if resp.status_code == 401:
+                logger.error("HMAC sync check failed", extra={
                     "action": "sync_check",
-                    "status_code": resp.status_code,
+                    "status": "hmac_mismatch"
                 })
-                return False, f"unexpected_status_{resp.status_code}"
+                return False, "hmac_mismatch"
+
+            if resp.status_code == 200:
+                logger.debug("HMAC sync check passed", extra={"action": "sync_check", "status": "ok"})
+                return True, "ok"
+
+            logger.warning("HMAC sync check: unexpected status", extra={
+                "action": "sync_check",
+                "status_code": resp.status_code,
+            })
+            return False, f"unexpected_status_{resp.status_code}"
 
         except Exception as e:
             logger.warning("HMAC sync check failed", extra={
@@ -540,9 +539,8 @@ class HMACRotator:
             headers.update(hmac_headers)
 
             url = f"{self._mesh_url}/hmac/ping"
-            with httpx.Client(timeout=5.0) as client:
-                resp = client.get(url, headers=headers)
-                return resp.status_code == 200
+            resp = self._client.get(url, headers=headers, timeout=5.0)
+            return resp.status_code == 200
         except Exception:
             return False
 
