@@ -6,6 +6,7 @@ import os
 import secrets
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -30,6 +31,9 @@ from policy import MeshPolicy
 
 
 logger = logging.getLogger("mesh.signal_worker")
+
+# Thread pool for typing indicator forwards (best-effort, bounded)
+_typing_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="typing-fwd")
 
 # HMAC authentication
 _hmac_secret = get_shared_secret()  # Initial secret from env (emergency fallback only)
@@ -1582,11 +1586,7 @@ def main() -> None:
                         if sender:
                             group_id = typing_msg.get("groupId")
                             convo_id = group_id if group_id else sender
-                            threading.Thread(
-                                target=forward_typing,
-                                kwargs=dict(sender=sender, conversation_id=convo_id),
-                                daemon=True,
-                            ).start()
+                            _typing_pool.submit(forward_typing, sender=sender, conversation_id=convo_id)
                         continue
 
                     payload = _normalize_signal_message(msg, bot_account=_account, bot_uuid=_account_uuid)
