@@ -1377,10 +1377,6 @@ Extends WindMood with higher-level personality features that shape engagement ov
 - **Momentum (upward only)**: engaging conversations boost next-day impulse
   - Never goes below baseline (Joi shouldn't go quiet if user is quiet)
   - Measures: message count, response length, conversation duration
-- **30-day cycle (optional)**: longer-term mood rhythm layered on daily variance
-  - Adds ~30 day rhythm to baseline mood
-  - Some weeks slightly more energetic/chatty
-  - Config: `mood_cycle_enabled` (default: true)
 
 Together, Phase 4a-4d transform Wind from "queue-based reminders" to "genuine companion initiative."
 
@@ -1500,35 +1496,14 @@ Day 5: engaged again → mood drifts back up
 
 Feels like consistent "emotional weather" that shifts with relationship rhythm.
 
-#### 30-Day Cycle (Optional, Default: On)
-Longer-term mood rhythm layered on top of daily variance.
+#### Day-of-Week Mood (Implemented)
+Subtle background mood hint injected alongside the time awareness prompt:
+- Workdays (Mon-Fri): "slightly more subdued and grounded"
+- Weekends (Sat-Sun): "lighter and more playful"
 
-```
-cycle_day = day_count % 30
-cycle_position = cycle_day / 30.0
-cycle_modifier = sin(cycle_position * 2π) * 0.1  # ±0.1 swing
-```
-
-- Adds ~30 day rhythm to baseline mood
-- Some weeks slightly more energetic/chatty
-- Some weeks slightly more introspective/calm
-- Combined with daily mood = layered natural variance
-
-**Config:**
-```json
-"wind": {
-  "mood_cycle_enabled": true  // default: true
-}
-```
-
-Why: Humans have rhythms beyond daily - this adds subtle long-term variance that makes behavior feel less mechanical over time.
-
-#### Day-of-Week Personality
-Different behavior profiles by day:
-- Weekdays: more task-focused, check-ins about work/plans
-- Weekends: more relaxed, casual topics, lighter mood
-- Monday: week ahead check-in
-- Friday: lighter, wind-down mood
+Piggybacks on existing time injection — no new state, no config. Only active
+when time awareness is enabled. Layers with the Plutchik mood state (which
+tracks Joi's reactive emotional shifts per conversation).
 
 #### Probability-Based Triggering
 Instead of hard threshold:
