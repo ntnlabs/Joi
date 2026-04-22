@@ -1350,7 +1350,8 @@ Success criteria:
   - Low-frequency probing for new interests
   - Convert successful discoveries to affinity topics
 - ✅ **Special dates**: birthdays, anniversaries from stored facts
-  - `_generate_special_date_topics` triggers warm check-ins
+  - Detected by `mine_emotional_depth_for` during end-of-day processing (scans
+    day's messages for future date anchors including birthdays, anniversaries)
 - ✅ **Spontaneous sharing**: Joi "discovers" something interesting to share
   - `_generate_spontaneous_topics` — from knowledge base, low frequency, high relevance
 - ✅ **Adaptive quiet hours**: learn activity patterns
