@@ -10,6 +10,11 @@ set -Eeuo pipefail
 SCRIPT_NAME=$(basename "$0")
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 JOI_PY_ROOT=$(cd "$SCRIPT_DIR/.." && pwd)
+
+# Source service environment if available (provides JOI_BIND_HOST, JOI_BIND_PORT, etc.)
+# shellcheck disable=SC1091
+[[ -f /etc/default/joi-api ]] && source /etc/default/joi-api
+
 MEMORY_DB="${JOI_MEMORY_DB:-/var/lib/joi/memory.db}"
 NONCE_DB="${JOI_NONCE_DB:-/var/lib/joi/nonces.db}"
 HMAC_KEY_FILE="${JOI_HMAC_KEY_FILE:-/etc/joi/hmac.key}"
