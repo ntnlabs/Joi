@@ -97,6 +97,10 @@ OUTPUT_LEAK_MARKERS = [
     "<|assistant|>",
 ]
 
+# Control characters to strip: 0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, 0x7F
+# Keeps: tab (0x09), newline (0x0A), carriage return (0x0D), all printable (>= 0x20)
+_CTRL_CHAR_RE = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]')
+
 
 def sanitize_input(text: str) -> str:
     """
@@ -114,15 +118,7 @@ def sanitize_input(text: str) -> str:
 
     # Remove null bytes and ASCII control chars (0x00-0x1F except newline/tab, and 0x7F)
     # This preserves all UTF-8 characters (Slovak, Cyrillic, CJK, emoji, etc.)
-    cleaned = []
-    for c in text:
-        code = ord(c)
-        # Keep: tab (9), newline (10), carriage return (13), and printable (32+)
-        # Remove: other control chars (0-8, 11-12, 14-31, 127)
-        if code == 9 or code == 10 or code == 13 or code >= 32:
-            if code != 127:  # DEL character
-                cleaned.append(c)
-    text = ''.join(cleaned)
+    text = _CTRL_CHAR_RE.sub('', text)
 
     # Unicode normalization (NFKC) - prevents homoglyph attacks
     # e.g., "ⅰgnore" (Roman numeral ⅰ) becomes "ignore"
@@ -1940,6 +1936,7 @@ def receive_message(msg: InboundMessage):
         # Boost window for fast conversations using Wind's shared pace thresholds.
         # e.g. "cottage?" + "when was I there?" → FTS finds cottage facts on 2nd turn
         fts_window = FTS_CONTEXT_MESSAGES
+        _ws = None
         if wind_orchestrator:
             _ws = wind_orchestrator.state_manager.get_state(msg.conversation.id)
             if _ws and _ws.convo_gap_ema_seconds is not None:
@@ -1987,10 +1984,10 @@ def receive_message(msg: InboundMessage):
                 sender_id=msg.sender.transport_id,
             )
             if base_prompt:
-                enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, mood_jump=mood_jump_text, _debug=_debug_arg)
+                enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, mood_jump=mood_jump_text, _debug=_debug_arg, wind_state=_ws)
             else:
                 # No prompt file - only add facts/summaries/RAG if available
-                enriched_prompt = _build_enriched_prompt("", fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, mood_jump=mood_jump_text, _debug=_debug_arg)
+                enriched_prompt = _build_enriched_prompt("", fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, mood_jump=mood_jump_text, _debug=_debug_arg, wind_state=_ws)
                 enriched_prompt = enriched_prompt.strip() or None  # None if empty
         else:
             # No custom model: use prompt with fallback to default
@@ -1999,7 +1996,7 @@ def receive_message(msg: InboundMessage):
                 conversation_id=msg.conversation.id,
                 sender_id=msg.sender.transport_id,
             )
-            enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, mood_jump=mood_jump_text, _debug=_debug_arg)
+            enriched_prompt = _build_enriched_prompt(base_prompt, fts_query, conversation_id=fact_key, knowledge_scopes=knowledge_scopes, mood_jump=mood_jump_text, _debug=_debug_arg, wind_state=_ws)
 
         # Note: We no longer hint to the LLM about saved facts - this caused meta-reactions
         # and excessive "tagging" behavior. Memory is now invisible to the response generation.
@@ -2462,6 +2459,7 @@ def _build_enriched_prompt(
     knowledge_scopes: Optional[List[str]] = None,
     mood_jump: Optional[str] = None,
     _debug: Optional[dict] = None,
+    wind_state=None,
 ) -> str:
     """Build system prompt enriched with user facts, summaries, and RAG context for this conversation."""
     parts = [base_prompt]
@@ -2586,7 +2584,7 @@ def _build_enriched_prompt(
 
     # Phase 4d: Inject mood as response modifier
     if conversation_id and wind_orchestrator:
-        _ws = wind_orchestrator.state_manager.get_state(conversation_id)
+        _ws = wind_state if wind_state is not None else wind_orchestrator.state_manager.get_state(conversation_id)
         if _ws and _ws.mood_state != "neutral":
             _mword = _mood_word(_ws.mood_state, _ws.mood_intensity)
             mood_line = (
