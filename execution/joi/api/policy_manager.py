@@ -67,7 +67,6 @@ DEFAULT_POLICY = {
         "topic_pressure_weight": 0.2,
         "fatigue_weight": 0.3,
         "allowlist": [],
-        "timezone": "Europe/Bratislava",
     },
 }
 

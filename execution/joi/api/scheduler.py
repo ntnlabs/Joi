@@ -105,6 +105,18 @@ class Scheduler:
         self._note_manager = note_manager
         self._message_queue = message_queue
 
+    def _get_conversation_tz(self, conversation_id: str):
+        """Per-conversation timezone, falls back to UTC."""
+        from zoneinfo import ZoneInfo
+        if self._memory:
+            tz_name = self._memory.get_conversation_tz(conversation_id)
+            if tz_name:
+                try:
+                    return ZoneInfo(tz_name)
+                except Exception:
+                    pass
+        return ZoneInfo("UTC")
+
     def start(self):
         """Start the scheduler thread."""
         if self._thread is not None:
@@ -209,12 +221,13 @@ class Scheduler:
         # Per-conversation tasks: each conversation fires independently when quiet
         if self._wind_orchestrator:
             for conv_id in (self._wind_orchestrator.config.allowlist or []):
-                if self._should_run_daily_tasks_for(conv_id, now_utc):
-                    self._run_daily_tasks_for(conv_id, now_utc)
+                conv_tz = self._get_conversation_tz(conv_id)
+                if self._should_run_daily_tasks_for(conv_id, now_utc, conv_tz):
+                    self._run_daily_tasks_for(conv_id, now_utc, conv_tz)
                 if self._should_run_wakeup_for(conv_id, now_utc):
-                    self._run_wakeup_for(conv_id, now_utc)
-                if self._should_send_wakeup_for(conv_id, now_utc):
-                    self._send_wakeup_proactive(conv_id, now_utc)
+                    self._run_wakeup_for(conv_id, now_utc, conv_tz)
+                if self._should_send_wakeup_for(conv_id, now_utc, conv_tz):
+                    self._send_wakeup_proactive(conv_id, now_utc, conv_tz)
         # Global tasks: fire once per calendar day regardless of conversation activity
         if self._should_run_global_tasks(now_utc):
             self._run_global_daily_tasks(now_utc)
@@ -377,12 +390,13 @@ class Scheduler:
                 return False
         return True
 
-    def _should_run_daily_tasks_for(self, conversation_id: str, now: datetime) -> bool:
+    def _should_run_daily_tasks_for(self, conversation_id: str, now: datetime, tz=None) -> bool:
         """Check if end-of-day tasks should run for this conversation on this tick."""
         if not self._wind_orchestrator:
             return False
         config = self._wind_orchestrator.config
-        tz = config._tz
+        if tz is None:
+            tz = self._get_conversation_tz(conversation_id)
         local_now = now.astimezone(tz)
 
         # Clock-time gate: must be at or past end_of_day_time
@@ -405,9 +419,10 @@ class Scheduler:
     def _should_run_global_tasks(self, now: datetime) -> bool:
         """Return True if global daily tasks should run today (once per calendar day)."""
         if not self._wind_orchestrator:
-            return False  # No config to determine end_of_day_time or timezone
+            return False  # No config to determine end_of_day_time
+        from zoneinfo import ZoneInfo
         config = self._wind_orchestrator.config
-        tz = config._tz
+        tz = ZoneInfo("UTC")
         local_now = now.astimezone(tz)
         current_minutes = local_now.hour * 60 + local_now.minute
         if current_minutes < config.end_of_day_time:
@@ -415,7 +430,7 @@ class Scheduler:
         today_str = local_now.strftime("%Y-%m-%d")
         return self._last_global_tasks_date != today_str
 
-    def _run_daily_tasks_for(self, conversation_id: str, now: datetime) -> None:
+    def _run_daily_tasks_for(self, conversation_id: str, now: datetime, tz=None) -> None:
         """Run end-of-day tasks for a single conversation."""
         logger.info("Running end-of-day tasks", extra={
             "conversation_id": conversation_id,
@@ -503,7 +518,7 @@ class Scheduler:
         current_silence = (now - state.last_user_interaction_at).total_seconds()
         return current_silence >= threshold_s
 
-    def _run_wakeup_for(self, conversation_id: str, now: datetime) -> None:
+    def _run_wakeup_for(self, conversation_id: str, now: datetime, tz=None) -> None:
         """Run the wake-up procedure for a conversation returning from long silence."""
         logger.info("Running wake-up procedure", extra={
             "conversation_id": conversation_id,
@@ -532,10 +547,10 @@ class Scheduler:
         # Step 3: Inject gap marker into context
         try:
             if self._memory and pause_start:
-                tz = self._wind_orchestrator.config._tz
+                _tz = tz or self._get_conversation_tz(conversation_id)
                 duration_days = max(1, int((now - pause_start).total_seconds() / 86400))
-                start_str = pause_start.astimezone(tz).strftime("%Y-%m-%d")
-                end_str = now.astimezone(tz).strftime("%Y-%m-%d")
+                start_str = pause_start.astimezone(_tz).strftime("%Y-%m-%d")
+                end_str = now.astimezone(_tz).strftime("%Y-%m-%d")
                 marker = f"[JOI-PAUSE duration={duration_days}d dates={start_str}\u2192{end_str}]"
                 self._memory.store_summary(
                     summary_type="pause_marker",
@@ -552,7 +567,7 @@ class Scheduler:
         # Step 4: Schedule proactive re-engagement + reset impulse
         try:
             wakeup_send_at = self._compute_wakeup_send_at(
-                self._wind_orchestrator.config, state, now
+                self._wind_orchestrator.config, state, now, tz=tz
             )
             self._wind_orchestrator.state_manager.update_state(
                 conversation_id,
@@ -574,9 +589,11 @@ class Scheduler:
             "action": "wakeup_done",
         })
 
-    def _compute_wakeup_send_at(self, config, state, now: datetime) -> datetime:
+    def _compute_wakeup_send_at(self, config, state, now: datetime, tz=None) -> datetime:
         """Return a random UTC datetime in the next full non-quiet window (always tomorrow's)."""
-        tz = config._tz
+        if tz is None:
+            from zoneinfo import ZoneInfo
+            tz = ZoneInfo("UTC")
         local_now = now.astimezone(tz)
         today_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
         tomorrow_midnight = today_midnight + timedelta(days=1)
@@ -599,7 +616,7 @@ class Scheduler:
         offset = random.uniform(0, window_seconds)
         return (window_start + timedelta(seconds=offset)).astimezone(timezone.utc)
 
-    def _should_send_wakeup_for(self, conversation_id: str, now: datetime) -> bool:
+    def _should_send_wakeup_for(self, conversation_id: str, now: datetime, tz=None) -> bool:
         """Return True if the scheduled wake-up proactive is due and outside quiet hours."""
         if not self._wind_orchestrator:
             return False
@@ -610,7 +627,8 @@ class Scheduler:
             return False
         # Quiet hours check (replicated inline — ImpulseEngine method not accessible here)
         config = self._wind_orchestrator.config
-        tz = config._tz
+        if tz is None:
+            tz = self._get_conversation_tz(conversation_id)
         local = now.astimezone(tz)
         current = local.hour * 60 + local.minute
         start = (
@@ -622,7 +640,7 @@ class Scheduler:
         in_quiet = (current >= start or current < end) if start > end else (start <= current < end)
         return not in_quiet
 
-    def _send_wakeup_proactive(self, conversation_id: str, now: datetime) -> None:
+    def _send_wakeup_proactive(self, conversation_id: str, now: datetime, tz=None) -> None:
         """Send the scheduled proactive re-engagement message after long silence."""
         logger.info("Sending wake-up proactive", extra={
             "conversation_id": conversation_id,
@@ -715,8 +733,8 @@ class Scheduler:
 
     def _run_global_daily_tasks(self, now: datetime) -> None:
         """Run global daily maintenance tasks (once per calendar day, in-memory gate)."""
-        tz = self._wind_orchestrator.config._tz
-        today_str = now.astimezone(tz).strftime("%Y-%m-%d")
+        from zoneinfo import ZoneInfo
+        today_str = now.astimezone(ZoneInfo("UTC")).strftime("%Y-%m-%d")
         self._last_global_tasks_date = today_str
         if self._memory:
             self._memory.set_state("last_global_tasks_date", today_str)

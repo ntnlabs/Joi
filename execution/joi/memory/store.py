@@ -522,6 +522,14 @@ CREATE TABLE IF NOT EXISTS wind_quiet_samples (
     recorded_at TEXT NOT NULL,
     UNIQUE(conversation_id, day_date)  -- one row per conversation per day
 );
+
+-- Per-conversation settings (timezone, time awareness)
+CREATE TABLE IF NOT EXISTS conversation_settings (
+    conversation_id TEXT PRIMARY KEY,
+    timezone TEXT,
+    time_awareness INTEGER DEFAULT 0,
+    updated_at TEXT NOT NULL
+);
 """
 
 
@@ -1056,6 +1064,24 @@ class MemoryStore:
                     last_inbound_minutes INTEGER NOT NULL,
                     recorded_at TEXT NOT NULL,
                     UNIQUE(conversation_id, day_date)
+                )
+                """
+            )
+            conn.commit()
+
+        # Migration v19: per-conversation settings (timezone, time awareness)
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='conversation_settings'"
+        )
+        if not cursor.fetchone():
+            logger.info("Migration v19: Creating 'conversation_settings' table")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS conversation_settings (
+                    conversation_id TEXT PRIMARY KEY,
+                    timezone TEXT,
+                    time_awareness INTEGER DEFAULT 0,
+                    updated_at TEXT NOT NULL
                 )
                 """
             )
@@ -3391,6 +3417,58 @@ class MemoryStore:
         conn.execute(
             "DELETE FROM wind_quiet_samples WHERE day_date < date('now', ?)",
             (f"-{keep_days} days",),
+        )
+        conn.commit()
+
+    # --- Conversation settings (timezone, time awareness) ---
+
+    def get_conversation_tz(self, conversation_id: str) -> Optional[str]:
+        """Return IANA timezone string for a conversation, or None if not set."""
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT timezone FROM conversation_settings WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if row and row["timezone"]:
+            return row["timezone"]
+        return None
+
+    def set_conversation_timezone(self, conversation_id: str, tz_name: str) -> None:
+        """Set IANA timezone for a conversation."""
+        conn = self._connect()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            INSERT INTO conversation_settings (conversation_id, timezone, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET timezone = excluded.timezone, updated_at = excluded.updated_at
+            """,
+            (conversation_id, tz_name, now_iso),
+        )
+        conn.commit()
+
+    def get_time_awareness(self, conversation_id: str) -> bool:
+        """Return whether time awareness is enabled for a conversation (default False)."""
+        conn = self._connect()
+        row = conn.execute(
+            "SELECT time_awareness FROM conversation_settings WHERE conversation_id = ?",
+            (conversation_id,),
+        ).fetchone()
+        if row:
+            return bool(row["time_awareness"])
+        return False
+
+    def set_time_awareness(self, conversation_id: str, enabled: bool) -> None:
+        """Set time awareness toggle for a conversation."""
+        conn = self._connect()
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            """
+            INSERT INTO conversation_settings (conversation_id, time_awareness, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET time_awareness = excluded.time_awareness, updated_at = excluded.updated_at
+            """,
+            (conversation_id, int(enabled), now_iso),
         )
         conn.commit()
 

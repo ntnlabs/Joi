@@ -112,6 +112,17 @@ class WindOrchestrator:
         # Suppress identical "mining skipped at cap" repeats: {conv_id: (tension, discovery)}
         self._mining_skip_last: dict[str, tuple[int, int]] = {}
 
+    def _get_conversation_tz(self, conversation_id: str) -> ZoneInfo:
+        """Per-conversation timezone, falls back to UTC."""
+        if self.memory:
+            tz_name = self.memory.get_conversation_tz(conversation_id)
+            if tz_name:
+                try:
+                    return ZoneInfo(tz_name)
+                except Exception:
+                    pass
+        return ZoneInfo("UTC")
+
     def _validate_tension_settings(self) -> None:
         """Validate tension silence against Wind's silence and cooldown gates."""
         if not self._curiosity_model:
@@ -163,7 +174,8 @@ class WindOrchestrator:
             now = datetime.now(timezone.utc)
 
         # Calculate impulse
-        result = self.impulse_engine.calculate_impulse(conversation_id, now)
+        tz = self._get_conversation_tz(conversation_id)
+        result = self.impulse_engine.calculate_impulse(conversation_id, now, tz=tz)
 
         # If not eligible (failed gate), log and return
         if not result.eligible:
@@ -476,7 +488,8 @@ class WindOrchestrator:
             self.topic_manager.mark_mentioned(topic.id)
 
         # Update proactive state
-        self.state_manager.record_proactive_sent(conversation_id)
+        tz = self._get_conversation_tz(conversation_id)
+        self.state_manager.record_proactive_sent(conversation_id, tz=tz)
 
         logger.info(
             "Wind sent to %s: topic=#%d '%s' (msg_id=%s)",
@@ -994,6 +1007,9 @@ class WindOrchestrator:
         if not self.memory:
             return
 
+        tz = self._get_conversation_tz(conversation_id)
+        local_now = now.astimezone(tz)
+
         date_keywords = ("birthday", "born", "anniversary", "nameday")
 
         try:
@@ -1015,19 +1031,19 @@ class WindOrchestrator:
 
             month, day = parsed
 
-            # Compute next occurrence
+            # Compute next occurrence (using local date to avoid off-by-one near midnight)
             try:
-                candidate = datetime(now.year, month, day)
+                candidate = datetime(local_now.year, month, day)
             except ValueError:
                 continue  # invalid date (e.g. Feb 30)
 
-            if candidate.date() <= now.date():
+            if candidate.date() <= local_now.date():
                 try:
-                    candidate = datetime(now.year + 1, month, day)
+                    candidate = datetime(local_now.year + 1, month, day)
                 except ValueError:
                     continue
 
-            days_until = (candidate.date() - now.date()).days
+            days_until = (candidate.date() - local_now.date()).days
             if days_until > 14:
                 continue
 
@@ -1035,8 +1051,8 @@ class WindOrchestrator:
             novelty_key = f"special_date_{fact.key.lower()}_{target_year}"
 
             try:
-                due_at = datetime(target_year, month, day, 9, 0) - timedelta(days=1)
-                expires_at = datetime(target_year, month, day) + timedelta(days=1)
+                due_at = datetime(target_year, month, day, 9, 0, tzinfo=tz) - timedelta(days=1)
+                expires_at = datetime(target_year, month, day, tzinfo=tz) + timedelta(days=1)
                 self.topic_manager.add_topic(
                     conversation_id=conversation_id,
                     topic_type="reminder",
@@ -1221,7 +1237,8 @@ class WindOrchestrator:
 
         resolved_block = "\n".join(f"- {_resolved_title(s)}" for s in resolved_summaries) or "(none)"
 
-        today_str = now.strftime("%Y-%m-%d (%A)")
+        local_now = now.astimezone(self._get_conversation_tz(conversation_id))
+        today_str = local_now.strftime("%Y-%m-%d (%A)")
         prompt = (
             f"Today is {today_str}.\n\n"
             f"Recent conversation (oldest first):\n{transcript}\n\n"
@@ -1486,7 +1503,7 @@ class WindOrchestrator:
         state = self.state_manager.get_state(conversation_id)
         if not state or not state.last_user_interaction_at:
             return
-        tz = ZoneInfo(self.config.timezone)
+        tz = self._get_conversation_tz(conversation_id)
         last_local = state.last_user_interaction_at.astimezone(tz)
         # Use the date of the last interaction as the key — not today's date.
         # End-of-day tasks run at 03:00 (already the next calendar day), so comparing
@@ -1657,7 +1674,7 @@ class WindOrchestrator:
 
         day_context = "\n".join(lines)
 
-        tz = ZoneInfo(self.config.timezone)
+        tz = self._get_conversation_tz(conversation_id)
         today_str = now.astimezone(tz).strftime("%A, %Y-%m-%d")
 
         # Undertaker block
