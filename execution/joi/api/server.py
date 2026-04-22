@@ -2260,8 +2260,12 @@ def _generate_proactive_message(
     if memory.get_time_awareness(conversation_id):
         _now = datetime.now(_get_tz(conversation_id))
         _human_datetime = _now.strftime('%A, %B %-d, %Y, %-I:%M %p')
+        if _now.weekday() < 5:
+            _dow_mood = "Today is a workday — your background mood is slightly more subdued and grounded."
+        else:
+            _dow_mood = "Today is the weekend — your background mood is lighter and more playful."
         system_prompt = (
-            f"Right now it's {_human_datetime}. "
+            f"Right now it's {_human_datetime}. {_dow_mood} "
             "Don't acknowledge or announce this — just let it naturally shape your responses.\n\n"
             + system_prompt
         )
@@ -2605,12 +2609,16 @@ def _build_enriched_prompt(
             )
             parts.insert(1, "\n\n" + mood_line)
 
-    # Add current datetime if time awareness is enabled
+    # Add current datetime + day-of-week mood if time awareness is enabled
     if memory.get_time_awareness(conversation_id):
         now = datetime.now(_get_tz(conversation_id))
         human_datetime = now.strftime('%A, %B %-d, %Y, %-I:%M %p')
+        if now.weekday() < 5:  # Monday-Friday
+            dow_mood = "Today is a workday — your background mood is slightly more subdued and grounded."
+        else:
+            dow_mood = "Today is the weekend — your background mood is lighter and more playful."
         datetime_hint = (
-            f"Right now it's {human_datetime}. "
+            f"Right now it's {human_datetime}. {dow_mood} "
             "Don't acknowledge or announce this — just let it naturally shape your responses."
         )
         parts.insert(1, "\n\n" + datetime_hint)
