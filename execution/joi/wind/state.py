@@ -342,14 +342,12 @@ class WindStateManager:
         )
         conn.commit()
 
-        # Re-read for logging
-        state = self.get_state(conversation_id)
         logger.info("Recorded proactive sent", extra={
             "conversation_id": conversation_id,
-            "today": state.proactive_sent_today,
-            "unanswered": state.unanswered_proactive_count,
-            "total": state.total_proactives_sent,
-            "fire_times_24h": len(state.proactive_fire_times),
+            "today": 1 if state.proactive_day_bucket != today_bucket else state.proactive_sent_today + 1,
+            "unanswered": state.unanswered_proactive_count + 1,
+            "total": (state.total_proactives_sent or 0) + 1,
+            "fire_times_24h": len(fire_times),
         })
 
     def record_user_interaction(self, conversation_id: str, ema_alpha: float = 0.3) -> None:
