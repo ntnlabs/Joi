@@ -4211,8 +4211,9 @@ SQL
 }
 
 cmd_security() {
+    local JOI_API_HOST="${JOI_BIND_HOST:-127.0.0.1}"
     local JOI_API_PORT="${JOI_BIND_PORT:-8443}"
-    local API_BASE="http://127.0.0.1:${JOI_API_PORT}"
+    local API_BASE="http://${JOI_API_HOST}:${JOI_API_PORT}"
 
     _security_api_call() {
         local method="$1"
