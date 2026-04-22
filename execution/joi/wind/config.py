@@ -4,7 +4,6 @@ Wind configuration dataclass.
 
 from dataclasses import dataclass, field
 from typing import List
-from zoneinfo import ZoneInfo
 
 
 def _parse_quiet_minutes(value, default: int) -> int:
@@ -121,15 +120,6 @@ class WindConfig:
     # Allowlist (conversation IDs eligible for Wind)
     allowlist: List[str] = field(default_factory=list)
 
-    # Timezone for quiet hours (IANA format)
-    timezone: str = "Europe/Bratislava"
-
-    def __post_init__(self):
-        try:
-            self._tz = ZoneInfo(self.timezone)
-        except Exception:
-            self._tz = ZoneInfo("UTC")
-
     @classmethod
     def from_dict(cls, data: dict) -> "WindConfig":
         """Create WindConfig from dictionary (e.g., from policy)."""
@@ -187,7 +177,6 @@ class WindConfig:
             threshold_mean_reversion=data.get("threshold_mean_reversion", 0.01),
             soft_trigger_steepness=data.get("soft_trigger_steepness", 10.0),
             allowlist=list(data.get("allowlist", [])),
-            timezone=data.get("timezone", "Europe/Bratislava"),
         )
 
     def to_dict(self) -> dict:
@@ -246,5 +235,4 @@ class WindConfig:
             "threshold_mean_reversion": self.threshold_mean_reversion,
             "soft_trigger_steepness": self.soft_trigger_steepness,
             "allowlist": list(self.allowlist),
-            "timezone": self.timezone,
         }

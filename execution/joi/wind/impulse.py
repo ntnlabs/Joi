@@ -10,6 +10,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from .config import WindConfig
 from .feedback import TopicFeedbackManager
@@ -99,6 +100,7 @@ class ImpulseEngine:
         self,
         conversation_id: str,
         now: Optional[datetime] = None,
+        tz: Optional[ZoneInfo] = None,
     ) -> GateResult:
         """
         Check all hard gates for a conversation.
@@ -145,7 +147,7 @@ class ImpulseEngine:
             )
 
         # Gate 4: Not in quiet hours
-        gates["not_quiet_hours"] = self._check_not_quiet_hours(now, state)
+        gates["not_quiet_hours"] = self._check_not_quiet_hours(now, state, tz or ZoneInfo("UTC"))
         if not gates["not_quiet_hours"]:
             return GateResult(
                 passed=False,
@@ -210,9 +212,9 @@ class ImpulseEngine:
         # All gates passed
         return GateResult(passed=True, gate_details=gates, state=state)
 
-    def _check_not_quiet_hours(self, now: datetime, wind_state=None) -> bool:
+    def _check_not_quiet_hours(self, now: datetime, wind_state, tz: ZoneInfo) -> bool:
         """Check if we're outside quiet hours."""
-        local_now = now.astimezone(self.config._tz)
+        local_now = now.astimezone(tz)
         current = local_now.hour * 60 + local_now.minute
 
         if wind_state is not None and wind_state.learned_quiet_start_minutes is not None:
@@ -279,6 +281,7 @@ class ImpulseEngine:
         self,
         conversation_id: str,
         now: Optional[datetime] = None,
+        tz: Optional[ZoneInfo] = None,
     ) -> ImpulseResult:
         """
         Calculate full impulse result for a conversation.
@@ -293,7 +296,7 @@ class ImpulseEngine:
             now = datetime.now(timezone.utc)
 
         # Check hard gates first
-        gate_result = self.check_gates(conversation_id, now)
+        gate_result = self.check_gates(conversation_id, now, tz=tz)
 
         if not gate_result.passed:
             return ImpulseResult(

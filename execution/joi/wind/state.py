@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger("joi.wind.state")
 
@@ -294,7 +295,7 @@ class WindStateManager:
         conn.commit()
         logger.debug("Updated wind_state", extra={"conversation_id": conversation_id, "keys": list(updates.keys())})
 
-    def record_proactive_sent(self, conversation_id: str) -> None:
+    def record_proactive_sent(self, conversation_id: str, tz: Optional[ZoneInfo] = None) -> None:
         """
         Record that a proactive message was sent.
 
@@ -310,7 +311,8 @@ class WindStateManager:
         """
         now = datetime.now(timezone.utc)
         # Shift back 3 h so conversations after midnight still count as "today"
-        today_bucket = (now - timedelta(hours=3)).strftime("%Y-%m-%d")
+        local_now = now.astimezone(tz) if tz else now
+        today_bucket = (local_now - timedelta(hours=3)).strftime("%Y-%m-%d")
         self._ensure_state_exists(conversation_id)
 
         # Read current fire_times BEFORE any write
@@ -409,14 +411,16 @@ class WindStateManager:
             last_impulse_check_at=now,
         )
 
-    def reset_daily_counters(self, conversation_id: str) -> None:
+    def reset_daily_counters(self, conversation_id: str, tz: Optional[ZoneInfo] = None) -> None:
         """
         Reset daily counters for a conversation.
 
         Called when day bucket changes.
         """
+        now = datetime.now(timezone.utc)
+        local_now = now.astimezone(tz) if tz else now
         # Shift back 3 h so conversations after midnight still count as "today"
-        today_bucket = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%d")
+        today_bucket = (local_now - timedelta(hours=3)).strftime("%Y-%m-%d")
         self.update_state(
             conversation_id,
             proactive_sent_today=0,

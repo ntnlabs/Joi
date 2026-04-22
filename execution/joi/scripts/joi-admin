@@ -58,6 +58,7 @@ COMMANDS:
     fts         Check and rebuild FTS (full-text search) indexes
     wind        Inspect and manage Wind proactive messaging state
     stats       Show global memory statistics (messages, facts, topics, etc. per conversation)
+    time-awareness  Toggle per-conversation time awareness (inject datetime into prompts)
     security    Toggle kill-switch and privacy-mode (writes policy file — Joi will shut down)
     nuke        Drop ALL tables in the memory database (irreversible)
 
@@ -3228,7 +3229,7 @@ SQL
                 "--------------------" "----------" "----------" "-------"
             while IFS='|' read -r id conv title due stat recur snoozes; do
                 [[ -z "$id" ]] && continue
-                due_disp=$(TZ="${JOI_TIMEZONE:-Europe/Bratislava}" date -d "${due}" +"%Y-%m-%dT%H:%M" 2>/dev/null || echo "${due:0:20}")
+                due_disp=$(TZ="UTC" date -d "${due}" +"%Y-%m-%dT%H:%M" 2>/dev/null || echo "${due:0:20}")
                 printf "%-4s  %-20s  %-30s  %-20s  %-10s  %-10s  %s\n" \
                     "$id" "${conv:0:20}" "${title:0:30}" "${due_disp:0:20}" \
                     "${stat:0:10}" "${recur:0:10}" "$snoozes"
@@ -3256,7 +3257,7 @@ SQL
             printf "  %-18s %s\n" "title:" "$(db_scalar "SELECT COALESCE(title,'') FROM reminders WHERE id = $reminder_id;")"
             local _due_raw _due_disp
             _due_raw=$(db_scalar "SELECT COALESCE(due_at,'-') FROM reminders WHERE id = $reminder_id;")
-            _due_disp=$(TZ="${JOI_TIMEZONE:-Europe/Bratislava}" date -d "${_due_raw}" +"%Y-%m-%dT%H:%M" 2>/dev/null || echo "$_due_raw")
+            _due_disp=$(TZ="UTC" date -d "${_due_raw}" +"%Y-%m-%dT%H:%M" 2>/dev/null || echo "$_due_raw")
             printf "  %-18s %s\n" "due_at:" "$_due_disp"
             printf "  %-18s %s\n" "status:" "$(db_scalar "SELECT COALESCE(status,'-') FROM reminders WHERE id = $reminder_id;")"
             printf "  %-18s %s\n" "recurrence:" "$(db_scalar "SELECT COALESCE(recurrence,'-') FROM reminders WHERE id = $reminder_id;")"
@@ -4366,6 +4367,58 @@ SQL
     done <<< "$conv_rows"
 }
 
+cmd_time_awareness() {
+    local conv_id="${1:-}"
+    local toggle="${2:-}"
+
+    if [[ -z "$conv_id" || "$conv_id" == "--help" || "$conv_id" == "-h" ]]; then
+        cat << 'TAEOF'
+Toggle per-conversation time awareness (inject current datetime into LLM prompts).
+
+USAGE:
+    joi-admin time-awareness <conversation_id> on|off
+    joi-admin time-awareness <conversation_id>        Show current setting
+
+DESCRIPTION:
+    When enabled, Joi injects the current local datetime into the system prompt,
+    allowing appropriate greetings and understanding of relative time references.
+    Uses the conversation's configured timezone (set via Signal 'timezone' command).
+
+EXAMPLES:
+    joi-admin time-awareness abc123 on     Enable time awareness
+    joi-admin time-awareness abc123 off    Disable time awareness
+    joi-admin time-awareness abc123        Show current setting
+TAEOF
+        exit 0
+    fi
+
+    if [[ -z "$toggle" ]]; then
+        # Show current setting
+        local current
+        current=$(db_scalar "SELECT COALESCE(time_awareness, 0) FROM conversation_settings WHERE conversation_id = '${conv_id//\'/\'\'}';")
+        local tz_val
+        tz_val=$(db_scalar "SELECT COALESCE(timezone, 'UTC (not set)') FROM conversation_settings WHERE conversation_id = '${conv_id//\'/\'\'}';")
+        echo "conversation_id: $conv_id"
+        echo "time_awareness:  ${current:-0 (no settings row)}"
+        echo "timezone:        ${tz_val:-UTC (not set)}"
+        return
+    fi
+
+    local value
+    case "$toggle" in
+        on|1|true)   value=1 ;;
+        off|0|false) value=0 ;;
+        *)
+            error "Invalid toggle value '$toggle'. Use 'on' or 'off'."
+            ;;
+    esac
+
+    local now_iso
+    now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    db_exec "INSERT INTO conversation_settings (conversation_id, time_awareness, updated_at) VALUES ('${conv_id//\'/\'\'}', $value, '$now_iso') ON CONFLICT(conversation_id) DO UPDATE SET time_awareness = $value, updated_at = '$now_iso';"
+    echo "Time awareness for $conv_id: $([ "$value" = 1 ] && echo "ENABLED" || echo "DISABLED")"
+}
+
 main() {
     if [[ $# -lt 1 ]]; then
         usage
@@ -4414,6 +4467,10 @@ main() {
         stats)
             check_root
             cmd_stats "$@"
+            ;;
+        time-awareness)
+            check_root
+            cmd_time_awareness "$@"
             ;;
         security)
             cmd_security "$@"

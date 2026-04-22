@@ -133,13 +133,6 @@ JOI_RAG_ENABLED=1
 # Joi's ingest guard is 2x this value as a safety margin above the mesh cap
 #JOI_MAX_DOCUMENT_SIZE=1048576
 
-# --- Time Awareness ---
-# Set to 1 to inject current datetime into system prompt
-# Enables appropriate greetings and understanding of relative time
-JOI_TIME_AWARENESS=0
-# User timezone in IANA format (e.g., Europe/Bratislava, America/New_York)
-JOI_TIMEZONE=Europe/Bratislava
-
 # --- Response Cooldown ---
 # Minimum seconds between outbound responses (prevents flooding)
 #JOI_RESPONSE_COOLDOWN_SECONDS=5.0
