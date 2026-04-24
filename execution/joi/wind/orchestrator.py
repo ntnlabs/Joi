@@ -1301,9 +1301,20 @@ class WindOrchestrator:
             )
 
         except (json.JSONDecodeError, KeyError, ValueError, TypeError) as e:
+            # Dump prompt and response to file for debugging
+            dump_path = f"/var/lib/joi/tension_mining_fail_{int(time.time())}.txt"
+            try:
+                with open(dump_path, "w") as f:
+                    f.write(f"conversation_id: {conversation_id}\n")
+                    f.write(f"error: {e}\n")
+                    f.write(f"\n--- PROMPT ---\n{prompt}\n")
+                    f.write(f"\n--- RAW RESPONSE ---\n{raw}\n")
+            except OSError:
+                pass
             logger.warning("Tension mining: parse failure after retry — skipping cycle", extra={
                 "conversation_id": conversation_id,
                 "error": str(e),
+                "dump": dump_path,
                 "action": "tension_mining_parse_fail",
             })
             # Advance pointer so the same messages are not retried on the next cycle
