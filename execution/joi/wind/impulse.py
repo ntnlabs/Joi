@@ -345,9 +345,8 @@ class ImpulseEngine:
 
             if should_trigger:
                 trigger_accumulated = new_accumulated  # save pre-reset value for logging
-                # Reset accumulator on trigger
-                self.state_manager.update_state(conversation_id, accumulated_impulse=0.0)
-                new_accumulated = 0.0
+                # Accumulator reset is handled by the orchestrator after confirming
+                # a topic is available — don't reset here to avoid wasting impulse.
 
         # Record impulse check
         self.state_manager.record_impulse_check(conversation_id)
