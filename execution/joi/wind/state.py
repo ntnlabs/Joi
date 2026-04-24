@@ -8,7 +8,6 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional
-from zoneinfo import ZoneInfo
 
 logger = logging.getLogger("joi.wind.state")
 
@@ -51,8 +50,6 @@ class WindState:
     last_outbound_at: Optional[datetime] = None
     last_proactive_sent_at: Optional[datetime] = None
     last_impulse_check_at: Optional[datetime] = None
-    proactive_sent_today: int = 0
-    proactive_day_bucket: Optional[str] = None  # YYYY-MM-DD
     proactive_fire_times: List[datetime] = field(default_factory=list)
     unanswered_proactive_count: int = 0
     wind_snooze_until: Optional[datetime] = None
@@ -138,8 +135,8 @@ class WindStateManager:
         cursor = conn.execute(
             """
             SELECT conversation_id, last_user_interaction_at, last_outbound_at,
-                   last_proactive_sent_at, last_impulse_check_at, proactive_sent_today,
-                   proactive_day_bucket, unanswered_proactive_count, wind_snooze_until,
+                   last_proactive_sent_at, last_impulse_check_at,
+                   unanswered_proactive_count, wind_snooze_until,
                    updated_at, threshold_offset, accumulated_impulse,
                    engagement_score, total_proactives_sent, total_engaged,
                    total_ignored, total_deflected, last_engaged_at, last_deflected_at,
@@ -174,8 +171,6 @@ class WindStateManager:
             last_outbound_at=_parse_datetime(row["last_outbound_at"]),
             last_proactive_sent_at=_parse_datetime(row["last_proactive_sent_at"]),
             last_impulse_check_at=_parse_datetime(row["last_impulse_check_at"]),
-            proactive_sent_today=row["proactive_sent_today"] or 0,
-            proactive_day_bucket=row["proactive_day_bucket"],
             unanswered_proactive_count=row["unanswered_proactive_count"] or 0,
             wind_snooze_until=_parse_datetime(row["wind_snooze_until"]),
             updated_at=_parse_datetime(row["updated_at"]),
@@ -236,7 +231,7 @@ class WindStateManager:
 
     _VALID_STATE_COLUMNS = frozenset({
         "last_user_interaction_at", "last_outbound_at", "last_proactive_sent_at",
-        "last_impulse_check_at", "proactive_sent_today", "proactive_day_bucket",
+        "last_impulse_check_at",
         "unanswered_proactive_count", "wind_snooze_until", "updated_at",
         "threshold_offset", "accumulated_impulse",
         "engagement_score", "total_proactives_sent", "total_engaged",
@@ -295,24 +290,20 @@ class WindStateManager:
         conn.commit()
         logger.debug("Updated wind_state", extra={"conversation_id": conversation_id, "keys": list(updates.keys())})
 
-    def record_proactive_sent(self, conversation_id: str, tz: Optional[ZoneInfo] = None) -> None:
+    def record_proactive_sent(self, conversation_id: str) -> None:
         """
         Record that a proactive message was sent.
 
         Updates:
         - last_proactive_sent_at
-        - proactive_sent_today (incremented, or reset if new day)
-        - proactive_day_bucket
         - unanswered_proactive_count (incremented)
         - total_proactives_sent (incremented)
+        - proactive_fire_times_json (appended, pruned to 24h)
 
         Uses atomic SQL update to avoid read-modify-write race with
         record_user_interaction (which resets unanswered_proactive_count).
         """
         now = datetime.now(timezone.utc)
-        # Shift back 3 h so conversations after midnight still count as "today"
-        local_now = now.astimezone(tz) if tz else now
-        today_bucket = (local_now - timedelta(hours=3)).strftime("%Y-%m-%d")
         self._ensure_state_exists(conversation_id)
 
         # Read current fire_times BEFORE any write
@@ -327,26 +318,19 @@ class WindStateManager:
             """
             UPDATE wind_state
             SET last_proactive_sent_at = ?,
-                proactive_sent_today = CASE
-                    WHEN proactive_day_bucket != ? OR proactive_day_bucket IS NULL
-                    THEN 1
-                    ELSE proactive_sent_today + 1
-                END,
-                proactive_day_bucket = ?,
                 unanswered_proactive_count = unanswered_proactive_count + 1,
                 total_proactives_sent = COALESCE(total_proactives_sent, 0) + 1,
                 proactive_fire_times_json = ?,
                 updated_at = ?
             WHERE conversation_id = ?
             """,
-            (_format_datetime(now), today_bucket, today_bucket,
+            (_format_datetime(now),
              fire_times_json, _format_datetime(now), conversation_id)
         )
         conn.commit()
 
         logger.info("Recorded proactive sent", extra={
             "conversation_id": conversation_id,
-            "today": 1 if state.proactive_day_bucket != today_bucket else state.proactive_sent_today + 1,
             "unanswered": state.unanswered_proactive_count + 1,
             "total": (state.total_proactives_sent or 0) + 1,
             "fire_times_24h": len(fire_times),
@@ -410,23 +394,6 @@ class WindStateManager:
             conversation_id,
             last_impulse_check_at=now,
         )
-
-    def reset_daily_counters(self, conversation_id: str, tz: Optional[ZoneInfo] = None) -> None:
-        """
-        Reset daily counters for a conversation.
-
-        Called when day bucket changes.
-        """
-        now = datetime.now(timezone.utc)
-        local_now = now.astimezone(tz) if tz else now
-        # Shift back 3 h so conversations after midnight still count as "today"
-        today_bucket = (local_now - timedelta(hours=3)).strftime("%Y-%m-%d")
-        self.update_state(
-            conversation_id,
-            proactive_sent_today=0,
-            proactive_day_bucket=today_bucket,
-        )
-        logger.debug("Reset daily counters", extra={"conversation_id": conversation_id})
 
     def set_snooze(self, conversation_id: str, until: datetime) -> None:
         """

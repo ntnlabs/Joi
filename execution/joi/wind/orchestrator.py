@@ -493,8 +493,7 @@ class WindOrchestrator:
             self.topic_manager.mark_mentioned(topic.id)
 
         # Update proactive state
-        tz = self._get_conversation_tz(conversation_id)
-        self.state_manager.record_proactive_sent(conversation_id, tz=tz)
+        self.state_manager.record_proactive_sent(conversation_id)
 
         logger.info(
             "Wind sent to %s: topic=#%d '%s' (msg_id=%s)",
