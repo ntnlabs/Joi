@@ -2237,6 +2237,7 @@ def _generate_proactive_message(
 
     # Build system prompt
     system_parts = [base_prompt]
+    _ws = None
     if wind_orchestrator:
         _ws = wind_orchestrator.state_manager.get_state(conversation_id)
         if _ws and _ws.mood_state != "neutral":
@@ -2245,16 +2246,36 @@ def _generate_proactive_message(
                 f"\n\nYour current mood: {_mword}.\n"
                 "Let this naturally color your tone — don't announce it, just let it show."
             )
+        if _ws and _ws.user_mood_state != "neutral":
+            _user_mword = _mood_word(_ws.user_mood_state, _ws.user_mood_intensity)
+            system_parts.append(
+                f"\n\nThe user has been feeling: {_user_mword}.\n"
+                "Be mindful of this — match their energy, don't clash with it."
+            )
     if facts_ctx:
         system_parts.append(f"\n\n{facts_ctx}")
     system_prompt = "".join(system_parts)
 
-    # Proactive declaration + structural constraints (apply to all Wind messages)
-    system_prompt = (
-        "You are reaching out to them — this is not a reply to anything they said. "
-        "Write one short message. No greeting. No warm-up. Just the message.\n\n"
-        + system_prompt
+    # Proactive declaration (apply to all Wind messages)
+    _cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    _first_of_day = (
+        _ws is not None
+        and not any(t > _cutoff for t in _ws.proactive_fire_times)
+        and not (_ws.last_proactive_sent_at and _ws.last_proactive_sent_at > _cutoff)
     )
+    if _first_of_day:
+        system_prompt = (
+            "You are reaching out on your own — this is not a reply to anything the user said. "
+            "This is your first message today. Open with a warm, natural greeting "
+            "that fits the time of day. Be yourself.\n\n"
+            + system_prompt
+        )
+    else:
+        system_prompt = (
+            "You are reaching out on your own — this is not a reply to anything the user said. "
+            "Be yourself — write like you naturally would in a chat.\n\n"
+            + system_prompt
+        )
 
     # Datetime injection (same as _build_enriched_prompt)
     if memory.get_time_awareness(conversation_id):
@@ -2326,8 +2347,9 @@ def _generate_proactive_message(
     else:
         user_prompt = (
             f"{context_block}"
-            f"Something you want to bring up: {topic_info}\n\n"
-            "Fire it off naturally — a question, a passing thought, something that crossed your mind."
+            f"Something on your mind: {topic_info}\n\n"
+            "Bring it up like you would with someone you know well — "
+            "naturally, personally, like it just crossed your mind."
         )
 
     try:
