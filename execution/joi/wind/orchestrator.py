@@ -245,6 +245,9 @@ class WindOrchestrator:
                 threshold_offset=result.threshold_offset,
                 accumulated_impulse=result.accumulated_impulse,
             )
+            self.state_manager.update_state(
+                conversation_id, accumulated_impulse=0.0
+            )
             logger.info(
                 "Wind shadow: would send to %s (score=%.2f, threshold=%.2f, accum=%.2f, topic=#%d: %s)",
                 conversation_id, result.score, result.threshold, result.accumulated_impulse,
@@ -252,7 +255,10 @@ class WindOrchestrator:
             )
             return False, "shadow_mode", topic, result.score, result.accumulated_impulse, result.threshold_offset, result.threshold
 
-        # Live mode: signal that we should send
+        # Live mode: reset accumulator now that we're actually sending
+        self.state_manager.update_state(
+            conversation_id, accumulated_impulse=0.0
+        )
         # Caller (scheduler) handles actual LLM generation and sending
         logger.info(
             "Wind live: triggering send to %s (score=%.2f, threshold=%.2f, accum=%.2f, topic=#%d: %s)",
