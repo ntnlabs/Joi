@@ -310,7 +310,11 @@ CREATE TABLE IF NOT EXISTS wind_state (
     -- Adaptive quiet start learned from inbound message timestamps
     learned_quiet_start_minutes INTEGER DEFAULT NULL,
     -- End-of-day task tracking (v15)
-    last_daily_tasks_at TEXT DEFAULT NULL
+    last_daily_tasks_at TEXT DEFAULT NULL,
+    -- Wake-up procedure tracking (v16)
+    last_wakeup_at TEXT DEFAULT NULL,
+    -- Wake-up proactive scheduled send time (v17)
+    wakeup_send_at TEXT DEFAULT NULL
 );
 
 -- Pending topics table (topic queue for Wind)
