@@ -37,6 +37,9 @@ env/
 *.swo
 *~
 
+# Go binaries
+execution/joi/setup/joi-setup
+
 # OS
 .DS_Store
 Thumbs.db
