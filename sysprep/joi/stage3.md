@@ -66,6 +66,13 @@ Install the shared package (HMAC core, used by both Joi and Mesh):
 pip install -e /opt/Joi/execution/shared --break-system-packages
 ```
 
+Install Go (needed for building `joi-setup`):
+
+```bash
+apt install -y golang-go
+go version
+```
+
 Install SQLCipher CLI/dev libs used by Joi memory/admin tooling, then install the Python SQLCipher binding if your current runtime still requires it:
 
 ```bash
@@ -90,6 +97,17 @@ Ensure Joi data dir ownership (usually already correct from stage 1):
 chown -R joi:joi /var/lib/joi
 chmod 750 /var/lib/joi
 ```
+
+## 4a. Build joi-setup TUI
+
+```bash
+cd /opt/Joi/execution/joi/setup
+go build -o joi-setup .
+mkdir -p /opt/Joi/bin
+install -m 0755 joi-setup /opt/Joi/bin/joi-setup
+```
+
+Run later with `sudo /opt/Joi/bin/joi-setup` to edit runtime settings interactively.
 
 ## 5. Configure Joi Environment File
 
