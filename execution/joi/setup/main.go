@@ -32,5 +32,6 @@ func main() {
 
 	app := &App{screen: s, cfg: cfg, curScreen: ScreenMenu}
 	app.run()
-	s.Fini()
+	app.screen.Fini()
+	fmt.Println()
 }
