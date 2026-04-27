@@ -20,6 +20,8 @@ from .prompts import (
     get_fact_extraction_prompt_for_conversation,
     get_summarization_prompt_for_conversation,
     sanitize_scope,
+    get_translate_lang_for_conversation,
+    get_translate_lang_by_id,
 )
 from .settings import Settings, load_settings
 
@@ -44,4 +46,6 @@ __all__ = [
     "has_custom_model",
     "ensure_prompts_dir",
     "sanitize_scope",
+    "get_translate_lang_for_conversation",
+    "get_translate_lang_by_id",
 ]

@@ -745,3 +745,64 @@ def get_knowledge_scopes_for_conversation(
                 scopes.append(safe_group_id)
 
     return scopes
+
+
+# --- Translation Configuration ---
+
+def _read_translate_file(path: Path) -> Optional[str]:
+    """Read translation language code from file if it exists."""
+    try:
+        if path.exists():
+            content = path.read_text(encoding="utf-8").strip().lower()
+            if content and content.isalpha() and len(content) <= 5:
+                return content
+    except Exception as e:
+        logger.warning("Failed to read translate config", extra={"path": str(path), "error": str(e)})
+    return None
+
+
+def get_user_translate_lang(user_id: str) -> Optional[str]:
+    """Get translation language for a specific user."""
+    safe_user_id = sanitize_scope(user_id)
+    user_file = PROMPTS_DIR / "users" / f"{safe_user_id}.translate"
+    lang = _read_translate_file(user_file)
+    if lang:
+        logger.debug("Using user-specific translation", extra={"user_id": user_id, "lang": lang})
+    return lang
+
+
+def get_group_translate_lang(group_id: str) -> Optional[str]:
+    """Get translation language for a specific group."""
+    safe_group_id = sanitize_scope(group_id)
+    group_file = PROMPTS_DIR / "groups" / f"{safe_group_id}.translate"
+    lang = _read_translate_file(group_file)
+    if lang:
+        logger.debug("Using group-specific translation", extra={"group_id": group_id, "lang": lang})
+    return lang
+
+
+def get_translate_lang_for_conversation(conversation_type: str, conversation_id: str, sender_id: str) -> Optional[str]:
+    """
+    Get the translation language for a conversation.
+
+    Returns language code (e.g., 'sk') or None if translation is disabled.
+    """
+    if conversation_type == "group":
+        return get_group_translate_lang(conversation_id)
+    else:
+        return get_user_translate_lang(sender_id)
+
+
+def get_translate_lang_by_id(conversation_id: str) -> Optional[str]:
+    """
+    Get translation language using conversation_id directly.
+
+    Used by scheduler (Wind/reminders) which runs per-conversation without sender context.
+    """
+    if not conversation_id:
+        return None
+    is_group = not conversation_id.startswith("+")
+    if is_group:
+        return get_group_translate_lang(conversation_id)
+    else:
+        return get_user_translate_lang(conversation_id)
