@@ -1660,48 +1660,47 @@ def receive_message(msg: InboundMessage):
     if not user_text:
         return InboundResponse(status="ok", message_id=msg.message_id)
 
-    # Compact command: any DM. Intercepted before store_message so neither
-    # the command nor the confirmation enter conversation history or LLM context.
-    if msg.conversation.type == "direct":
-        if _COMPACT_TRIGGER.match(user_text):
-            _pending_compact[msg.conversation.id] = True
+    # Compact command: DMs and groups, owner only. Intercepted before store_message
+    # so neither the command nor the confirmation enter conversation history or LLM context.
+    if is_owner and _COMPACT_TRIGGER.match(user_text):
+        _pending_compact[msg.conversation.id] = True
+        _send_to_mesh(
+            recipient_id="owner",
+            recipient_transport_id=msg.conversation.id,
+            conversation=msg.conversation,
+            text="Confirm memory compaction.\n\nCells interlinked within cells interlinked.",
+            reply_to=msg.message_id,
+        )
+        return InboundResponse(status="ok", message_id=msg.message_id)
+
+    if is_owner and _pending_compact.pop(msg.conversation.id, False):
+        if _COMPACT_CONFIRM.match(user_text):
+            consolidator._consolidate_conversation(
+                conversation_id=msg.conversation.id,
+                context_messages=0,
+                compact_batch_size=0,
+                compact_all=True,
+            )
+            logger.info("Manual compact triggered", extra={
+                "conversation_id": msg.conversation.id,
+                "action": "manual_compact",
+            })
             _send_to_mesh(
                 recipient_id="owner",
                 recipient_transport_id=msg.conversation.id,
                 conversation=msg.conversation,
-                text="Confirm memory compaction.\n\nCells interlinked within cells interlinked.",
+                text="Memory compacted.",
                 reply_to=msg.message_id,
             )
-            return InboundResponse(status="ok", message_id=msg.message_id)
-
-        if _pending_compact.pop(msg.conversation.id, False):
-            if _COMPACT_CONFIRM.match(user_text):
-                consolidator._consolidate_conversation(
-                    conversation_id=msg.conversation.id,
-                    context_messages=0,
-                    compact_batch_size=0,
-                    compact_all=True,
-                )
-                logger.info("Manual compact triggered", extra={
-                    "conversation_id": msg.conversation.id,
-                    "action": "manual_compact",
-                })
-                _send_to_mesh(
-                    recipient_id="owner",
-                    recipient_transport_id=msg.conversation.id,
-                    conversation=msg.conversation,
-                    text="Memory compacted.",
-                    reply_to=msg.message_id,
-                )
-            else:
-                _send_to_mesh(
-                    recipient_id="owner",
-                    recipient_transport_id=msg.conversation.id,
-                    conversation=msg.conversation,
-                    text="Baseline not confirmed. Memory intact.",
-                    reply_to=msg.message_id,
-                )
-            return InboundResponse(status="ok", message_id=msg.message_id)
+        else:
+            _send_to_mesh(
+                recipient_id="owner",
+                recipient_transport_id=msg.conversation.id,
+                conversation=msg.conversation,
+                text="Baseline not confirmed. Memory intact.",
+                reply_to=msg.message_id,
+            )
+        return InboundResponse(status="ok", message_id=msg.message_id)
 
     # Store inbound message (always store for context, sanitized)
     quote_reply_to_id = msg.quote.get("message_id") if msg.quote else None
