@@ -1830,6 +1830,7 @@ def receive_message(msg: InboundMessage):
         Uses deferred commit pattern: collect pending work, only commit at end if not cancelled.
         Heartbeat signals keep timeout from firing during long LLM operations.
         """
+        nonlocal user_text
         # Pending work to commit at the end (deferred commit pattern)
         pending_fact = None
         pending_response = None
