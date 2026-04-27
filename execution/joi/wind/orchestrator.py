@@ -382,6 +382,8 @@ class WindOrchestrator:
         self.state_manager.record_user_interaction(
             conversation_id,
             ema_alpha=self.config.active_convo_ema_alpha,
+            heated_threshold_seconds=self.config.active_convo_gap_minutes * 60,
+            momentum_nudge=self.config.momentum_nudge,
         )
 
         # Phase 4a: Evaluate pending topics
