@@ -308,6 +308,44 @@ If not configured, falls back to `JOI_CURIOSITY_MODEL`.
 
 ---
 
+## 9c. Translation Models (Optional — per-conversation translation)
+
+Transparent bidirectional translation for conversations in non-English languages.
+Requires TranslateGemma 12B base model and two custom Modelfiles (one per direction).
+
+```bash
+# Pull the base translation model
+docker exec ollama ollama pull translategemma:12b
+
+# Build SK->EN (inbound) and EN->SK (outbound) models
+docker exec ollama ollama create translategemma-sk-en \
+  -f /opt/Joi/execution/joi/ollama/Modelfile_translate_sk_en
+docker exec ollama ollama create translategemma-en-sk \
+  -f /opt/Joi/execution/joi/ollama/Modelfile_translate_en_sk
+
+# Enable per-user: write language code to .translate file
+echo 'sk' > /var/lib/joi/prompts/users/<user_id>.translate
+
+# Or per-group:
+echo 'sk' > /var/lib/joi/prompts/groups/<group_id>.translate
+
+# Restart
+systemctl restart joi-api
+```
+
+Translation is off by default. Creating the `.translate` file enables it for that
+conversation. Three model swaps per translated message (inbound translate, main LLM,
+outbound translate) — significant latency impact.
+
+To add a new language, create two Modelfiles following the SK pattern, build them
+with matching names (`translategemma-{lang}-en` and `translategemma-en-{lang}`),
+and write the language code to the `.translate` file. No code changes needed.
+
+The model name prefix can be overridden via `JOI_TRANSLATE_MODEL_PREFIX` in
+`/etc/default/joi-api` (default: `translategemma`).
+
+---
+
 ## 10. Embedding Model for Semantic RAG Search (Optional)
 
 By default, knowledge retrieval uses BM25 full-text search. For semantic (meaning-based)
