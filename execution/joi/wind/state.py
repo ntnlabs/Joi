@@ -336,7 +336,13 @@ class WindStateManager:
             "fire_times_24h": len(fire_times),
         })
 
-    def record_user_interaction(self, conversation_id: str, ema_alpha: float = 0.3) -> None:
+    def record_user_interaction(
+        self,
+        conversation_id: str,
+        ema_alpha: float = 0.3,
+        heated_threshold_seconds: float = 120.0,
+        momentum_nudge: float = 0.05,
+    ) -> None:
         """
         Record a user interaction.
 
@@ -344,6 +350,7 @@ class WindStateManager:
         - last_user_interaction_at
         - unanswered_proactive_count (reset to 0)
         - convo_gap_ema_seconds (EMA of inter-message gaps)
+        - mood_intensity (boosted during heated conversations, Phase 4d)
         """
         now = datetime.now(timezone.utc)
         state = self.get_state(conversation_id)
@@ -365,6 +372,22 @@ class WindStateManager:
             else:
                 new_ema = (1 - ema_alpha) * old_ema + ema_alpha * gap
             updates["convo_gap_ema_seconds"] = round(new_ema, 1)
+
+            # Phase 4d: Mood momentum — heated pace amplifies current mood intensity
+            if (new_ema <= heated_threshold_seconds
+                    and momentum_nudge > 0
+                    and _MOOD_VALENCE.get(state.mood_state, 0) != 0):
+                boosted = min(1.0, round(state.mood_intensity + momentum_nudge, 3))
+                if boosted != state.mood_intensity:
+                    updates["mood_intensity"] = boosted
+                    logger.debug("Mood momentum boost", extra={
+                        "conversation_id": conversation_id,
+                        "mood_state": state.mood_state,
+                        "old_intensity": state.mood_intensity,
+                        "new_intensity": boosted,
+                        "ema_seconds": round(new_ema, 1),
+                        "action": "mood_momentum",
+                    })
 
         self.update_state(conversation_id, **updates)
         logger.debug("Recorded user interaction", extra={"conversation_id": conversation_id})
