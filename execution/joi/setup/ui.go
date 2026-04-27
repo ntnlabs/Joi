@@ -20,7 +20,9 @@ const (
 	ScreenConfirm
 	ScreenQuitConfirm
 	ScreenError
-	ScreenNewConv // inline input for new conversation ID
+	ScreenNewConv  // inline input for new conversation ID
+	ScreenLLMList  // Ollama model list
+	ScreenLLMDetail // model detail view
 )
 
 var (
@@ -52,6 +54,12 @@ type App struct {
 	convRef    *ConvOverride
 	errMsg     string
 	flash      string // brief message shown once, cleared on next draw
+	// LLM screen state
+	llmModels  []OllamaModel
+	llmDetail  *OllamaModelDetail
+	llmIdx     int
+	llmScroll  int
+	llmErr     string
 }
 
 func (a *App) run() {
@@ -90,6 +98,10 @@ func (a *App) draw() {
 		a.drawError()
 	case ScreenNewConv:
 		a.drawNewConv()
+	case ScreenLLMList:
+		a.drawLLMList()
+	case ScreenLLMDetail:
+		a.drawLLMDetail()
 	}
 	a.screen.Show()
 }
@@ -112,6 +124,10 @@ func (a *App) handleKey(ev *tcell.EventKey) bool {
 		return a.handleError(ev)
 	case ScreenNewConv:
 		return a.handleNewConv(ev)
+	case ScreenLLMList:
+		return a.handleLLMList(ev)
+	case ScreenLLMDetail:
+		return a.handleLLMDetail(ev)
 	}
 	return false
 }
@@ -130,6 +146,7 @@ func (a *App) drawMenu() {
 		{a.cfg.Wind.Name, a.cfg.Wind.IsDirty()},
 		{a.cfg.Security.Name, a.cfg.Security.IsDirty()},
 		{"Conversations", a.convsDirty()},
+		{"LLM Models", false},
 	}
 
 	for i, item := range items {
@@ -171,7 +188,7 @@ func (a *App) handleMenu(ev *tcell.EventKey) bool {
 			a.menuIdx--
 		}
 	case tcell.KeyDown:
-		if a.menuIdx < 3 {
+		if a.menuIdx < 4 {
 			a.menuIdx++
 		}
 	case tcell.KeyEnter:
@@ -195,6 +212,8 @@ func (a *App) handleMenu(ev *tcell.EventKey) bool {
 			a.convIdx = 0
 			a.convScroll = 0
 			a.curScreen = ScreenConvList
+		case 4:
+			a.enterLLMList()
 		}
 	case tcell.KeyRune:
 		switch ev.Rune() {
@@ -727,6 +746,7 @@ func (a *App) convSettingRefs() []convSettingRef {
 		{"Context msgs", &a.convRef.Context, ".context", TypeInt, "global default"},
 		{"Compact batch", &a.convRef.Compact, ".compact_window", TypeInt, "global default"},
 		{"System prompt", &a.convRef.Prompt, ".txt", TypeText, "default.txt"},
+		{"Translation", &a.convRef.Translate, ".translate", TypeString, "disabled"},
 	}
 }
 
@@ -1100,6 +1120,191 @@ func (a *App) handleError(ev *tcell.EventKey) bool {
 	case tcell.KeyRune:
 		if ev.Rune() == 'q' {
 			return true
+		}
+	}
+	return false
+}
+
+// --- LLM Models screen ---
+
+func (a *App) enterLLMList() {
+	url := ollamaURL(a.cfg.EnvLines)
+	models, err := listOllamaModels(url)
+	if err != nil {
+		a.llmErr = err.Error()
+		a.llmModels = nil
+	} else {
+		a.llmErr = ""
+		a.llmModels = models
+	}
+	a.llmIdx = 0
+	a.llmScroll = 0
+	a.llmDetail = nil
+	a.curScreen = ScreenLLMList
+}
+
+func (a *App) drawLLMList() {
+	w, h := a.screen.Size()
+	Text(a.screen, 2, 1, "LLM Models", sHeader, w-4)
+
+	if a.llmErr != "" {
+		Text(a.screen, 2, 3, a.llmErr, sWarn, w-4)
+		Text(a.screen, 2, h-2, "[Esc] back  [q] quit", sDim, w-4)
+		return
+	}
+
+	if len(a.llmModels) == 0 {
+		Text(a.screen, 2, 3, "No models found in Ollama.", sDim, w-4)
+		Text(a.screen, 2, h-2, "[Esc] back  [q] quit", sDim, w-4)
+		return
+	}
+
+	visibleRows := h - 5
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+
+	// Column layout
+	nameW := 0
+	for _, m := range a.llmModels {
+		if len(m.Name) > nameW {
+			nameW = len(m.Name)
+		}
+	}
+	nameW += 2
+
+	for i, m := range a.llmModels {
+		if i < a.llmScroll || i >= a.llmScroll+visibleRows {
+			continue
+		}
+		y := 3 + (i - a.llmScroll)
+		rowStyle := sNormal
+		if i == a.llmIdx {
+			Pad(a.screen, 2, y, w-4, sActive)
+			rowStyle = sActive
+		}
+
+		prefix := "  "
+		if i == a.llmIdx {
+			prefix = "> "
+		}
+
+		Text(a.screen, 2, y, prefix+padRight(m.Name, nameW), rowStyle, nameW+2)
+
+		info := formatBytes(m.Size)
+		if m.ParameterSize != "" {
+			info += "  " + m.ParameterSize
+		}
+		if m.Quantization != "" {
+			info += "  " + m.Quantization
+		}
+		if m.Family != "" {
+			info += "  " + m.Family
+		}
+		infoStyle := sDim
+		if i == a.llmIdx {
+			infoStyle = infoStyle.Background(tcell.ColorNavy)
+		}
+		Text(a.screen, 4+nameW, y, info, infoStyle, w-nameW-6)
+	}
+
+	Text(a.screen, 2, h-2, "[Enter] details  [Esc] back  [q] quit", sDim, w-4)
+}
+
+func (a *App) handleLLMList(ev *tcell.EventKey) bool {
+	_, h := a.screen.Size()
+	visibleRows := h - 5
+	if visibleRows < 1 {
+		visibleRows = 1
+	}
+	maxIdx := len(a.llmModels) - 1
+
+	switch ev.Key() {
+	case tcell.KeyUp:
+		if a.llmIdx > 0 {
+			a.llmIdx--
+			if a.llmIdx < a.llmScroll {
+				a.llmScroll = a.llmIdx
+			}
+		}
+	case tcell.KeyDown:
+		if a.llmIdx < maxIdx {
+			a.llmIdx++
+			if a.llmIdx >= a.llmScroll+visibleRows {
+				a.llmScroll = a.llmIdx - visibleRows + 1
+			}
+		}
+	case tcell.KeyEnter:
+		if len(a.llmModels) > 0 {
+			url := ollamaURL(a.cfg.EnvLines)
+			detail, err := showOllamaModel(url, a.llmModels[a.llmIdx].Name)
+			if err != nil {
+				a.flash = err.Error()
+			} else {
+				a.llmDetail = detail
+				a.curScreen = ScreenLLMDetail
+			}
+		}
+	case tcell.KeyEscape:
+		a.curScreen = ScreenMenu
+	case tcell.KeyRune:
+		if ev.Rune() == 'q' {
+			return a.tryQuit()
+		}
+	}
+	return false
+}
+
+func (a *App) drawLLMDetail() {
+	w, h := a.screen.Size()
+	m := a.llmModels[a.llmIdx]
+	Text(a.screen, 2, 1, m.Name, sHeader, w-4)
+
+	y := 3
+	labelW := 16
+
+	// Basic info
+	rows := []struct{ label, value string }{
+		{"Size", formatBytes(m.Size)},
+		{"Parameters", m.ParameterSize},
+		{"Quantization", m.Quantization},
+		{"Family", m.Family},
+	}
+	for _, r := range rows {
+		if r.value == "" {
+			continue
+		}
+		Text(a.screen, 2, y, padRight(r.label, labelW), sDim, labelW)
+		Text(a.screen, 2+labelW, y, r.value, sNormal, w-labelW-4)
+		y++
+	}
+
+	// Modelfile parameters
+	if a.llmDetail != nil && len(a.llmDetail.Params) > 0 {
+		y++
+		Text(a.screen, 2, y, "Modelfile Parameters", sHeader, w-4)
+		y++
+		for key, val := range a.llmDetail.Params {
+			if y >= h-3 {
+				Text(a.screen, 2, y, "... (more)", sDim, w-4)
+				break
+			}
+			Text(a.screen, 4, y, padRight(key, labelW-2), sDim, labelW-2)
+			Text(a.screen, 2+labelW, y, val, sNormal, w-labelW-4)
+			y++
+		}
+	}
+
+	Text(a.screen, 2, h-2, "[Esc] back  [q] quit", sDim, w-4)
+}
+
+func (a *App) handleLLMDetail(ev *tcell.EventKey) bool {
+	switch ev.Key() {
+	case tcell.KeyEscape:
+		a.curScreen = ScreenLLMList
+	case tcell.KeyRune:
+		if ev.Rune() == 'q' {
+			return a.tryQuit()
 		}
 	}
 	return false

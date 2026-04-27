@@ -57,9 +57,10 @@ type ConvOverride struct {
 	Scope   string   // "users" or "groups"
 	Model   *Setting // nil = no override file on disk
 	Context *Setting
-	Compact *Setting
-	Prompt  *Setting
-	IsNew   bool // true if created in this session
+	Compact   *Setting
+	Prompt    *Setting
+	Translate *Setting
+	IsNew     bool // true if created in this session
 }
 
 func (c *ConvOverride) IsDirty() bool {
@@ -82,7 +83,7 @@ func (c *ConvOverride) DirtyCount() int {
 }
 
 func (c *ConvOverride) AllSettings() []*Setting {
-	return []*Setting{c.Model, c.Context, c.Compact, c.Prompt}
+	return []*Setting{c.Model, c.Context, c.Compact, c.Prompt, c.Translate}
 }
 
 // Tags returns short labels for which overrides exist.
@@ -99,6 +100,9 @@ func (c *ConvOverride) Tags() string {
 	}
 	if c.Prompt != nil && !c.Prompt.Deleted {
 		tags = append(tags, "prompt")
+	}
+	if c.Translate != nil && !c.Translate.Deleted {
+		tags = append(tags, "translate")
 	}
 	if len(tags) == 0 {
 		return "no overrides"
@@ -140,6 +144,7 @@ var hwDefs = []settingDef{
 	{"RAG min similarity", "JOI_RAG_MIN_SIMILARITY", TypeFloat, "0.45"},
 	{"Max input length", "JOI_MAX_INPUT_LENGTH", TypeInt, "1500"},
 	{"Max output length", "JOI_MAX_OUTPUT_LENGTH", TypeInt, "2000"},
+	{"Translate prefix", "JOI_TRANSLATE_MODEL_PREFIX", TypeString, "translategemma"},
 }
 
 var windDefs = []settingDef{
