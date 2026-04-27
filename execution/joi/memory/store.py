@@ -117,6 +117,7 @@ class Message:
     archived: bool = False
     sender_id: Optional[str] = None  # transport_id (phone number)
     sender_name: Optional[str] = None  # display name
+    translated_text: Optional[str] = None  # English version when translation is active
 
 
 @dataclass
@@ -179,6 +180,7 @@ CREATE TABLE IF NOT EXISTS messages (
     reply_to_id TEXT,
     sender_id TEXT,
     sender_name TEXT,
+    translated_text TEXT,
     timestamp INTEGER NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     processed INTEGER NOT NULL DEFAULT 0,
@@ -1091,6 +1093,14 @@ class MemoryStore:
             )
             conn.commit()
 
+        # Migration v20: translation support — add translated_text column to messages
+        cursor = conn.execute("PRAGMA table_info(messages)")
+        columns = {row["name"] for row in cursor.fetchall()}
+        if "translated_text" not in columns:
+            logger.info("Migration v20: Adding 'translated_text' column to messages")
+            conn.execute("ALTER TABLE messages ADD COLUMN translated_text TEXT")
+            conn.commit()
+
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
 
@@ -1637,6 +1647,20 @@ class MemoryStore:
         logger.debug("Stored message", extra={"direction": direction, "message_id": message_id})
         return cursor.lastrowid if cursor.rowcount > 0 else 0
 
+    def update_translated_text(self, message_id: str, translated_text: str) -> None:
+        """
+        Set the translated_text for an already-stored message.
+
+        Used by translation pipeline to store the English version after
+        the original has been stored.
+        """
+        conn = self._connect()
+        conn.execute(
+            "UPDATE messages SET translated_text = ? WHERE message_id = ?",
+            (translated_text, message_id),
+        )
+        conn.commit()
+
     def get_recent_messages(
         self,
         limit: int = 20,
@@ -1664,7 +1688,7 @@ class MemoryStore:
                     """
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
-                           archived, sender_id, sender_name
+                           archived, sender_id, sender_name, translated_text
                     FROM messages
                     WHERE content_type = ? AND conversation_id = ? AND archived = 0
                       AND timestamp >= ?
@@ -1678,7 +1702,7 @@ class MemoryStore:
                     """
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
-                           archived, sender_id, sender_name
+                           archived, sender_id, sender_name, translated_text
                     FROM messages
                     WHERE content_type = ? AND conversation_id = ? AND archived = 0
                     ORDER BY timestamp DESC
@@ -1692,7 +1716,7 @@ class MemoryStore:
                     """
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
-                           archived, sender_id, sender_name
+                           archived, sender_id, sender_name, translated_text
                     FROM messages
                     WHERE content_type = ? AND archived = 0
                       AND timestamp >= ?
@@ -1706,7 +1730,7 @@ class MemoryStore:
                     """
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
-                           archived, sender_id, sender_name
+                           archived, sender_id, sender_name, translated_text
                     FROM messages
                     WHERE content_type = ? AND archived = 0
                     ORDER BY timestamp DESC
@@ -1733,6 +1757,7 @@ class MemoryStore:
                 archived=bool(row["archived"]),
                 sender_id=row["sender_id"],
                 sender_name=row["sender_name"],
+                translated_text=row["translated_text"],
             )
             for row in rows
         ]
@@ -1766,7 +1791,7 @@ class MemoryStore:
                     """
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
-                           archived, sender_id, sender_name
+                           archived, sender_id, sender_name, translated_text
                     FROM messages
                     WHERE content_type = ? AND conversation_id = ? AND archived = 0
                       AND timestamp > ?
@@ -1780,7 +1805,7 @@ class MemoryStore:
                     """
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
-                           archived, sender_id, sender_name
+                           archived, sender_id, sender_name, translated_text
                     FROM messages
                     WHERE content_type = ? AND conversation_id = ? AND archived = 0
                     ORDER BY timestamp ASC
@@ -1793,7 +1818,7 @@ class MemoryStore:
                 """
                 SELECT id, message_id, direction, channel, content_type,
                        content_text, conversation_id, reply_to_id, timestamp, created_at,
-                       archived, sender_id, sender_name
+                       archived, sender_id, sender_name, translated_text
                 FROM messages
                 WHERE content_type = ? AND archived = 0
                 ORDER BY timestamp ASC
@@ -1819,6 +1844,7 @@ class MemoryStore:
                 archived=bool(row["archived"]),
                 sender_id=row["sender_id"],
                 sender_name=row["sender_name"],
+                translated_text=row["translated_text"],
             )
             for row in rows
         ]
