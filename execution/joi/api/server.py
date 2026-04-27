@@ -1842,6 +1842,34 @@ def receive_message(msg: InboundMessage):
                 return InboundResponse(status="ok", message_id=msg.message_id)
             queue_msg.heartbeat()  # Signal still working
 
+        # --- Inbound translation ---
+        translate_lang = get_translate_lang_for_conversation(
+            conversation_type=msg.conversation.type,
+            conversation_id=msg.conversation.id,
+            sender_id=msg.sender.transport_id,
+        )
+        if translate_lang:
+            translated_input = _translate_text(user_text, translate_lang, "inbound")
+            if translated_input is None:
+                # Translation failed — notify user and halt
+                _send_to_mesh(
+                    recipient_id=msg.sender.id,
+                    recipient_transport_id=msg.sender.transport_id,
+                    conversation=msg.conversation,
+                    text="I'm sorry, I have problems translating this.",
+                    reply_to=msg.message_id,
+                )
+                logger.info("Translation failure, halting", extra={
+                    "conversation_id": msg.conversation.id,
+                    "direction": "inbound",
+                    "action": "translate_halt",
+                })
+                os._exit(78)
+            # Store English translation on the already-stored inbound message
+            memory.update_translated_text(msg.message_id, translated_input)
+            # Replace user_text for all downstream processing (facts, reminders, LLM)
+            user_text = translated_input
+
         # Mood jump detection: classify user mood and check for significant shift
         mood_jump_text = None
         if wind_orchestrator and not msg.store_only:
@@ -2103,6 +2131,19 @@ def receive_message(msg: InboundMessage):
         # Format for Signal (convert **bold** to Unicode bold)
         response_text = format_for_signal(response_text)
 
+        # --- Outbound translation ---
+        original_en_response = response_text  # Preserve English for translated_text storage
+        if translate_lang:
+            translated_output = _translate_text(response_text, translate_lang, "outbound")
+            if translated_output is None:
+                logger.info("Translation failure, halting", extra={
+                    "conversation_id": msg.conversation.id,
+                    "direction": "outbound",
+                    "action": "translate_halt",
+                })
+                os._exit(78)
+            response_text = translated_output
+
         # Log response (redact content in privacy mode)
         response_len = len(response_text)
         privacy_mode = policy_manager.is_privacy_mode()
@@ -2150,6 +2191,10 @@ def receive_message(msg: InboundMessage):
             conversation_id=msg.conversation.id,
             reply_to_id=msg.message_id,
         )
+
+        # Store English original for LLM context building
+        if translate_lang:
+            memory.update_translated_text(outbound_message_id, original_en_response)
 
         # Check if memory consolidation needed
         _maybe_run_consolidation(conversation_id=msg.conversation.id)
