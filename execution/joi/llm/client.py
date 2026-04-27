@@ -75,6 +75,7 @@ class OllamaClient:
             "model": use_model,
             "prompt": prompt,
             "stream": False,
+            "think": False,
             "keep_alive": keep_alive if keep_alive is not None else self.keep_alive,
         }
 
@@ -139,6 +140,7 @@ class OllamaClient:
             "model": use_model,
             "messages": messages,
             "stream": False,
+            "think": False,
             "keep_alive": self.keep_alive,
         }
 
