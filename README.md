@@ -40,6 +40,7 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 - ✅ Reaction responses (contextual acknowledgments)
 - ✅ Response cooldown (configurable per DM/group)
 - ⚠️ Signal @mention detection (limited — signal-cli doesn't provide mentions array reliably)
+- ✅ Per-conversation translation (TranslateGemma, bidirectional, file-toggled)
 
 ### Wind (proactive messaging)
 - ✅ Impulse-based scheduler with accumulator, threshold drift, soft trigger
@@ -51,7 +52,7 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 - ✅ Topic priority decay with affinity protection
 - ✅ Wake-up procedure (gap marker + proactive re-engagement after long silence)
 - ✅ Day-of-week mood (workday/weekend background tint)
-- ⏳ Daily mood momentum
+- ✅ Intraday mood momentum (heated conversations amplify Joi's current emotion)
 
 ### Memory
 - ✅ Conversation context (configurable window)
@@ -93,7 +94,6 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 ### Near-term
 
 - **Prompt injection scanning** — scan fact writes for invisible Unicode and injection patterns before committing to the facts table
-- **Wind phase 4d** — daily mood momentum (day-of-week mood done)
 
 ### Medium-term
 

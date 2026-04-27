@@ -67,7 +67,7 @@ Hard gates run first. Any failure skips the tick entirely — no score computed,
 The per-tick score is the **sum** of all factor contributions, clamped to `[0.0, 1.0]`:
 
 ```
-score = base + silence + topic_pressure + fatigue + engagement
+score = base + silence + topic_pressure + fatigue + engagement + affinity + novelty + mood
 ```
 
 This score is added to the accumulator each eligible tick. The accumulator resets to 0 after a send.
@@ -82,6 +82,8 @@ This score is added to the accumulator each eligible tick. The accumulator reset
 | `topic_pressure_weight` | `0.2` | topic_pressure | `[0, weight]` | Boost when there are queued topics ready to send. Higher = more eager to send when topics exist. |
 | `fatigue_weight` | `0.3` | fatigue | `[-weight, 0]` | **Negative** damper. Scales with rolling 24h fire count / `daily_cap`. At cap, full weight is subtracted. |
 | `engagement_weight` | `0.2` | engagement | `[-weight, +weight]` | Boost/dampen based on engagement score (0.5 = neutral). Engaged users get more proactives; disengaged get fewer. |
+| `mood_weight` | `0.15` | mood | `[-weight, +weight]` | Phase 4d: impulse contribution from Joi's mood. Positive moods boost, negative moods dampen. Scales with `mood_intensity`. |
+| `momentum_nudge` | `0.05` | — | — | Phase 4d: intensity nudge applied per heated message. Amplifies Joi's current mood during fast conversations. Set 0 to disable. Env override: `JOI_WIND_MOMENTUM_NUDGE`. |
 
 **Silence factor formula:**
 ```
