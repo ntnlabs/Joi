@@ -2571,7 +2571,7 @@ def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[st
         if msg.content_text:
             role = "user" if msg.direction == "inbound" else "assistant"
 
-            content = msg.content_text
+            content = msg.translated_text if msg.translated_text else msg.content_text
             # Strip internal storage prefixes from outbound messages
             if role == "assistant":
                 for prefix in _STORAGE_PREFIXES:
