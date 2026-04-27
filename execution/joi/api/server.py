@@ -430,8 +430,8 @@ consolidator = MemoryConsolidator(
 
 
 # --- Compact Command ---
-_COMPACT_TRIGGER = re.compile(r"^\s*compact\s*$", re.I)
-_COMPACT_CONFIRM = re.compile(r"^\s*cells\s+interlinked\s*$", re.I)
+_COMPACT_TRIGGER = re.compile(r"^\s*(?:@\S+\s+)?compact\s*$", re.I)
+_COMPACT_CONFIRM = re.compile(r"^\s*(?:@\S+\s+)?cells\s+interlinked\s*$", re.I)
 _pending_compact: dict = {}  # conversation_id -> True (awaiting confirmation)
 
 # --- Wind Snooze Command Patterns ---
