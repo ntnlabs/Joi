@@ -55,6 +55,7 @@ class OllamaClient:
         prompt: str,
         system: Optional[str] = None,
         model: Optional[str] = None,
+        keep_alive: Optional[str] = None,
     ) -> LLMResponse:
         """
         Generate a response from the LLM.
@@ -74,7 +75,7 @@ class OllamaClient:
             "model": use_model,
             "prompt": prompt,
             "stream": False,
-            "keep_alive": self.keep_alive,
+            "keep_alive": keep_alive if keep_alive is not None else self.keep_alive,
         }
 
         if system:

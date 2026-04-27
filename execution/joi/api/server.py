@@ -52,6 +52,8 @@ from config import (
     get_context_for_conversation,
     get_knowledge_scopes_for_conversation,
     get_consolidation_model_for_conversation,
+    get_translate_lang_for_conversation,
+    get_translate_lang_by_id,
     ensure_prompts_dir,
     sanitize_scope,
 )
@@ -260,6 +262,7 @@ def _get_valid_hmac_secrets() -> list[bytes]:
 # Initialize Ollama client
 LLM_TIMEOUT = float(os.getenv("JOI_LLM_TIMEOUT", "180"))
 LLM_KEEP_ALIVE = os.getenv("JOI_LLM_KEEP_ALIVE", "30m")
+TRANSLATE_MODEL_PREFIX = os.getenv("JOI_TRANSLATE_MODEL_PREFIX", "translategemma")
 llm = OllamaClient(
     base_url=settings.ollama_url,
     model=settings.ollama_model,
@@ -2458,6 +2461,56 @@ def _write_brain_debug(message_id: str, conversation_id: str, model: str,
                       default_style=None, width=120)
     except Exception as e:
         logger.warning("brain_debug write failed", extra={"error": str(e)})
+
+
+def _translate_text(text: str, lang: str, direction: str) -> Optional[str]:
+    """
+    Translate text using the translation model.
+
+    Args:
+        text: Text to translate
+        lang: Language code (e.g., 'sk')
+        direction: 'inbound' ({lang}-en) or 'outbound' (en-{lang})
+
+    Returns:
+        Translated text, or None on failure.
+    """
+    if direction == "inbound":
+        model_name = f"{TRANSLATE_MODEL_PREFIX}-{lang}-en"
+    else:
+        model_name = f"{TRANSLATE_MODEL_PREFIX}-en-{lang}"
+
+    logger.info("Translation request", extra={
+        "direction": direction,
+        "model": model_name,
+        "text_length": len(text),
+        "action": "translate_request",
+    })
+
+    response = llm.generate(
+        prompt=text,
+        model=model_name,
+        keep_alive="0",
+    )
+
+    if response.error or not response.text.strip():
+        logger.info("Translation failed", extra={
+            "direction": direction,
+            "model": model_name,
+            "error": response.error or "empty_response",
+            "action": "translate_fail",
+        })
+        return None
+
+    translated = response.text.strip()
+    logger.info("Translation complete", extra={
+        "direction": direction,
+        "model": model_name,
+        "input_length": len(text),
+        "output_length": len(translated),
+        "action": "translate_complete",
+    })
+    return translated
 
 
 def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[str, str]]:
