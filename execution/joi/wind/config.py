@@ -2,6 +2,7 @@
 Wind configuration dataclass.
 """
 
+import os
 from dataclasses import dataclass, field
 from typing import List
 
@@ -40,6 +41,9 @@ class WindConfig:
     active_convo_hot_gap_minutes: int = 3  # EMA <= this → hot conversation (3 min)
     active_convo_silence_minutes: int = 60  # required silence when hot/heated (1 hour)
     active_convo_ema_alpha: float = 0.3    # EMA smoothing factor
+
+    # Phase 4d: Mood momentum (intraday intensity amplification)
+    momentum_nudge: float = 0.05           # Intensity nudge per heated message
 
     # Impulse thresholds
     impulse_threshold: float = 0.6  # Minimum score to trigger
@@ -138,6 +142,7 @@ class WindConfig:
             active_convo_hot_gap_minutes=data.get("active_convo_hot_gap_minutes", 3),
             active_convo_silence_minutes=data.get("active_convo_silence_minutes", 60),
             active_convo_ema_alpha=data.get("active_convo_ema_alpha", 0.3),
+            momentum_nudge=float(os.getenv("JOI_WIND_MOMENTUM_NUDGE", data.get("momentum_nudge", 0.05))),
             impulse_threshold=data.get("impulse_threshold", 0.6),
             base_impulse=data.get("base_impulse", 0.1),
             silence_weight=data.get("silence_weight", 0.3),
@@ -196,6 +201,7 @@ class WindConfig:
             "active_convo_hot_gap_minutes": self.active_convo_hot_gap_minutes,
             "active_convo_silence_minutes": self.active_convo_silence_minutes,
             "active_convo_ema_alpha": self.active_convo_ema_alpha,
+            "momentum_nudge": self.momentum_nudge,
             "impulse_threshold": self.impulse_threshold,
             "base_impulse": self.base_impulse,
             "silence_weight": self.silence_weight,
