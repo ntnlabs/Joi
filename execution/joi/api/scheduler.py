@@ -61,6 +61,7 @@ class Scheduler:
         self._reminder_manager = None
         self._note_manager = None
         self._message_queue = None
+        self._translate_outbound: Optional[Callable] = None
 
     def set_dependencies(
         self,
@@ -83,6 +84,7 @@ class Scheduler:
         reminder_manager,
         note_manager=None,
         message_queue=None,
+        translate_outbound: Optional[Callable] = None,
     ):
         """Set dependencies after construction to avoid circular imports."""
         self._memory = memory
@@ -104,6 +106,7 @@ class Scheduler:
         self._reminder_manager = reminder_manager
         self._note_manager = note_manager
         self._message_queue = message_queue
+        self._translate_outbound = translate_outbound
 
     def _get_conversation_tz(self, conversation_id: str):
         """Per-conversation timezone, falls back to UTC."""
@@ -116,6 +119,30 @@ class Scheduler:
                 except Exception:
                     pass
         return ZoneInfo("UTC")
+
+    def _translate_if_needed(self, text: str, conversation_id: str) -> str:
+        """Translate outbound text if translation is enabled for this conversation.
+
+        Returns translated text, or original text if no translation needed.
+        On translation failure, calls os._exit(78).
+        """
+        if not self._translate_outbound:
+            return text
+
+        from config.prompts import get_translate_lang_by_id
+        lang = get_translate_lang_by_id(conversation_id)
+        if not lang:
+            return text
+
+        translated = self._translate_outbound(text, lang, "outbound")
+        if translated is None:
+            logger.info("Translation failure in scheduler, halting", extra={
+                "conversation_id": conversation_id,
+                "direction": "outbound",
+                "action": "translate_halt",
+            })
+            os._exit(78)
+        return translated
 
     def start(self):
         """Start the scheduler thread."""
@@ -697,6 +724,10 @@ class Scheduler:
         conv_type = "group" if is_group else "direct"
         conversation = self._InboundConversation(type=conv_type, id=conversation_id)
 
+        # Translate outbound if needed
+        original_en = message_text
+        message_text = self._translate_if_needed(message_text, conversation_id)
+
         success = self._send_to_mesh(
             recipient_id="owner",
             recipient_transport_id=conversation_id,
@@ -707,14 +738,17 @@ class Scheduler:
         )
 
         if success and self._memory:
+            msg_id = str(uuid.uuid4())
             self._memory.store_message(
-                message_id=str(uuid.uuid4()),
+                message_id=msg_id,
                 direction="outbound",
                 content_type="text",
                 content_text=f"[JOI-WAKEUP] {message_text}",
                 timestamp=int(time.time() * 1000),
                 conversation_id=conversation_id,
             )
+            if message_text != original_en:
+                self._memory.update_translated_text(msg_id, f"[JOI-WAKEUP] {original_en}")
 
         # Deliberately does NOT update proactive_fire_times — wake-up is a one-time special
         # event per silence gap, not a regular Wind proactive, so it should not count toward
@@ -864,6 +898,10 @@ class Scheduler:
                 recipient_id = "owner"  # Proactive sends go to allowlisted users
                 recipient_transport_id = conv_id
 
+                # Translate outbound if needed
+                original_en = message_text
+                message_text = self._translate_if_needed(message_text, conv_id)
+
                 # Send the message
                 success = self._send_to_mesh(
                     recipient_id=recipient_id,
@@ -887,6 +925,10 @@ class Scheduler:
                         timestamp=int(time.time() * 1000),
                         conversation_id=conv_id,
                     )
+
+                    # Store English original for LLM context
+                    if message_text != original_en:
+                        self._memory.update_translated_text(message_id, f"[JOI-WIND] {original_en}")
 
                     # Record successful send with message_id for engagement tracking
                     self._wind_orchestrator.record_proactive_sent(
@@ -969,6 +1011,10 @@ class Scheduler:
                 conv_type = "direct"
                 conversation = self._InboundConversation(type=conv_type, id=reminder.conversation_id)
 
+                # Translate outbound if needed
+                original_en = message_text
+                message_text = self._translate_if_needed(message_text, reminder.conversation_id)
+
                 success = self._send_to_mesh(
                     recipient_id="owner",
                     recipient_transport_id=reminder.conversation_id,
@@ -989,6 +1035,9 @@ class Scheduler:
                         timestamp=int(time.time() * 1000),
                         conversation_id=reminder.conversation_id,
                     )
+
+                    if message_text != original_en:
+                        self._memory.update_translated_text(message_id, f"[JOI-REMINDER] {original_en}")
 
                     # Mark fired then reschedule if recurring
                     self._reminder_manager.mark_fired(reminder.id)

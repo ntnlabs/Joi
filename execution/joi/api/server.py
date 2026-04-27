@@ -1322,6 +1322,7 @@ def startup_event():
             reminder_manager=reminder_manager,
             note_manager=note_manager,
             message_queue=message_queue,
+            translate_outbound=_translate_text,
         )
         scheduler.start()
     wind_config = _get_wind_config()
