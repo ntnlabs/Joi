@@ -9,6 +9,7 @@ class Settings:
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3"
     ollama_num_ctx: int = 0  # 0 = use model default
+    translate_model_prefix: str = "translategemma"
     mesh_url: str = "http://mesh:8444"
     log_level: str = "INFO"
 
@@ -20,6 +21,7 @@ def load_settings() -> Settings:
         ollama_url=os.getenv("JOI_OLLAMA_URL", "http://localhost:11434"),
         ollama_model=os.getenv("JOI_OLLAMA_MODEL", "llama3"),
         ollama_num_ctx=int(os.getenv("JOI_OLLAMA_NUM_CTX", "0")),
+        translate_model_prefix=os.getenv("JOI_TRANSLATE_MODEL_PREFIX", "translategemma"),
         mesh_url=os.getenv("JOI_MESH_URL", "http://mesh:8444"),
         log_level=os.getenv("JOI_LOG_LEVEL", "INFO"),
     )
