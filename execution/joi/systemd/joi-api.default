@@ -37,6 +37,9 @@ JOI_LLM_KEEP_ALIVE=30m
 # This env var overrides Modelfile if set. Use 0 or leave unset to use Modelfile value.
 # Only use as fallback when you can't control the Modelfile.
 #JOI_OLLAMA_NUM_CTX=0
+# Translation model prefix - derives inbound/outbound model names as {prefix}-{lang}-en / {prefix}-en-{lang}
+# Requires per-user/group .translate file with language code (e.g., "sk") to enable
+#JOI_TRANSLATE_MODEL_PREFIX=translategemma
 
 # --- Mesh ---
 # Mesh proxy URL (Nebula IP)
