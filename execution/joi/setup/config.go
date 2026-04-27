@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -216,6 +217,7 @@ var promptExts = []struct {
 	{".context", "Context msgs", TypeInt, "Context"},
 	{".compact_window", "Compact batch", TypeInt, "Compact"},
 	{".txt", "System prompt", TypeText, "Prompt"},
+	{".translate", "Translation", TypeString, "Translate"},
 }
 
 func discoverConversations(promptsDir string) ([]*ConvOverride, error) {
@@ -276,6 +278,8 @@ func discoverConversations(promptsDir string) ([]*ConvOverride, error) {
 					s.Value = string(content)
 					s.OnDisk = string(content)
 					conv.Prompt = s
+				case "Translate":
+					conv.Translate = s
 				}
 			}
 		}
@@ -593,6 +597,110 @@ func (cfg *Config) syncHWToEnvLines() {
 			}
 		}
 	}
+}
+
+// --- Ollama API ---
+
+type OllamaModel struct {
+	Name          string
+	Size          int64
+	ParameterSize string
+	Quantization  string
+	Family        string
+}
+
+type OllamaModelDetail struct {
+	Parameters string            // raw "key value\n..." from Modelfile
+	Params     map[string]string // parsed key->value
+	Template   string
+	System     string
+	Modelfile  string
+}
+
+func ollamaURL(lines []EnvLine) string {
+	return envValue(lines, "JOI_OLLAMA_URL", "http://localhost:11434")
+}
+
+func listOllamaModels(baseURL string) ([]OllamaModel, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(baseURL + "/api/tags")
+	if err != nil {
+		return nil, fmt.Errorf("ollama unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Models []struct {
+			Name    string `json:"name"`
+			Size    int64  `json:"size"`
+			Details struct {
+				ParameterSize    string `json:"parameter_size"`
+				QuantizationLevel string `json:"quantization_level"`
+				Family           string `json:"family"`
+			} `json:"details"`
+		} `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse model list: %w", err)
+	}
+	models := make([]OllamaModel, len(result.Models))
+	for i, m := range result.Models {
+		models[i] = OllamaModel{
+			Name:          m.Name,
+			Size:          m.Size,
+			ParameterSize: m.Details.ParameterSize,
+			Quantization:  m.Details.QuantizationLevel,
+			Family:        m.Details.Family,
+		}
+	}
+	return models, nil
+}
+
+func showOllamaModel(baseURL, name string) (*OllamaModelDetail, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	body := fmt.Sprintf(`{"name":%q}`, name)
+	resp, err := client.Post(baseURL+"/api/show", "application/json", strings.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("ollama unreachable: %w", err)
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Parameters string `json:"parameters"`
+		Template   string `json:"template"`
+		System     string `json:"system"`
+		Modelfile  string `json:"modelfile"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("parse model detail: %w", err)
+	}
+	params := make(map[string]string)
+	for _, line := range strings.Split(result.Parameters, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) == 2 {
+			params[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	return &OllamaModelDetail{
+		Parameters: result.Parameters,
+		Params:     params,
+		Template:   result.Template,
+		System:     result.System,
+		Modelfile:  result.Modelfile,
+	}, nil
+}
+
+func formatBytes(b int64) string {
+	const (
+		mb = 1024 * 1024
+		gb = 1024 * mb
+	)
+	if b >= gb {
+		return fmt.Sprintf("%.1f GB", float64(b)/float64(gb))
+	}
+	return fmt.Sprintf("%.0f MB", float64(b)/float64(mb))
 }
 
 func (cfg *Config) syncPolicyToDoc() {
