@@ -1360,23 +1360,22 @@ Success criteria:
   - `_compute_learned_quiet_start()` — exponentially-weighted circular mean over a rolling buffer of daily sign-off times (`wind_quiet_samples` table, one row per conversation per day). Requires ≥3 samples before overriding config default; recent days weighted higher than older ones.
   - Persisted to `learned_quiet_start_minutes` in `wind_state`; overrides config default in `_check_not_quiet_hours()`
 
-### Phase 4d: Personality Variance
+### Phase 4d: Personality Variance (Complete)
 *Depends on: Phase 3 (WindMood foundation)*
 
 Extends WindMood with higher-level personality features that shape engagement over days/weeks.
 
-- **Daily mood (momentum-based)**: smooth transitions influenced by yesterday's engagement
-  - Mood multiplier (0.7-1.3) affecting impulse scores
-  - Good conversations lift mood, inactivity drifts it down
-  - Persist per conversation in wind_state
-- **Day-of-week personality**: different profiles by day
-  - Weekdays: more task-focused, check-ins about work/plans
-  - Weekends: more relaxed, casual topics, lighter mood
-  - Monday: week ahead check-in
-  - Friday: lighter, wind-down mood
-- **Momentum (upward only)**: engaging conversations boost next-day impulse
-  - Never goes below baseline (Joi shouldn't go quiet if user is quiet)
-  - Measures: message count, response length, conversation duration
+- **Day-of-week personality** (2026-04-23): workday/weekend background tint injected via time awareness prompt
+  - Weekdays: "slightly more subdued and grounded"
+  - Weekends: "lighter and more playful"
+  - Piggybacks on existing time injection, no new state or config
+- **Intraday mood momentum** (2026-04-27): heated conversation pace amplifies Joi's current mood intensity
+  - Trigger: `convo_gap_ema_seconds` drops below heated threshold (default 2 min)
+  - Nudge: `mood_intensity += momentum_nudge` (default 0.05) per heated message, clamped at 1.0
+  - Valence gate: only non-neutral moods are amplified (joy/trust/anticipation/anger/disgust/fear/sadness)
+  - Decay: existing daily `rollup_mood()` (85/15 blend toward 0.5)
+  - Config: `JOI_WIND_MOMENTUM_NUDGE` env var override
+- **Overnight mood carry**: mood state persists across days via `wind_state`, daily rollup decays intensity gently but preserves the emotion. No dedicated mechanism needed — inherent in the existing persistence model.
 
 Together, Phase 4a-4d transform Wind from "queue-based reminders" to "genuine companion initiative."
 
