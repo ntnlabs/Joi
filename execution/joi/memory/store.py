@@ -2015,6 +2015,33 @@ class MemoryStore:
         })
         return cursor.lastrowid or 0
 
+    def get_fact_keys(
+        self,
+        conversation_id: str,
+        limit: int = 100,
+    ) -> List[str]:
+        """
+        Get existing category/key pairs for a conversation.
+
+        Used to feed into extraction prompts so the LLM reuses existing keys
+        instead of generating variants (e.g., 'fav_color' vs 'favorite_color').
+
+        Returns at most `limit` pairs to avoid bloating the prompt.
+        """
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        rows = conn.execute(
+            """
+            SELECT DISTINCT category, key FROM user_facts
+            WHERE conversation_id = ? AND active = 1
+              AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY category, key
+            LIMIT ?
+            """,
+            (conversation_id, now_ms, limit),
+        ).fetchall()
+        return [f"{row[0]}/{row[1]}" for row in rows]
+
     def get_facts(
         self,
         min_confidence: float = 0.5,
