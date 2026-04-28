@@ -899,7 +899,7 @@ def _detect_and_extract_fact(
     # Fetch existing keys for dedup
     existing = memory.get_fact_keys(conversation_id) if conversation_id else []
     if existing:
-        keys_hint = "\n\nExisting fact keys (reuse when the fact is about the same thing):\n" + ", ".join(existing)
+        keys_hint = "Existing fact keys (reuse when the fact is about the same thing):\n" + ", ".join(existing)
     else:
         keys_hint = ""
 
@@ -919,7 +919,7 @@ Rules:
 - Casual chat, commands, and rhetorical questions are always false.
 
 If YES, extract the fact as JSON:
-{{"remember": true, "category": "personal|preference|work|routine|interest|relationship", "key": "short_id", "value": "the fact"}}
+{{"remember": true, "category": "personal|preference|work|health|skill|goal|routine|opinion|event|technical", "key": "short_id", "value": "the fact"}}
 
 If NO, return:
 {{"remember": false}}
