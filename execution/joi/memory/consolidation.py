@@ -270,7 +270,20 @@ class MemoryConsolidator:
         prompt_template = get_fact_extraction_prompt_for_conversation(convo_id)
 
         conversation_text = format_messages_for_llm(inbound_messages)
-        prompt = prompt_template.format(conversation=conversation_text)
+
+        # Fetch existing fact keys for dedup — LLM reuses these instead of inventing variants
+        existing = self.memory.get_fact_keys(convo_id) if convo_id else []
+        if existing:
+            keys_block = "Existing fact keys (reuse these when the fact is about the same thing):\n" + "\n".join(f"  - {k}" for k in existing)
+        else:
+            keys_block = ""
+
+        # Try with existing_keys placeholder; fall back to without if template lacks it
+        # (custom .fact_prompt files may not have {existing_keys})
+        try:
+            prompt = prompt_template.format(conversation=conversation_text, existing_keys=keys_block)
+        except KeyError:
+            prompt = prompt_template.format(conversation=conversation_text)
 
         try:
             response = self.llm.generate(prompt=prompt, model=model)
