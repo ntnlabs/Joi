@@ -518,6 +518,9 @@ Each fact needs these fields:
   The "event" category ALWAYS requires ttl_hours unless it is a recurring routine.
   Temporary emotional or physical states (tired, sad, sick, excited) always need ttl_hours and should NOT be marked important.
 
+KEY REUSE: If updating a fact you already know, reuse the exact existing key.
+{existing_keys}
+
 Include the person's name in value (never "User" or "the user").
 If truly no facts, return: []
 
