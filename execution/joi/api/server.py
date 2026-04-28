@@ -896,6 +896,13 @@ def _detect_and_extract_fact(
 
     logger.info("Checking for remember request (LLM)")
 
+    # Fetch existing keys for dedup
+    existing = memory.get_fact_keys(conversation_id) if conversation_id else []
+    if existing:
+        keys_hint = "\n\nExisting fact keys (reuse when the fact is about the same thing):\n" + ", ".join(existing)
+    else:
+        keys_hint = ""
+
     # Ask LLM to detect and extract in one call
     prompt = f"""Analyze this message: "{text}"
 
@@ -916,7 +923,7 @@ If YES, extract the fact as JSON:
 
 If NO, return:
 {{"remember": false}}
-
+{keys_hint}
 Return ONLY valid JSON, nothing else:"""
 
     result = _llm_detect(prompt, model=DETECTOR_MODEL)
