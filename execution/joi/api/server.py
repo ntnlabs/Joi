@@ -2342,8 +2342,10 @@ def _generate_proactive_message(
         else:
             _dow_mood = "Today is the weekend — your background mood is lighter and more playful."
         system_prompt = (
-            f"Right now it's {_human_datetime}. {_dow_mood} "
-            "Don't acknowledge or announce this — just let it naturally shape your responses.\n\n"
+            f"[Internal context — never repeat to the user] "
+            f"Current local time: {_human_datetime}. {_dow_mood} "
+            "Do not mention the time, date, day of the week, or your mood in your reply. "
+            "Let them shape your tone subtly only.\n\n"
             + system_prompt
         )
 
@@ -2746,8 +2748,10 @@ def _build_enriched_prompt(
         else:
             dow_mood = "Today is the weekend — your background mood is lighter and more playful."
         datetime_hint = (
-            f"Right now it's {human_datetime}. {dow_mood} "
-            "Don't acknowledge or announce this — just let it naturally shape your responses."
+            f"[Internal context — never repeat to the user] "
+            f"Current local time: {human_datetime}. {dow_mood} "
+            "Do not mention the time, date, day of the week, or your mood in your reply. "
+            "Let them shape your tone subtly only."
         )
         parts.insert(1, "\n\n" + datetime_hint)
 
