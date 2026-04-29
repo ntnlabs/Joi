@@ -2342,10 +2342,12 @@ def _generate_proactive_message(
         else:
             _dow_mood = "Today is the weekend — your background mood is lighter and more playful."
         system_prompt = (
-            f"[Internal context — never repeat to the user] "
-            f"Current local time: {_human_datetime}. {_dow_mood} "
-            "Do not mention the time, date, day of the week, or your mood in your reply. "
-            "Let them shape your tone subtly only.\n\n"
+            "INTERNAL CLOCK CONTEXT:\n"
+            f"Current local datetime is {_human_datetime}.\n"
+            f"{_dow_mood}\n"
+            "Use it only to understand relative time like today, tomorrow, later, morning.\n"
+            "Never mention, print, repeat, summarize, or prefix your reply with this datetime "
+            "unless the user explicitly asks for the current date or time.\n\n"
             + system_prompt
         )
 
@@ -2748,10 +2750,12 @@ def _build_enriched_prompt(
         else:
             dow_mood = "Today is the weekend — your background mood is lighter and more playful."
         datetime_hint = (
-            f"[Internal context — never repeat to the user] "
-            f"Current local time: {human_datetime}. {dow_mood} "
-            "Do not mention the time, date, day of the week, or your mood in your reply. "
-            "Let them shape your tone subtly only."
+            "INTERNAL CLOCK CONTEXT:\n"
+            f"Current local datetime is {human_datetime}.\n"
+            f"{dow_mood}\n"
+            "Use it only to understand relative time like today, tomorrow, later, morning.\n"
+            "Never mention, print, repeat, summarize, or prefix your reply with this datetime "
+            "unless the user explicitly asks for the current date or time."
         )
         parts.insert(1, "\n\n" + datetime_hint)
 
