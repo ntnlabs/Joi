@@ -43,6 +43,29 @@ LIFECYCLE_RULES = {
 DEFAULT_LIFECYCLE = {"engaged": "mark_engaged", "ignored": "retry_1", "deflected": "dismiss"}
 
 
+def _sanitize_for_prompt(text, max_len: int = 120) -> str:
+    """
+    Make a value safe to inject into a prompt that asks the LLM
+    for JSON output: coerce to str, drop braces, quotes, newlines,
+    control chars; collapse whitespace; cap length.
+
+    Coerces non-strings (dict, list, int, None) because some historical
+    rows have a JSON object stored where a string was expected; without
+    coercion json.loads gives us a dict and re.sub raises TypeError.
+    """
+    if text is None:
+        return ""
+    if not isinstance(text, str):
+        text = str(text)
+    if not text:
+        return ""
+    cleaned = re.sub(r'[\x00-\x1f\x7f"{}]', " ", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if len(cleaned) > max_len:
+        cleaned = cleaned[: max_len - 1].rstrip() + "…"
+    return cleaned
+
+
 class WindOrchestrator:
     """
     Main orchestrator for Wind proactive messaging.
@@ -692,9 +715,9 @@ class WindOrchestrator:
                 conversation_id=topic.conversation_id,
                 key_points_json=json.dumps({
                     "topic_key": key,
-                    "topic_title": topic.title,
+                    "topic_title": _sanitize_for_prompt(topic.title, max_len=80),
                     "topic_id": topic.id,
-                    "description": first_sentence,
+                    "description": _sanitize_for_prompt(first_sentence, max_len=120),
                 }),
             )
             logger.info("Stored topic outcome summary", extra={
@@ -1090,8 +1113,11 @@ class WindOrchestrator:
             if s.key_points_json:
                 try:
                     kp = json.loads(s.key_points_json)
-                    title = kp.get("topic_title") or s.summary_text[:80]
-                    desc = kp.get("description")
+                    title = _sanitize_for_prompt(
+                        kp.get("topic_title") or s.summary_text[:80],
+                        max_len=80,
+                    )
+                    desc = _sanitize_for_prompt(kp.get("description") or "", max_len=120)
                     if desc and desc.lower() != title.lower():
                         return f"{title}: {desc}"
                     return title
@@ -1099,7 +1125,7 @@ class WindOrchestrator:
                     pass
             # fallback for old records with no key_points_json
             first = (s.summary_text.split(".")[0] + ".").strip()[:120]
-            return first
+            return _sanitize_for_prompt(first, max_len=120)
 
         resolved_block = "\n".join(f"- {_resolved_title(s)}" for s in resolved_summaries) or "(none)"
 
