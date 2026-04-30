@@ -1389,7 +1389,7 @@ the topic queue clean and Wind state coherent over time, especially across inact
   - EMA of inter-message gap per conversation (`convo_gap_ema_seconds`)
   - When EMA ≤ `active_convo_gap_minutes`, conversation is "hot" — Wind requires longer silence before firing
   - Prevents Wind from interrupting active back-and-forth exchanges
-  - Config: `active_convo_gap_minutes`, `active_convo_silence_minutes`
+  - Config: `active_convo_gap_minutes`, `active_convo_silence_multiplier` (clamp 30–120 min)
 
 - **Rolling 24h daily cap** ✅ *Implemented*
   - Fire timestamps stored as `proactive_fire_times_json`; each slot expires 24h after it happened

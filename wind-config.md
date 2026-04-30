@@ -54,6 +54,7 @@ Hard gates run first. Any failure skips the tick entirely — no score computed,
 | `daily_cap` | `3` | Max proactive messages per rolling 24h window. Each fire expires 24h after it happened, freeing a slot. Hard stop regardless of score. |
 | `max_unanswered_streak` | `2` | Stop sending after N consecutive proactives with no user reply. Resets when user responds. |
 | `min_silence_minutes` | `30` | Minimum minutes since last user message before Wind is eligible. Prevents interrupting active conversations. |
+| `active_convo_silence_multiplier` | `3.0` | When the conversation is heated (EMA ≤ `active_convo_gap_minutes`), required silence becomes `min_silence_minutes * this`, clamped to `[30, 120]` minutes. Default → 90 min heated silence. Env override: `JOI_WIND_ACTIVE_CONVO_SILENCE_MULTIPLIER`. |
 
 **Tuning notes:**
 - `min_silence_minutes` is the most impactful gate for responsiveness. Lower it (e.g., 10–15) for more aggressive behavior.

@@ -89,6 +89,8 @@ JOI_REQUIRE_ENCRYPTED_DB=1
 
 # Wind mood momentum: intensity nudge per heated message (0 = disable)
 #JOI_WIND_MOMENTUM_NUDGE=0.05
+# Heated-conversation silence multiplier: heated silence required = clamp(min_silence_minutes * this, 30, 120) minutes.
+#JOI_WIND_ACTIVE_CONVO_SILENCE_MULTIPLIER=3.0
 # Topic priority decay: base points subtracted per day (scales with queue depth via sqrt)
 #WIND_TOPIC_PRIORITY_DECAY_POINTS=4
 # Queue depth at which decay equals base_points exactly (set to 0 to disable decay)
