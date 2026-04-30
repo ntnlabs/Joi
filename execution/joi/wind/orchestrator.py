@@ -1449,7 +1449,14 @@ class WindOrchestrator:
             mean_angle += 2 * math.pi
         result = int(round(mean_angle * period / (2 * math.pi)))
 
-        return min(result, self._LEARNED_QUIET_MAX_MINUTES)
+        # Valid wrap zone: 18:00 (1080) through 03:00 (180).
+        # Evening sign-offs (>= 18:00) and very-early-morning (<= 03:00) are
+        # legitimate; keep them as-is. Daytime means (03:00–18:00) are
+        # implausible noise — fall back to the 03:00 cap.
+        EVENING_FLOOR = 18 * 60  # 1080
+        if result >= EVENING_FLOOR or result <= self._LEARNED_QUIET_MAX_MINUTES:
+            return result
+        return self._LEARNED_QUIET_MAX_MINUTES
 
     def deduplicate_topics_all(self, now: Optional[datetime] = None) -> None:
         """End-of-day LLM pass to collapse near-duplicate pending topics."""
