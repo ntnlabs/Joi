@@ -21,6 +21,10 @@ printf "Hostname for this device [joi]: "
 read HOSTNAME
 HOSTNAME="${HOSTNAME:-joi}"
 
+printf "Local DNS domain [home.arpa]: "
+read DOMAIN
+DOMAIN="${DOMAIN:-home.arpa}"
+
 printf "Internal interface [eth0]: "
 read INT_IF
 INT_IF="${INT_IF:-eth0}"
@@ -60,6 +64,7 @@ esac
 echo ""
 echo "Configuration Summary:"
 echo "  Hostname:       $HOSTNAME"
+echo "  DNS domain:     $DOMAIN"
 echo "  INT interface:  $INT_IF"
 echo "  Gateway/hopper: $GATEWAY_IP"
 echo "  NTP server:     $NTP_IP"
@@ -80,6 +85,12 @@ esac
 echo ""
 echo "[1/5] Setting hostname..."
 hostnamectl set-hostname "$HOSTNAME"
+
+# Pin FQDN -> 127.0.1.1 in /etc/hosts so sudo and other tools can resolve
+# the local hostname even when DNS is unreachable (offline / WAN-cut mode).
+FQDN="$HOSTNAME.$DOMAIN"
+sed -i '/^127\.0\.1\.1[[:space:]]/d' /etc/hosts
+echo "127.0.1.1 $FQDN $HOSTNAME" >> /etc/hosts
 
 ###########################################
 # JOI USER + DIRECTORIES
