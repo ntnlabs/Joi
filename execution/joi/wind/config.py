@@ -7,11 +7,15 @@ from dataclasses import dataclass, field
 from typing import List
 
 
-# Heated-conversation silence is derived as min_silence_minutes * multiplier,
-# then clamped to these bounds so pathological tunings (very low or very high
-# min_silence_minutes) can't push the heated-silence requirement somewhere absurd.
-_HEATED_SILENCE_FLOOR_MINUTES = 30
-_HEATED_SILENCE_CEIL_MINUTES = 120
+# Heated-conversation silence: extra postponement that scales linearly with
+# min_silence_minutes between two policy anchors. The relationship is
+# hard-coded — there is no multiplier knob; the only tuning lever is
+# min_silence_minutes itself. At base <= LOW_BASE the extra equals FLOOR;
+# at base >= HIGH_BASE the extra equals CEIL; linear interpolation in between.
+_HEATED_EXTRA_LOW_BASE = 30
+_HEATED_EXTRA_HIGH_BASE = 240
+_HEATED_EXTRA_FLOOR_MINUTES = 30
+_HEATED_EXTRA_CEIL_MINUTES = 120
 
 
 def _parse_quiet_minutes(value, default: int) -> int:
@@ -46,9 +50,6 @@ class WindConfig:
     # Hot conversation suppression (Phase 5)
     active_convo_gap_minutes: int = 2    # EMA <= this → heated conversation (2 min)
     active_convo_hot_gap_minutes: int = 3  # EMA <= this → hot conversation (3 min)
-    # Heated-conversation silence: derived from min_silence_minutes,
-    # multiplied and clamped so the two stay coherent when tuned.
-    active_convo_silence_multiplier: float = 3.0
     active_convo_ema_alpha: float = 0.3    # EMA smoothing factor
 
     # Phase 4d: Mood momentum (intraday intensity amplification)
@@ -135,14 +136,22 @@ class WindConfig:
 
     def heated_silence_seconds(self) -> float:
         """Required silence (seconds) before Wind may fire during a heated
-        conversation. Derived from min_silence_minutes * the multiplier,
-        clamped to [_HEATED_SILENCE_FLOOR_MINUTES, _HEATED_SILENCE_CEIL_MINUTES]."""
-        raw = self.min_silence_minutes * self.active_convo_silence_multiplier
-        capped = max(
-            _HEATED_SILENCE_FLOOR_MINUTES,
-            min(_HEATED_SILENCE_CEIL_MINUTES, raw),
-        )
-        return capped * 60
+        conversation. Defined as min_silence_minutes + extra, where extra
+        ramps linearly from _HEATED_EXTRA_FLOOR_MINUTES at
+        min_silence_minutes <= _HEATED_EXTRA_LOW_BASE up to
+        _HEATED_EXTRA_CEIL_MINUTES at >= _HEATED_EXTRA_HIGH_BASE."""
+        base = self.min_silence_minutes
+        if base <= _HEATED_EXTRA_LOW_BASE:
+            extra = _HEATED_EXTRA_FLOOR_MINUTES
+        elif base >= _HEATED_EXTRA_HIGH_BASE:
+            extra = _HEATED_EXTRA_CEIL_MINUTES
+        else:
+            slope = (
+                (_HEATED_EXTRA_CEIL_MINUTES - _HEATED_EXTRA_FLOOR_MINUTES)
+                / (_HEATED_EXTRA_HIGH_BASE - _HEATED_EXTRA_LOW_BASE)
+            )
+            extra = _HEATED_EXTRA_FLOOR_MINUTES + (base - _HEATED_EXTRA_LOW_BASE) * slope
+        return (base + extra) * 60
 
     @classmethod
     def from_dict(cls, data: dict) -> "WindConfig":
@@ -160,12 +169,6 @@ class WindConfig:
             min_silence_minutes=data.get("min_silence_minutes", 30),
             active_convo_gap_minutes=data.get("active_convo_gap_minutes", 2),
             active_convo_hot_gap_minutes=data.get("active_convo_hot_gap_minutes", 3),
-            active_convo_silence_multiplier=float(
-                os.getenv(
-                    "JOI_WIND_ACTIVE_CONVO_SILENCE_MULTIPLIER",
-                    data.get("active_convo_silence_multiplier", 3.0),
-                )
-            ),
             active_convo_ema_alpha=data.get("active_convo_ema_alpha", 0.3),
             momentum_nudge=float(os.getenv("JOI_WIND_MOMENTUM_NUDGE", data.get("momentum_nudge", 0.05))),
             impulse_threshold=data.get("impulse_threshold", 0.6),
@@ -224,7 +227,6 @@ class WindConfig:
             "min_silence_minutes": self.min_silence_minutes,
             "active_convo_gap_minutes": self.active_convo_gap_minutes,
             "active_convo_hot_gap_minutes": self.active_convo_hot_gap_minutes,
-            "active_convo_silence_multiplier": self.active_convo_silence_multiplier,
             "active_convo_ema_alpha": self.active_convo_ema_alpha,
             "momentum_nudge": self.momentum_nudge,
             "impulse_threshold": self.impulse_threshold,

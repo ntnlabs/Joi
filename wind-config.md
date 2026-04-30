@@ -53,8 +53,7 @@ Hard gates run first. Any failure skips the tick entirely — no score computed,
 | `min_cooldown_minutes` | `60` | Minimum minutes between proactive sends. Prevents bursts even if accumulator resets fast. |
 | `daily_cap` | `3` | Max proactive messages per rolling 24h window. Each fire expires 24h after it happened, freeing a slot. Hard stop regardless of score. |
 | `max_unanswered_streak` | `2` | Stop sending after N consecutive proactives with no user reply. Resets when user responds. |
-| `min_silence_minutes` | `30` | Minimum minutes since last user message before Wind is eligible. Prevents interrupting active conversations. |
-| `active_convo_silence_multiplier` | `3.0` | When the conversation is heated (EMA ≤ `active_convo_gap_minutes`), required silence becomes `min_silence_minutes * this`, clamped to `[30, 120]` minutes. Default → 90 min heated silence. Env override: `JOI_WIND_ACTIVE_CONVO_SILENCE_MULTIPLIER`. |
+| `min_silence_minutes` | `30` | Minimum minutes since last user message before Wind is eligible. Prevents interrupting active conversations. During a heated conversation (EMA ≤ `active_convo_gap_minutes`), required silence is `min_silence_minutes + extra`, where `extra` ramps linearly from 30 min (at base ≤ 30) to 120 min (at base ≥ 240). The ramp shape is hard-coded policy — no separate knob. |
 
 **Tuning notes:**
 - `min_silence_minutes` is the most impactful gate for responsiveness. Lower it (e.g., 10–15) for more aggressive behavior.

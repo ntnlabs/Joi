@@ -286,7 +286,7 @@ longer than the standard `min_silence_minutes` would require.
 **What was built:**
 - EMA of inter-message gap per conversation (`convo_gap_ema_seconds`)
 - If EMA ≤ `active_convo_gap_minutes` (2 min): conversation is "hot"
-- Hot conversations require derived heated-silence (default 90 min, clamped 30–120) before Wind fires
+- Hot conversations require derived heated-silence: `min_silence_minutes + extra`, where `extra` ramps linearly from 30 min (at base ≤ 30) to 120 min (at base ≥ 240). Default base 30 → 60 min heated; base 240 → 360 min
 - Standard conversations use `min_silence_minutes` (30 min) as before
 - Prevents Wind interrupting active back-and-forth
 
