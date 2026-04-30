@@ -22,6 +22,10 @@ printf "Hostname for this device [mesh]: "
 read HOSTNAME
 HOSTNAME="${HOSTNAME:-mesh}"
 
+printf "Local DNS domain [home.arpa]: "
+read DOMAIN
+DOMAIN="${DOMAIN:-home.arpa}"
+
 printf "Internal interface [eth0]: "
 read INT_IF
 INT_IF="${INT_IF:-eth0}"
@@ -48,6 +52,7 @@ JOI_NEBULA_IP="${JOI_NEBULA_IP:-10.42.0.10}"
 echo ""
 echo "Configuration Summary:"
 echo "  Hostname:      $HOSTNAME"
+echo "  DNS domain:    $DOMAIN"
 echo "  INT interface: $INT_IF"
 echo "  WAN interface: $WAN_IF"
 echo "  Gateway/hopper:$GATEWAY_IP"
@@ -67,6 +72,12 @@ esac
 echo ""
 echo "[1/5] Setting hostname..."
 hostnamectl set-hostname "$HOSTNAME"
+
+# Pin FQDN -> 127.0.1.1 in /etc/hosts so sudo and other tools can resolve
+# the local hostname even when DNS is unreachable (WAN flap / offline).
+FQDN="$HOSTNAME.$DOMAIN"
+sed -i '/^127\.0\.1\.1[[:space:]]/d' /etc/hosts
+echo "127.0.1.1 $FQDN $HOSTNAME" >> /etc/hosts
 
 ###########################################
 # SIGNAL USER / DATA DIR
