@@ -271,7 +271,7 @@ class ImpulseEngine:
             state.convo_gap_ema_seconds is not None
             and state.convo_gap_ema_seconds <= self.config.active_convo_gap_minutes * 60
         ):
-            required = self.config.active_convo_silence_minutes * 60
+            required = self.config.heated_silence_seconds()
         else:
             required = self.config.min_silence_minutes * 60
 
