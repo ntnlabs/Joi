@@ -2631,18 +2631,9 @@ class MemoryStore:
         """
         conn = self._connect()
 
-        # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
-        # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
-        all_words = re.findall(r'\w+', query)
-        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 1]
-        if not words:
-            words = all_words  # Fall back to full list so FTS still runs
-        if not words:
+        fts_query = self._sanitize_fts_query(query)
+        if not fts_query:
             return []
-
-        # Join words with OR, each word quoted to treat as literal
-        # Safe because \w+ guarantees no double quotes in words
-        fts_query = " OR ".join(f'"{word}"' for word in words[:20])
 
         now_ms = int(time.time() * 1000)
 
@@ -2789,70 +2780,114 @@ class MemoryStore:
         min_confidence: float = 0.6,
         conversation_id: Optional[str] = None,
     ) -> str:
+        """Hybrid retrieval: pinned facts + RRF over non-pinned.
+
+        Pinned facts are always injected first (bounded by MAX_CORE_FACTS).
+        Non-pinned facts are ranked by RRF of (vector, FTS) and truncated
+        to remaining token budget.
         """
-        Get facts for LLM context using hybrid approach:
-        1. Always include pinned (core) facts
-        2. Add FTS search results for query relevance
-        3. Respect token limit
+        from . import hybrid as _hybrid
 
-        Args:
-            query: Search query
-            max_tokens: Approximate max tokens (chars / 4)
-            min_confidence: Minimum confidence threshold
-            conversation_id: Filter by conversation ID
-
-        Returns:
-            Formatted context string, empty if no facts
-        """
-        # First, get all pinned (core) facts (always included)
-        pinned_facts = self.get_pinned_facts(
-            min_confidence=min_confidence,
-            conversation_id=conversation_id,
-            limit=20,
-        )
-        pinned_ids = {f.id for f in pinned_facts}
-
-        # Then, search for relevant facts via FTS
-        fts_facts = self.search_facts(
-            query,
-            limit=20,
+        # 1. Pinned facts (always included)
+        pinned = self.get_pinned_facts(
             min_confidence=min_confidence,
             conversation_id=conversation_id,
         )
-        # Filter out already-included pinned facts
-        fts_facts = [f for f in fts_facts if f.id not in pinned_ids]
+        pinned_text = self._format_facts_as_text(pinned)
+        pinned_tokens = self._estimate_tokens(pinned_text)
+        remaining = max_tokens - pinned_tokens
 
-        # Combine: pinned first, then FTS matches
-        all_facts = pinned_facts + fts_facts
+        logger.info(
+            "pinned_facts.injected",
+            extra={
+                "conversation_id": conversation_id,
+                "count": len(pinned),
+                "categories": sorted({f.category for f in pinned}),
+                "tokens": pinned_tokens,
+                "action": "pinned_inject",
+            },
+        )
 
-        if not all_facts:
-            return ""
+        if remaining <= 0 or not query:
+            return pinned_text
 
+        # 2. Hybrid retrieval for non-pinned
+        conn = self._connect()
         now_ms = int(time.time() * 1000)
-        lines = ["Relevant facts about the user:"]
-        total_chars = 0
-        max_chars = max_tokens * 4  # Rough estimate
+        pre_sql, pre_params = self._eligible_facts_sql(conversation_id, min_confidence, now_ms)
+        eligible = _hybrid.eligible_rowids(conn, pre_sql, pre_params)
+        if not eligible:
+            return pinned_text
 
-        by_category: Dict[str, List[UserFact]] = {}
-        for fact in all_facts:
-            by_category.setdefault(fact.category, []).append(fact)
+        # Embed query once, reuse for vector retriever
+        query_vec = self._get_embedding(query)
+        if query_vec is None or len(query_vec) != 4096:
+            logger.warning(
+                "hybrid_search.embed_failed",
+                extra={
+                    "surface": "user_facts",
+                    "conversation_id": conversation_id,
+                    "model": os.getenv("JOI_EMBEDDING_MODEL", ""),
+                    "action": "embed_fail",
+                },
+            )
+            return pinned_text  # degrade to pinned-only this turn; do not crash on read path
 
-        for category, cat_facts in sorted(by_category.items()):
-            cat_line = f"\n{category.title()}:"
-            if total_chars + len(cat_line) > max_chars:
-                break
-            lines.append(cat_line)
-            total_chars += len(cat_line)
+        vec_hits = _hybrid.vec_search(conn, "vec_user_facts", query_vec, eligible)
+        fts_hits = _hybrid.fts_search(
+            conn, "user_facts_fts", self._sanitize_fts_query(query), eligible,
+        )
+        fused = _hybrid.rrf_fuse([vec_hits, fts_hits])
 
-            for fact in cat_facts:
-                suffix = _fact_temporal_suffix(fact, now_ms)
-                fact_line = f"  - {fact.key}: {fact.value}{suffix}"
-                if total_chars + len(fact_line) > max_chars:
-                    break
-                lines.append(fact_line)
-                total_chars += len(fact_line)
+        logger.info(
+            "hybrid_search.executed",
+            extra={
+                "surface": "user_facts",
+                "conversation_id": conversation_id,
+                "query_len": len(query),
+                "vec_hits": len(vec_hits),
+                "fts_hits": len(fts_hits),
+                "fused_unique": len(fused),
+                "action": "hybrid_search",
+            },
+        )
 
-        return "\n".join(lines)
+        # 3. Hydrate top fused rowids and truncate to budget
+        top_ids = [rowid for rowid, _ in fused[:50]]  # generous: format-stage will cap
+        if not top_ids:
+            return pinned_text
+        placeholders = ",".join("?" for _ in top_ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, conversation_id, category, key, value, confidence, source,
+                   learned_at, last_verified_at, pinned_override, expires_at, detected_at
+            FROM user_facts WHERE id IN ({placeholders})
+            """,
+            top_ids,
+        ).fetchall()
+        # Preserve fused order
+        by_id = {row["id"]: row for row in rows}
+        ordered_facts = [
+            UserFact(
+                id=row["id"],
+                conversation_id=row["conversation_id"] or "",
+                category=row["category"],
+                key=row["key"],
+                value=row["value"],
+                confidence=row["confidence"],
+                source=row["source"],
+                learned_at=row["learned_at"],
+                last_verified_at=row["last_verified_at"],
+                pinned_override=row["pinned_override"],
+                expires_at=row["expires_at"],
+                detected_at=row["detected_at"],
+            )
+            for rowid in top_ids
+            if (row := by_id.get(rowid)) is not None
+        ]
+
+        non_core_text = self._format_facts_as_text_to_budget(ordered_facts, remaining)
+        return (pinned_text + "\n" + non_core_text) if non_core_text else pinned_text
 
     def reschedule_fact(
         self,
@@ -3190,45 +3225,98 @@ class MemoryStore:
     def get_summaries_as_context(
         self,
         query: str,
-        max_tokens: int = 400,
+        max_tokens: int = 800,
         days: int = 30,
         conversation_id: Optional[str] = None,
     ) -> str:
-        """
-        Search summaries and format for LLM context with token limit.
+        """Hybrid retrieval for summaries: vec + FTS -> RRF -> token budget.
 
-        Args:
-            query: Search query
-            max_tokens: Approximate max tokens (chars / 4)
-            days: Only search summaries from last N days
-            conversation_id: Filter by conversation ID
-
-        Returns:
-            Formatted context string, empty if no matches
+        Summaries have no pinned/core concept — all results go through
+        the same hybrid pipeline.
         """
-        summaries = self.search_summaries(
-            query,
-            limit=10,  # Fetch more than needed, will truncate by tokens
-            days=days,
-            conversation_id=conversation_id,
-        )
-        if not summaries:
+        from . import hybrid as _hybrid
+
+        if not query:
             return ""
 
-        lines = ["Relevant conversation history:"]
-        total_chars = 0
-        max_chars = max_tokens * 4  # Rough estimate
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        cutoff_ms = now_ms - days * 86400 * 1000
 
-        # Sort by period_end ascending (oldest first) for chronological context
-        for summary in sorted(summaries, key=lambda s: s.period_end):
-            date_str = datetime.fromtimestamp(summary.period_end / 1000).strftime("%Y-%m-%d")
-            summary_block = f"\n[{date_str}]\n{summary.summary_text}"
-            if total_chars + len(summary_block) > max_chars:
+        # Pre-filter SQL
+        conditions = ["created_at >= ?"]
+        params: list = [cutoff_ms]
+        if conversation_id is not None:
+            conditions.append("conversation_id = ?")
+            params.append(conversation_id)
+        pre_sql = f"SELECT id FROM context_summaries WHERE {' AND '.join(conditions)}"
+
+        eligible = _hybrid.eligible_rowids(conn, pre_sql, params)
+        if not eligible:
+            return ""
+
+        query_vec = self._get_embedding(query)
+        if query_vec is None or len(query_vec) != 4096:
+            logger.warning(
+                "hybrid_search.embed_failed",
+                extra={
+                    "surface": "context_summaries",
+                    "conversation_id": conversation_id,
+                    "action": "embed_fail",
+                },
+            )
+            return ""
+
+        vec_hits = _hybrid.vec_search(conn, "vec_summaries", query_vec, eligible)
+        fts_hits = _hybrid.fts_search(
+            conn, "summaries_fts", self._sanitize_fts_query(query), eligible,
+        )
+        fused = _hybrid.rrf_fuse([vec_hits, fts_hits])
+
+        logger.info(
+            "hybrid_search.executed",
+            extra={
+                "surface": "context_summaries",
+                "conversation_id": conversation_id,
+                "query_len": len(query),
+                "vec_hits": len(vec_hits),
+                "fts_hits": len(fts_hits),
+                "fused_unique": len(fused),
+                "action": "hybrid_search",
+            },
+        )
+
+        if not fused:
+            return ""
+
+        top_ids = [rowid for rowid, _ in fused[:30]]
+        placeholders = ",".join("?" for _ in top_ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, summary_type, period_start, period_end, summary_text
+            FROM context_summaries WHERE id IN ({placeholders})
+            """,
+            top_ids,
+        ).fetchall()
+        # Preserve RRF fused order — IN (...) returns rows in arbitrary order,
+        # so we must NOT add ORDER BY (which would discard the semantic ranking).
+        by_id = {row["id"]: row for row in rows}
+
+        # Format respecting token budget, in fused-rank order
+        out_parts: list[str] = []
+        used_tokens = 0
+        for rid in top_ids:
+            row = by_id.get(rid)
+            if row is None:
+                continue
+            chunk = f"[{row['summary_type']} {row['period_start']}-{row['period_end']}]\n{row['summary_text']}"
+            cost = self._estimate_tokens(chunk)
+            if used_tokens + cost > max_tokens:
                 break
-            lines.append(summary_block)
-            total_chars += len(summary_block)
+            out_parts.append(chunk)
+            used_tokens += cost
 
-        return "\n".join(lines)
+        return "\n\n".join(out_parts)
 
     # --- Messages for Summarization ---
 
@@ -3480,6 +3568,61 @@ class MemoryStore:
         if archived > 0:
             logger.info("Archived messages by ID", extra={"count": archived})
         return archived
+
+    # --- Private retrieval helpers ---
+
+    def _eligible_facts_sql(
+        self,
+        conversation_id: Optional[str],
+        min_confidence: float,
+        as_of_ms: int,
+    ) -> tuple[str, list]:
+        from .pinning import whitelist_sql_clause
+        whitelist_sql, whitelist_params = whitelist_sql_clause()
+
+        conditions = [
+            "active = 1",
+            "confidence >= ?",
+            "(expires_at IS NULL OR expires_at > ?)",
+            f"NOT (pinned_override = 1 OR (pinned_override IS NULL AND {whitelist_sql}))",
+        ]
+        params: list = [min_confidence, as_of_ms, *whitelist_params]
+        if conversation_id is not None:
+            conditions.append("conversation_id = ?")
+            params.append(conversation_id)
+        return f"SELECT id FROM user_facts WHERE {' AND '.join(conditions)}", params
+
+    def _sanitize_fts_query(self, query: str) -> str:
+        """Sanitize free-text query for FTS5 MATCH. Returns "" if nothing usable."""
+        all_words = re.findall(r"\w+", query)
+        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 1]
+        if not words:
+            words = all_words
+        if not words:
+            return ""
+        return " OR ".join(f'"{word}"' for word in words[:20])
+
+    def _format_facts_as_text(self, facts: List[UserFact]) -> str:
+        if not facts:
+            return ""
+        lines = [f"- {f.category}/{f.key}: {f.value}" for f in facts]
+        return "\n".join(lines)
+
+    def _estimate_tokens(self, text: str) -> int:
+        # Rough estimate: 1 token per ~4 characters (OK for budget capping)
+        return max(1, len(text) // 4)
+
+    def _format_facts_as_text_to_budget(self, facts: List[UserFact], max_tokens: int) -> str:
+        out: list[str] = []
+        used = 0
+        for f in facts:
+            line = f"- {f.category}/{f.key}: {f.value}"
+            cost = self._estimate_tokens(line)
+            if used + cost > max_tokens:
+                break
+            out.append(line)
+            used += cost
+        return "\n".join(out)
 
     # --- Knowledge Operations (RAG) ---
 
