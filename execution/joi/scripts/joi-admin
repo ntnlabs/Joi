@@ -163,7 +163,9 @@ FACTS USAGE:
 FACTS SUBCOMMANDS:
     list [--conversation ID] [--category CAT] [--order-by id|date|category|key] [--include-expired]  List stored facts
     show <id>                                   Show full detail for one fact
-    add --conversation ID --category CAT --key KEY --value VALUE [--confidence 0.9] [--important]  Add a fact manually
+    add --conversation ID --category CAT --key KEY --value VALUE [--confidence 0.9] [--pin]  Add a fact manually
+    pin <id>                                    Set pinned_override=1 (always inject into LLM context)
+    unpin <id>                                  Set pinned_override=0 (exclude from auto-pin even if whitelisted)
     reschedule <id> --expires-in HOURS [--value "new text"]  Reschedule a temporal fact
     delete <id>                                 Delete a single fact by ID
     delete-all [--conversation ID]              Delete all facts (with confirmation)
@@ -176,7 +178,9 @@ FACTS EXAMPLES:
     joi-admin facts show 42                     # Show full detail for fact #42
     joi-admin facts add --conversation +123 --category personal --key birthday --value "January 1"
     joi-admin facts add --conversation +123 --category personal --key job --value "engineer" --confidence 1.0
-    joi-admin facts add --conversation +123 --category personal --key name --value "Alice" --important
+    joi-admin facts add --conversation +123 --category personal --key name --value "Alice" --pin
+    joi-admin facts pin 42                      # Pin fact #42 into LLM context
+    joi-admin facts unpin 42                    # Unpin fact #42 (explicit exclude from auto-pin)
     joi-admin facts reschedule 42 --expires-in 168          # Reschedule to 1 week from now
     joi-admin facts reschedule 42 --expires-in 48 --value "Meeting moved to Monday 10am"
     joi-admin facts delete 42                   # Delete fact #42
@@ -575,7 +579,7 @@ PY
 }
 
 # Add a fact via Python (uses store_fact() so FTS5 index stays in sync)
-# Env vars: JOI_FACT_CONV, JOI_FACT_CAT, JOI_FACT_KEY, JOI_FACT_VAL, JOI_FACT_CONF, JOI_FACT_IMPORTANT
+# Env vars: JOI_FACT_CONV, JOI_FACT_CAT, JOI_FACT_KEY, JOI_FACT_VAL, JOI_FACT_CONF, JOI_FACT_PIN
 add_fact_with_python() {
     if ! command -v python3 >/dev/null 2>&1; then
         error "python3 not available; cannot add facts."
@@ -590,7 +594,7 @@ add_fact_with_python() {
         JOI_FACT_KEY="$JOI_FACT_KEY" \
         JOI_FACT_VAL="$JOI_FACT_VAL" \
         JOI_FACT_CONF="$JOI_FACT_CONF" \
-        JOI_FACT_IMPORTANT="$JOI_FACT_IMPORTANT" \
+        JOI_FACT_PIN="$JOI_FACT_PIN" \
         python3 <<'PY' 2>&1
 import os, sys
 try:
@@ -606,7 +610,7 @@ try:
         key=os.environ["JOI_FACT_KEY"],
         value=os.environ["JOI_FACT_VAL"],
         confidence=float(os.environ.get("JOI_FACT_CONF", "0.9")),
-        important=os.environ.get("JOI_FACT_IMPORTANT", "0") == "1",
+        pinned_override=1 if os.environ.get("JOI_FACT_PIN", "0") == "1" else None,
         source="admin",
     )
     print(fact_id)
@@ -2747,7 +2751,7 @@ cmd_facts() {
     fi
 
     local subcommand="${1:-}"
-    [[ -z "$subcommand" ]] && error "Usage: joi-admin facts <list|show|add|reschedule|delete|delete-all> [OPTIONS]"
+    [[ -z "$subcommand" ]] && error "Usage: joi-admin facts <list|show|add|pin|unpin|reschedule|delete|delete-all> [OPTIONS]"
     shift || true
 
     case "$subcommand" in
@@ -2764,7 +2768,7 @@ cmd_facts() {
             fi
 
             # Query each field separately to avoid pipe-in-value splitting issues
-            local f_conv f_cat f_key f_val f_conf f_src f_act f_imp f_learned f_updated f_expires f_detected
+            local f_conv f_cat f_key f_val f_conf f_src f_act f_pin f_learned f_updated f_expires f_detected
             f_conv=$(db_scalar     "SELECT conversation_id FROM user_facts WHERE id = $fact_id;")
             f_cat=$(db_scalar      "SELECT category        FROM user_facts WHERE id = $fact_id;")
             f_key=$(db_scalar      "SELECT key             FROM user_facts WHERE id = $fact_id;")
@@ -2772,7 +2776,7 @@ cmd_facts() {
             f_conf=$(db_scalar     "SELECT confidence      FROM user_facts WHERE id = $fact_id;")
             f_src=$(db_scalar      "SELECT source          FROM user_facts WHERE id = $fact_id;")
             f_act=$(db_scalar      "SELECT active          FROM user_facts WHERE id = $fact_id;")
-            f_imp=$(db_scalar      "SELECT important       FROM user_facts WHERE id = $fact_id;")
+            f_pin=$(db_scalar      "SELECT pinned_override FROM user_facts WHERE id = $fact_id;")
             f_learned=$(db_scalar  "SELECT datetime(learned_at/1000,'unixepoch') FROM user_facts WHERE id = $fact_id;")
             f_updated=$(db_scalar  "SELECT datetime(updated_at/1000,'unixepoch') FROM user_facts WHERE id = $fact_id;")
             f_expires_raw=$(db_scalar "SELECT expires_at FROM user_facts WHERE id = $fact_id;")
@@ -2806,7 +2810,7 @@ cmd_facts() {
             echo "confidence:      $f_conf"
             echo "source:          $f_src"
             echo "active:          $f_act"
-            echo "important:       $f_imp"
+            echo "pinned_override: ${f_pin:-NULL (whitelist default)}"
             echo "learned_at:      $f_learned"
             echo "updated_at:      $f_updated"
             echo "expires_at:      $f_expires"
@@ -2890,7 +2894,7 @@ SELECT
     trim(replace(replace(value, char(10), ' '), char(13), '')) || char(1) ||
     COALESCE(source, '') || char(1) ||
     active || char(1) ||
-    important || char(1) ||
+    pinned_override || char(1) ||
     CASE
         WHEN expires_at IS NULL THEN '-'
         WHEN expires_at <= strftime('%s','now')*1000 THEN datetime(expires_at/1000,'unixepoch') || ' [expired]'
@@ -2912,11 +2916,11 @@ SQL
             fi
 
             printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %-19s  %s\n" \
-                "ID" "conversation_id" "category" "key" "value" "source" "act" "imp" "expires_at" "detected_at"
+                "ID" "conversation_id" "category" "key" "value" "source" "act" "pin" "expires_at" "detected_at"
             printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %-19s  %s\n" \
                 "----" "--------------------" "------------" "--------------------" \
                 "----------------------------" "--------" "---" "---" "-------------------" "-------------------"
-            while IFS=$'\x01' read -r id conv cat key val src act imp exp det; do
+            while IFS=$'\x01' read -r id conv cat key val src act pin exp det; do
                 [[ -z "$id" ]] && continue
                 # If value looks like JSON, extract the first string field value
                 if [[ "$val" == "{"* ]]; then
@@ -2924,7 +2928,7 @@ SQL
                 fi
                 printf "%-4s  %-20s  %-12s  %-20s  %-28s  %-8s  %s  %s  %-19s  %s\n" \
                     "$id" "${conv:0:20}" "${cat:0:12}" "${key:0:20}" "${val:0:28}" \
-                    "${src:0:8}" "$act" "$imp" "${exp:0:19}" "${det:0:19}"
+                    "${src:0:8}" "$act" "${pin:-N}" "${exp:0:19}" "${det:0:19}"
             done <<< "$rows"
             ;;
 
@@ -3097,7 +3101,7 @@ SQL
             ;;
 
         add)
-            local conversation="" category="" key="" value="" confidence="0.9" important="0"
+            local conversation="" category="" key="" value="" confidence="0.9" pin="0"
             while [[ $# -gt 0 ]]; do
                 case "$1" in
                     --conversation) conversation="$2"; shift 2 ;;
@@ -3105,9 +3109,9 @@ SQL
                     --key)          key="$2";           shift 2 ;;
                     --value)        value="$2";         shift 2 ;;
                     --confidence)   confidence="$2";   shift 2 ;;
-                    --important)    important="1";      shift ;;
+                    --pin)          pin="1";            shift ;;
                     --help|-h)
-                        echo "Usage: joi-admin facts add --conversation ID --category CAT --key KEY --value VALUE [--confidence 0.9] [--important]"
+                        echo "Usage: joi-admin facts add --conversation ID --category CAT --key KEY --value VALUE [--confidence 0.9] [--pin]"
                         exit 0
                         ;;
                     *) error "Unknown option for 'facts add': $1" ;;
@@ -3125,16 +3129,44 @@ SQL
                      JOI_FACT_KEY="$key" \
                      JOI_FACT_VAL="$value" \
                      JOI_FACT_CONF="$confidence" \
-                     JOI_FACT_IMPORTANT="$important" \
+                     JOI_FACT_PIN="$pin" \
                      add_fact_with_python)
 
-            local important_str=""
-            [[ "$important" == "1" ]] && important_str=" [IMPORTANT]"
-            info "Fact stored (id=$new_id): [$category] $key = $value (confidence=$confidence)$important_str"
+            local pin_str=""
+            [[ "$pin" == "1" ]] && pin_str=" [PINNED]"
+            info "Fact stored (id=$new_id): [$category] $key = $value (confidence=$confidence)$pin_str"
             ;;
 
+        pin)
+            local fact_id="$1"
+            if [ -z "$fact_id" ]; then
+                echo "Usage: joi-admin facts pin <fact_id>"
+                echo "Sets pinned_override=1 (always inject this fact into LLM context)."
+                return 1
+            fi
+            if ! [[ "$fact_id" =~ ^[0-9]+$ ]]; then
+                echo "Error: fact_id must be a positive integer (got: $fact_id)"
+                return 1
+            fi
+            db_exec "UPDATE user_facts SET pinned_override = 1 WHERE id = $fact_id;"
+            echo "Pinned fact $fact_id."
+            ;;
+        unpin)
+            local fact_id="$1"
+            if [ -z "$fact_id" ]; then
+                echo "Usage: joi-admin facts unpin <fact_id>"
+                echo "Sets pinned_override=0 (explicitly exclude from auto-pin even if whitelisted)."
+                return 1
+            fi
+            if ! [[ "$fact_id" =~ ^[0-9]+$ ]]; then
+                echo "Error: fact_id must be a positive integer (got: $fact_id)"
+                return 1
+            fi
+            db_exec "UPDATE user_facts SET pinned_override = 0 WHERE id = $fact_id;"
+            echo "Unpinned fact $fact_id."
+            ;;
         --help|-h)
-            echo "Usage: joi-admin facts <list|show|add|reschedule|delete|delete-all> [OPTIONS]"
+            echo "Usage: joi-admin facts <list|show|add|pin|unpin|reschedule|delete|delete-all> [OPTIONS]"
             exit 0
             ;;
         *)
