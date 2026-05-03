@@ -22,6 +22,15 @@ except ImportError:
     import sqlite3
     SQLCIPHER_AVAILABLE = False
 
+# sqlite-vec extension: required for vector search.
+# Service refuses to start if not installed (fail-loud per Joi philosophy).
+try:
+    import sqlite_vec
+    SQLITE_VEC_AVAILABLE = True
+except ImportError:
+    sqlite_vec = None
+    SQLITE_VEC_AVAILABLE = False
+
 logger = logging.getLogger("joi.memory")
 
 # Common stopwords filtered out from FTS queries
@@ -163,7 +172,7 @@ class KnowledgeChunk:
 
 
 # Schema version for migrations
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 
 # SQL for creating tables
 SCHEMA_SQL = f"""
@@ -215,28 +224,26 @@ INSERT OR IGNORE INTO system_state (key, value) VALUES
 -- User facts table (long-term memory about user, per-conversation)
 CREATE TABLE IF NOT EXISTS user_facts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    conversation_id TEXT NOT NULL DEFAULT '',
+    conversation_id TEXT,
     category TEXT NOT NULL,
     key TEXT NOT NULL,
     value TEXT NOT NULL,
-    confidence REAL NOT NULL DEFAULT 0.8,
-    source TEXT NOT NULL,
-    source_message_id TEXT,
-    active INTEGER NOT NULL DEFAULT 1,
-    important INTEGER NOT NULL DEFAULT 0,
-    learned_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
-    last_referenced_at INTEGER,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    source TEXT NOT NULL DEFAULT 'inferred',
+    learned_at INTEGER NOT NULL,
     last_verified_at INTEGER,
-    updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+    pinned_override INTEGER,           -- NULL = use whitelist; 0 = unpin; 1 = pin
+    embedding BLOB NOT NULL,           -- bge-m3 1024-dim packed float32 (4096 bytes)
     expires_at INTEGER,
     detected_at INTEGER,
-    UNIQUE(conversation_id, category, key, active)
+    active INTEGER NOT NULL DEFAULT 1,
+    UNIQUE(conversation_id, category, key)
 );
 
 CREATE INDEX IF NOT EXISTS idx_facts_category ON user_facts(category, active);
 CREATE INDEX IF NOT EXISTS idx_facts_active ON user_facts(active, confidence DESC);
 CREATE INDEX IF NOT EXISTS idx_facts_conversation ON user_facts(conversation_id, active);
-CREATE INDEX IF NOT EXISTS idx_facts_important ON user_facts(important, active);
+CREATE INDEX IF NOT EXISTS idx_facts_pinned ON user_facts(pinned_override, conversation_id, active);
 CREATE INDEX IF NOT EXISTS idx_facts_expires ON user_facts(expires_at) WHERE expires_at IS NOT NULL;
 
 -- Context summaries table (compressed conversation history, per-conversation)
@@ -249,6 +256,7 @@ CREATE TABLE IF NOT EXISTS context_summaries (
     summary_text TEXT NOT NULL,
     key_points_json TEXT,
     message_count INTEGER,
+    embedding BLOB NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
 );
 
@@ -264,7 +272,7 @@ CREATE TABLE IF NOT EXISTS knowledge_chunks (
     content TEXT NOT NULL,
     chunk_index INTEGER NOT NULL DEFAULT 0,
     metadata_json TEXT,
-    embedding BLOB,
+    embedding BLOB NOT NULL,
     created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
     UNIQUE(scope, source, chunk_index)
 );
@@ -473,7 +481,7 @@ CREATE TABLE IF NOT EXISTS notes (
     conversation_id TEXT NOT NULL,
     title TEXT NOT NULL,
     content TEXT NOT NULL DEFAULT '',
-    embedding BLOB,
+    embedding BLOB NOT NULL,
     remind_at TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
@@ -536,6 +544,28 @@ CREATE TABLE IF NOT EXISTS conversation_settings (
     time_awareness INTEGER DEFAULT 0,
     updated_at TEXT NOT NULL
 );
+
+-- sqlite-vec virtual tables: dense vector index per surface, keyed by main-table rowid.
+-- Created here for fresh installs; migration code creates them for existing DBs.
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_user_facts USING vec0(embedding float[1024]);
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_summaries  USING vec0(embedding float[1024]);
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_knowledge  USING vec0(embedding float[1024]);
+CREATE VIRTUAL TABLE IF NOT EXISTS vec_notes      USING vec0(embedding float[1024]);
+
+-- AFTER DELETE triggers: cascade hard deletes from main → vec0.
+-- (FTS5 has its own existing triggers; don't touch them.)
+CREATE TRIGGER IF NOT EXISTS user_facts_vec_delete AFTER DELETE ON user_facts BEGIN
+    DELETE FROM vec_user_facts WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS context_summaries_vec_delete AFTER DELETE ON context_summaries BEGIN
+    DELETE FROM vec_summaries WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS knowledge_chunks_vec_delete AFTER DELETE ON knowledge_chunks BEGIN
+    DELETE FROM vec_knowledge WHERE rowid = old.id;
+END;
+CREATE TRIGGER IF NOT EXISTS notes_vec_delete AFTER DELETE ON notes BEGIN
+    DELETE FROM vec_notes WHERE rowid = old.id;
+END;
 """
 
 
@@ -624,6 +654,14 @@ class MemoryStore:
                 )
             os._exit(78)
 
+        # Enforce sqlite-vec availability (required for vector search v1)
+        if not SQLITE_VEC_AVAILABLE:
+            logger.critical(
+                "sqlite-vec extension not installed. Install: pip install sqlite-vec",
+                extra={"action": "startup_fatal"},
+            )
+            os._exit(78)
+
         # Ensure directory exists
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
 
@@ -672,6 +710,12 @@ class MemoryStore:
             conn.execute("PRAGMA journal_mode = WAL")
             conn.execute("PRAGMA synchronous = NORMAL")
             conn.execute("PRAGMA foreign_keys = ON")
+
+            # Load sqlite-vec extension on every fresh connection.
+            # enable_load_extension must be True; sqlite_vec.load() registers the vec0 module.
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
 
             self._local.conn = conn
             with self._all_connections_lock:
