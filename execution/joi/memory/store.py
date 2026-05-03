@@ -1181,8 +1181,21 @@ class MemoryStore:
     def _migrate_to_v15_search_rework(self, conn: sqlite3.Connection) -> None:
         """Migrate to schema v15: hybrid retrieval + pinned_override.
 
-        Fail-loud: any failure ROLLBACKs and crashes the process. The
-        operator must restore from the pre-migration backup.
+        Fail-loud: any failure crashes the process via os._exit(78). NOTE that
+        rollback is best-effort only — Python's sqlite3.executescript() issues
+        an implicit COMMIT before running its script, so once
+        _rebuild_tables_v15 has begun, partial table rebuilds are already
+        persisted on disk. The conn.rollback() in the except block only undoes
+        statements made via conn.execute() since the last implicit commit.
+
+        Recovery from any failure: the operator MUST restore the pre-migration
+        backup. The migration is idempotent for the additive parts (ALTERs and
+        vec_<surface> creates use IF NOT EXISTS guards, and _bulk_reembed_v15
+        wipes vec_<surface> on each run), so a re-run after backup restore is
+        safe.
+
+        Pre-deploy requirement: take a snapshot of db.sqlite. The Task 12
+        runbook documents the exact command.
         """
         import time
         logger.info("Migration v15 starting (search rework)", extra={"action": "migrate_v15"})
@@ -1293,7 +1306,8 @@ class MemoryStore:
         except Exception as e:
             conn.rollback()
             logger.critical(
-                "Migration v15 failed — restore pre-migration backup and investigate",
+                "Migration v15 failed — partial schema state may be persisted on disk; "
+                "RESTORE pre-migration backup before next start",
                 extra={"error": str(e), "action": "migrate_v15_fatal"},
             )
             os._exit(78)
@@ -1335,6 +1349,11 @@ class MemoryStore:
         ]
 
         for main_table, vec_table, select_sql, embed_fn in surfaces:
+            # Wipe vec_<surface> first so a re-run after partial failure starts
+            # clean. The vec_<surface> rows from the prior run would otherwise
+            # cause UNIQUE rowid violations on the new INSERT.
+            conn.execute(f"DELETE FROM {vec_table}")
+
             count_row = conn.execute(f"SELECT COUNT(*) FROM {main_table}").fetchone()
             total = count_row[0] if count_row else 0
             logger.info(
