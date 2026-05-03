@@ -1640,9 +1640,10 @@ class MemoryStore:
             (conversation_id, title, content, vec_bytes, remind_at, now_ms, now_ms),
         )
         note_id = cursor.lastrowid
+        assert note_id is not None, "INSERT into notes did not return a rowid"
         self._mirror_vec(conn, "vec_notes", note_id, vec_bytes)
         conn.commit()
-        return note_id or 0
+        return note_id
 
     def get_note_by_title(self, conversation_id: str, title: str) -> Optional[dict]:
         """
@@ -2951,6 +2952,7 @@ class MemoryStore:
              key_points_json, message_count, now_ms, vec_bytes)
         )
         summary_id = cursor.lastrowid
+        assert summary_id is not None, "INSERT into context_summaries did not return a rowid"
         self._mirror_vec(conn, "vec_summaries", summary_id, vec_bytes)
         conn.commit()
 
@@ -2962,7 +2964,7 @@ class MemoryStore:
             "message_count": message_count,
             "action": "summary_store"
         })
-        return summary_id or 0
+        return summary_id
 
     def get_recent_summaries(
         self,
@@ -3533,6 +3535,7 @@ class MemoryStore:
             (scope, source, title, content, chunk_index, metadata_json, vec_bytes, now_ms)
         )
         chunk_id = cursor.lastrowid
+        assert chunk_id is not None, "INSERT into knowledge_chunks did not return a rowid"
         self._mirror_vec(conn, "vec_knowledge", chunk_id, vec_bytes)
         conn.commit()
 
@@ -3541,7 +3544,7 @@ class MemoryStore:
             "chunk_index": chunk_index,
             "scope": scope or None,
         })
-        return chunk_id or 0
+        return chunk_id
 
     def search_knowledge(
         self,
