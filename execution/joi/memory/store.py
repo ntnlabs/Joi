@@ -141,7 +141,7 @@ class UserFact:
     source: str  # 'stated', 'inferred', 'configured'
     learned_at: int
     last_verified_at: Optional[int]
-    important: bool = False  # Core facts always included in context
+    pinned_override: Optional[int] = None  # NULL=use whitelist, 0=unpin, 1=pin
     expires_at: Optional[int] = None  # ms epoch; None = permanent
     detected_at: Optional[int] = None  # ms epoch of source message; None = unknown
 
@@ -2409,7 +2409,7 @@ class MemoryStore:
         source: str = "inferred",
         source_message_id: Optional[str] = None,
         conversation_id: str = "",
-        important: bool = False,
+        pinned_override: Optional[int] = None,   # was: important: bool = False
         ttl_hours: Optional[float] = None,
         detected_at: Optional[int] = None,
     ) -> int:
@@ -2419,43 +2419,58 @@ class MemoryStore:
         If fact with same conversation_id+category+key exists, updates it.
 
         Args:
-            important: If True, fact is always included in context regardless of query.
+            pinned_override: None=don't touch existing pin, 0=unpin, 1=pin.
             ttl_hours: Hours until fact expires. None = permanent.
             detected_at: ms epoch of the source message. None = unknown.
         """
         conn = self._connect()
         now_ms = int(time.time() * 1000)
-        important_int = 1 if important else 0
         expires_at = int(now_ms + ttl_hours * 3_600_000) if ttl_hours else None
 
-        # Try to update existing active fact for this conversation
-        # Note: important flag can only be promoted (0->1), never demoted (1->0)
-        # This preserves explicitly marked important facts even when updated via other paths
+        # Embed first — fails loud if Ollama is down (no partial state persisted).
+        vec_bytes = self._embed_or_fail(
+            _embed_input_for_fact(category, key, value),
+            surface="user_facts",
+            key_for_log=f"{conversation_id or 'global'}/{category}/{key}",
+        )
+
+        # COALESCE(?, pinned_override): when the caller passes None, keep the
+        # existing pin; when 0 or 1, overwrite. This is the modern equivalent
+        # of the v14 "promote-only" rule and protects operator-set pins.
         cursor = conn.execute(
             """
             UPDATE user_facts
-            SET value = ?, confidence = ?, source = ?, source_message_id = ?,
-                important = CASE WHEN important = 1 THEN 1 ELSE ? END,
-                last_verified_at = ?, updated_at = ?, expires_at = ?, detected_at = ?
+            SET value = ?, confidence = ?, source = ?,
+                pinned_override = COALESCE(?, pinned_override), embedding = ?,
+                last_verified_at = ?, expires_at = ?, detected_at = ?
             WHERE conversation_id = ? AND category = ? AND key = ? AND active = 1
             """,
-            (value, confidence, source, source_message_id, important_int,
-             now_ms, now_ms, expires_at, detected_at,
+            (value, confidence, source, pinned_override, vec_bytes,
+             now_ms, expires_at, detected_at,
              conversation_id, category, key)
         )
 
         if cursor.rowcount == 0:
-            # Insert new fact
             cursor = conn.execute(
                 """
                 INSERT INTO user_facts (
-                    conversation_id, category, key, value, confidence, source, source_message_id,
-                    important, learned_at, updated_at, expires_at, detected_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    conversation_id, category, key, value, confidence, source,
+                    pinned_override, embedding, learned_at, expires_at, detected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (conversation_id, category, key, value, confidence, source, source_message_id,
-                 important_int, now_ms, now_ms, expires_at, detected_at)
+                (conversation_id, category, key, value, confidence, source,
+                 pinned_override, vec_bytes, now_ms, expires_at, detected_at)
             )
+            fact_id = cursor.lastrowid
+        else:
+            row = conn.execute(
+                "SELECT id FROM user_facts WHERE conversation_id = ? AND category = ? AND key = ? AND active = 1",
+                (conversation_id, category, key),
+            ).fetchone()
+            fact_id = row["id"]
+
+        assert fact_id is not None, "store_fact: failed to resolve fact_id (no rowid and no existing row)"
+        self._mirror_vec(conn, "vec_user_facts", fact_id, vec_bytes)
 
         conn.commit()
         logger.debug("Stored fact", extra={
@@ -2464,10 +2479,10 @@ class MemoryStore:
             "key": key,
             "value": value,
             "confidence": confidence,
-            "important": important,
+            "pinned_override": pinned_override,
             "ttl_hours": ttl_hours,
         })
-        return cursor.lastrowid or 0
+        return fact_id
 
     def get_fact_keys(
         self,
@@ -2541,10 +2556,10 @@ class MemoryStore:
         cursor = conn.execute(
             f"""
             SELECT id, conversation_id, category, key, value, confidence, source,
-                   learned_at, last_verified_at, important, expires_at, detected_at
+                   learned_at, last_verified_at, pinned_override, expires_at, detected_at
             FROM user_facts
             WHERE {where_clause}
-            ORDER BY important DESC, category, confidence DESC
+            ORDER BY category, confidence DESC
             LIMIT ?
             """,
             params
@@ -2561,7 +2576,7 @@ class MemoryStore:
                 source=row["source"],
                 learned_at=row["learned_at"],
                 last_verified_at=row["last_verified_at"],
-                important=bool(row["important"]),
+                pinned_override=row["pinned_override"],
                 expires_at=row["expires_at"],
                 detected_at=row["detected_at"],
             )
@@ -2637,7 +2652,7 @@ class MemoryStore:
                 f"""
                 SELECT f.id, f.conversation_id, f.category, f.key, f.value,
                        f.confidence, f.source, f.learned_at, f.last_verified_at,
-                       f.important, f.expires_at, f.detected_at,
+                       f.pinned_override, f.expires_at, f.detected_at,
                        bm25(user_facts_fts) as rank
                 FROM user_facts f
                 JOIN user_facts_fts fts ON f.id = fts.rowid
@@ -2668,34 +2683,44 @@ class MemoryStore:
                 source=row["source"],
                 learned_at=row["learned_at"],
                 last_verified_at=row["last_verified_at"],
-                important=bool(row["important"]),
+                pinned_override=row["pinned_override"],
                 expires_at=row["expires_at"],
                 detected_at=row["detected_at"],
             )
             for row in rows
         ]
 
-    def get_important_facts(
+    def get_pinned_facts(
         self,
         min_confidence: float = 0.5,
         conversation_id: Optional[str] = None,
-        limit: int = 50,
+        limit: Optional[int] = None,
         as_of: Optional[int] = None,
         include_expired: bool = False,
     ) -> List[UserFact]:
-        """Get all important (core) facts for a conversation.
+        """Return pinned (core) facts: explicit pins + whitelist matches.
 
-        Args:
-            as_of: ms epoch to query facts as of (default: now). Ignored when
-                   include_expired=True.
-            include_expired: If True, include expired facts (skips expiry filter).
+        Logic (matches pinning.is_pinned):
+          - pinned_override = 1                            -> pinned
+          - pinned_override IS NULL AND (cat,key) in W     -> pinned
+          - pinned_override = 0 OR not in W                -> not pinned
+
+        Bounded by MAX_CORE_FACTS (truncated by learned_at DESC).
         """
+        from .pinning import MAX_CORE_FACTS, whitelist_sql_clause
+
         conn = self._connect()
         now_ms = int(time.time() * 1000)
         as_of_ms = as_of if as_of is not None else now_ms
 
-        conditions = ["active = 1", "important = 1", "confidence >= ?"]
-        params: list = [min_confidence]
+        whitelist_sql, whitelist_params = whitelist_sql_clause()
+
+        conditions = [
+            "active = 1",
+            "confidence >= ?",
+            f"(pinned_override = 1 OR (pinned_override IS NULL AND {whitelist_sql}))",
+        ]
+        params: list = [min_confidence, *whitelist_params]
 
         if not include_expired:
             conditions.append("(expires_at IS NULL OR expires_at > ?)")
@@ -2705,20 +2730,32 @@ class MemoryStore:
             conditions.append("conversation_id = ?")
             params.append(conversation_id)
 
-        params.append(limit)
+        effective_limit = limit if limit is not None else MAX_CORE_FACTS
+        params.append(effective_limit)
         where_clause = " AND ".join(conditions)
 
         cursor = conn.execute(
             f"""
             SELECT id, conversation_id, category, key, value, confidence, source,
-                   learned_at, last_verified_at, important, expires_at, detected_at
+                   learned_at, last_verified_at, pinned_override, expires_at, detected_at
             FROM user_facts
             WHERE {where_clause}
-            ORDER BY category, confidence DESC
+            ORDER BY learned_at DESC
             LIMIT ?
             """,
-            params
+            params,
         )
+
+        rows = cursor.fetchall()
+        if len(rows) >= effective_limit:
+            logger.warning(
+                "Pinned facts hit cap — operator should review",
+                extra={
+                    "conversation_id": conversation_id,
+                    "cap": effective_limit,
+                    "action": "pinned_cap_hit",
+                },
+            )
 
         return [
             UserFact(
@@ -2731,11 +2768,11 @@ class MemoryStore:
                 source=row["source"],
                 learned_at=row["learned_at"],
                 last_verified_at=row["last_verified_at"],
-                important=bool(row["important"]),
+                pinned_override=row["pinned_override"],
                 expires_at=row["expires_at"],
                 detected_at=row["detected_at"],
             )
-            for row in cursor.fetchall()
+            for row in rows
         ]
 
     def get_facts_as_context(
@@ -2747,7 +2784,7 @@ class MemoryStore:
     ) -> str:
         """
         Get facts for LLM context using hybrid approach:
-        1. Always include important (core) facts
+        1. Always include pinned (core) facts
         2. Add FTS search results for query relevance
         3. Respect token limit
 
@@ -2760,13 +2797,13 @@ class MemoryStore:
         Returns:
             Formatted context string, empty if no facts
         """
-        # First, get all important facts (always included)
-        important_facts = self.get_important_facts(
+        # First, get all pinned (core) facts (always included)
+        pinned_facts = self.get_pinned_facts(
             min_confidence=min_confidence,
             conversation_id=conversation_id,
             limit=20,
         )
-        important_ids = {f.id for f in important_facts}
+        pinned_ids = {f.id for f in pinned_facts}
 
         # Then, search for relevant facts via FTS
         fts_facts = self.search_facts(
@@ -2775,11 +2812,11 @@ class MemoryStore:
             min_confidence=min_confidence,
             conversation_id=conversation_id,
         )
-        # Filter out already-included important facts
-        fts_facts = [f for f in fts_facts if f.id not in important_ids]
+        # Filter out already-included pinned facts
+        fts_facts = [f for f in fts_facts if f.id not in pinned_ids]
 
-        # Combine: important first, then FTS matches
-        all_facts = important_facts + fts_facts
+        # Combine: pinned first, then FTS matches
+        all_facts = pinned_facts + fts_facts
 
         if not all_facts:
             return ""
@@ -2831,13 +2868,13 @@ class MemoryStore:
 
         if new_value is not None:
             cursor = conn.execute(
-                "UPDATE user_facts SET expires_at = ?, value = ?, updated_at = ? WHERE id = ? AND conversation_id = ?",
-                (new_expires_at, new_value, now_ms, fact_id, conversation_id),
+                "UPDATE user_facts SET expires_at = ?, value = ? WHERE id = ? AND conversation_id = ?",
+                (new_expires_at, new_value, fact_id, conversation_id),
             )
         else:
             cursor = conn.execute(
-                "UPDATE user_facts SET expires_at = ?, updated_at = ? WHERE id = ? AND conversation_id = ?",
-                (new_expires_at, now_ms, fact_id, conversation_id),
+                "UPDATE user_facts SET expires_at = ? WHERE id = ? AND conversation_id = ?",
+                (new_expires_at, fact_id, conversation_id),
             )
         conn.commit()
         return cursor.rowcount > 0
@@ -2871,7 +2908,7 @@ class MemoryStore:
         cursor = conn.execute(
             f"""
             SELECT id, conversation_id, category, key, value, confidence, source,
-                   learned_at, last_verified_at, important, expires_at, detected_at
+                   learned_at, last_verified_at, pinned_override, expires_at, detected_at
             FROM user_facts
             WHERE {where_clause}
             ORDER BY expires_at DESC
@@ -2891,7 +2928,7 @@ class MemoryStore:
                 source=row["source"],
                 learned_at=row["learned_at"],
                 last_verified_at=row["last_verified_at"],
-                important=bool(row["important"]),
+                pinned_override=row["pinned_override"],
                 expires_at=row["expires_at"],
                 detected_at=row["detected_at"],
             )
