@@ -616,6 +616,13 @@ def _fact_temporal_suffix(fact: "UserFact", now_ms: int) -> str:
     return f" ({', '.join(parts)})" if parts else ""
 
 
+# SQLite default SQLITE_MAX_VARIABLE_NUMBER ~ 999; reserve headroom for
+# query_vec + top_n params, so cap eligible at 900. If we ever hit this,
+# bge-m3 ranking on the cap'd subset still produces useful results, but
+# log so an operator can investigate growth.
+ELIGIBLE_CAP = 900
+
+
 class MemoryStore:
     """
     SQLite-based memory store for Joi.
@@ -2816,6 +2823,18 @@ class MemoryStore:
         now_ms = int(time.time() * 1000)
         pre_sql, pre_params = self._eligible_facts_sql(conversation_id, min_confidence, now_ms)
         eligible = _hybrid.eligible_rowids(conn, pre_sql, pre_params)
+        if len(eligible) > ELIGIBLE_CAP:
+            logger.warning(
+                "hybrid_search.eligible_capped",
+                extra={
+                    "surface": "user_facts",
+                    "conversation_id": conversation_id,
+                    "total": len(eligible),
+                    "cap": ELIGIBLE_CAP,
+                    "action": "eligible_cap",
+                },
+            )
+            eligible = eligible[:ELIGIBLE_CAP]
         if not eligible:
             return pinned_text
 
@@ -2887,7 +2906,11 @@ class MemoryStore:
         ]
 
         non_core_text = self._format_facts_as_text_to_budget(ordered_facts, remaining)
-        return (pinned_text + "\n" + non_core_text) if non_core_text else pinned_text
+        if not pinned_text:
+            return non_core_text
+        if not non_core_text:
+            return pinned_text
+        return pinned_text + "\n" + non_core_text
 
     def reschedule_fact(
         self,
@@ -3229,10 +3252,15 @@ class MemoryStore:
         days: int = 30,
         conversation_id: Optional[str] = None,
     ) -> str:
-        """Hybrid retrieval for summaries: vec + FTS -> RRF -> token budget.
+        """Hybrid retrieval over context_summaries.
 
-        Summaries have no pinned/core concept — all results go through
-        the same hybrid pipeline.
+        Pre-filter: created_at >= now - days*86400*1000 (NOTE: filters by
+        when the summary row was written, not by the period it covers —
+        this differs from legacy search_summaries which used period_end).
+
+        Pipeline: SQL pre-filter -> top-N from vec + FTS -> RRF fusion ->
+        top-K hydrated in fused-rank order -> token-budget truncation.
+        Embedding failure logs and returns "" (read path degrades).
         """
         from . import hybrid as _hybrid
 
@@ -3252,6 +3280,18 @@ class MemoryStore:
         pre_sql = f"SELECT id FROM context_summaries WHERE {' AND '.join(conditions)}"
 
         eligible = _hybrid.eligible_rowids(conn, pre_sql, params)
+        if len(eligible) > ELIGIBLE_CAP:
+            logger.warning(
+                "hybrid_search.eligible_capped",
+                extra={
+                    "surface": "context_summaries",
+                    "conversation_id": conversation_id,
+                    "total": len(eligible),
+                    "cap": ELIGIBLE_CAP,
+                    "action": "eligible_cap",
+                },
+            )
+            eligible = eligible[:ELIGIBLE_CAP]
         if not eligible:
             return ""
 
