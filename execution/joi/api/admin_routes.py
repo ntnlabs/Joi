@@ -350,10 +350,10 @@ def admin_rag_search(request: Request, q: str, scope: Optional[str] = None):
         "scope_filter": scope,
         "results": [
             {
-                "source": c.source,
-                "title": c.title,
-                "scope": c.scope,
-                "content_preview": c.content[:200] if c.content else "",
+                "source": c["source"],
+                "title": c["title"],
+                "scope": c["scope"],
+                "content_preview": c["content"][:200] if c["content"] else "",
             }
             for c in chunks
         ],

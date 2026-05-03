@@ -1745,76 +1745,76 @@ class MemoryStore:
         return [dict(row) for row in cursor.fetchall()]
 
     def search_notes(self, conversation_id: str, query: str, limit: int = 5) -> list:
+        """Hybrid (vector + FTS) search over notes for a conversation.
+
+        Returns a list of row dicts in fused-rank order.
+        Dict keys: id, conversation_id, title, content, embedding,
+                   remind_at, created_at, updated_at, archived.
         """
-        Search notes using semantic similarity (if embedding model configured) with
-        FTS5 fallback. Returns a list of row dicts, deduplicated, best matches first.
-        """
-        import struct
-        import math
+        from . import hybrid as _hybrid
 
-        seen_ids: set = set()
-        results = []
+        if not query:
+            return []
+        conn = self._connect()
 
-        # --- Semantic search ---
-        query_embedding = self._get_embedding(query)
-        if query_embedding is not None:
-            n_dims = len(query_embedding) // 4
-            query_vec = struct.unpack(f"{n_dims}f", query_embedding)
-            mag_q = math.sqrt(sum(x * x for x in query_vec))
-            conn = self._connect()
-            rows = conn.execute(
-                """
-                SELECT id, conversation_id, title, content, embedding, remind_at, created_at, updated_at, archived
-                FROM notes
-                WHERE conversation_id = ? AND archived = 0 AND embedding IS NOT NULL
-                """,
-                (conversation_id,),
-            ).fetchall()
-            scored = []
-            for row in rows:
-                blob = row["embedding"]
-                chunk_vec = struct.unpack(f"{len(blob) // 4}f", blob)
-                dot = sum(a * b for a, b in zip(query_vec, chunk_vec))
-                mag_c = math.sqrt(sum(x * x for x in chunk_vec))
-                score = dot / (mag_q * mag_c) if mag_q and mag_c else 0.0
-                scored.append((score, row))
-            scored.sort(key=lambda x: x[0], reverse=True)
-            for _, row in scored[:limit]:
-                seen_ids.add(row["id"])
-                results.append(dict(row))
+        pre_sql = "SELECT id FROM notes WHERE conversation_id = ? AND archived = 0"
+        eligible = _hybrid.eligible_rowids(conn, pre_sql, [conversation_id])
+        if len(eligible) > ELIGIBLE_CAP:
+            logger.warning(
+                "hybrid_search.eligible_capped",
+                extra={
+                    "surface": "notes",
+                    "conversation_id": conversation_id,
+                    "total": len(eligible),
+                    "cap": ELIGIBLE_CAP,
+                    "action": "eligible_cap",
+                },
+            )
+            eligible = eligible[:ELIGIBLE_CAP]
+        if not eligible:
+            return []
 
-        # --- FTS5 fallback ---
-        if len(results) < limit:
-            all_words = re.findall(r'\w+', query)
-            words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 1]
-            if not words:
-                words = all_words  # Fall back to full list so FTS still runs
-            if words:
-                fts_query = " OR ".join(f'"{w}"' for w in words[:20])
-                try:
-                    conn = self._connect()
-                    fts_rows = conn.execute(
-                        """
-                        SELECT n.id, n.conversation_id, n.title, n.content, n.embedding,
-                               n.remind_at, n.created_at, n.updated_at, n.archived
-                        FROM notes_fts
-                        JOIN notes n ON notes_fts.rowid = n.id
-                        WHERE notes_fts MATCH ? AND n.conversation_id = ? AND n.archived = 0
-                        ORDER BY rank
-                        LIMIT ?
-                        """,
-                        (fts_query, conversation_id, limit),
-                    ).fetchall()
-                    for row in fts_rows:
-                        if row["id"] not in seen_ids:
-                            seen_ids.add(row["id"])
-                            results.append(dict(row))
-                            if len(results) >= limit:
-                                break
-                except Exception as e:
-                    logger.warning("Notes FTS search failed", extra={"error": str(e)})
+        query_vec = self._get_embedding(query)
+        if query_vec is None or len(query_vec) != 4096:
+            logger.warning(
+                "hybrid_search.embed_failed",
+                extra={"surface": "notes", "conversation_id": conversation_id, "action": "embed_fail"},
+            )
+            return []
 
-        return results[:limit]
+        vec_hits = _hybrid.vec_search(conn, "vec_notes", query_vec, eligible)
+        fts_hits = _hybrid.fts_search(
+            conn, "notes_fts", self._sanitize_fts_query(query), eligible,
+        )
+        fused = _hybrid.rrf_fuse([vec_hits, fts_hits])
+
+        logger.info(
+            "hybrid_search.executed",
+            extra={
+                "surface": "notes",
+                "conversation_id": conversation_id,
+                "query_len": len(query),
+                "vec_hits": len(vec_hits),
+                "fts_hits": len(fts_hits),
+                "fused_unique": len(fused),
+                "action": "hybrid_search",
+            },
+        )
+
+        top_ids = [rowid for rowid, _ in fused[:limit]]
+        if not top_ids:
+            return []
+        placeholders = ",".join("?" for _ in top_ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, conversation_id, title, content, embedding,
+                   remind_at, created_at, updated_at, archived
+            FROM notes WHERE id IN ({placeholders})
+            """,
+            top_ids,
+        ).fetchall()
+        by_id = {row["id"]: row for row in rows}
+        return [dict(by_id[rid]) for rid in top_ids if rid in by_id]
 
     def set_note_remind_at(self, note_id: int, remind_at: Optional[str]) -> None:
         """Set or clear the remind_at timestamp for a note (ISO8601 UTC string or None)."""
@@ -3776,178 +3776,98 @@ class MemoryStore:
     def search_knowledge(
         self,
         query: str,
-        limit: int = 5,
-        scopes: Optional[List[str]] = None,
-        min_rank: float = 0.0,
-    ) -> List[KnowledgeChunk]:
-        """
-        Search knowledge base using FTS5 full-text search.
-
-        Args:
-            query: Search query (plain text, will be sanitized)
-            limit: Maximum number of results
-            scopes: List of allowed scopes (None = all, empty list = none)
-                   Empty string scope ('') means legacy global knowledge.
-
-        Returns:
-            List of matching KnowledgeChunk objects, ranked by relevance
-        """
-        conn = self._connect()
-
-        # Sanitize query for FTS5: extract only word characters (alphanumeric + underscore)
-        # This prevents FTS5 syntax injection - no quotes, operators, or special chars can pass through
-        all_words = re.findall(r'\w+', query)
-        words = [w for w in all_words if w.lower() not in _STOPWORDS and len(w) > 1]
-        if not words:
-            words = all_words  # Fall back to full list so FTS still runs
-        if not words:
-            return []
-
-        # If scopes is empty list, no access to anything
-        if scopes is not None and len(scopes) == 0:
-            return []
-
-        # Join words with OR, each word quoted to treat as literal
-        # Safe because \w+ guarantees no double quotes in words
-        fts_query = " OR ".join(f'"{word}"' for word in words[:20])  # Limit to 20 words
-
-        try:
-            # Build scope filter
-            if scopes is None:
-                # No filter - access all (backwards compat / admin)
-                scope_filter = ""
-                params = [fts_query]
-            else:
-                # Filter by allowed scopes only - no global/legacy access
-                # NOTE: All knowledge is created with proper scope, no legacy cleanup needed
-                allowed = list(scopes)
-                placeholders = ','.join('?' * len(allowed))
-                scope_filter = f"AND k.scope IN ({placeholders})"
-                params = [fts_query] + allowed
-
-            # Use FTS5 MATCH for full-text search
-            logger.debug("FTS query", extra={"query": fts_query[:100], "scopes": scopes})
-            cursor = conn.execute(
-                f"""
-                SELECT k.id, k.scope, k.source, k.title, k.content, k.chunk_index, k.created_at,
-                       bm25(knowledge_fts) as rank
-                FROM knowledge_chunks k
-                JOIN knowledge_fts f ON k.id = f.rowid
-                WHERE knowledge_fts MATCH ?
-                {scope_filter}
-                ORDER BY rank
-                LIMIT 100
-                """,
-                params
-            )
-            rows = cursor.fetchall()
-            if min_rank < 0.0:
-                rows = [r for r in rows if r["rank"] <= min_rank]
-                logger.debug("FTS results", extra={"matches": len(rows), "min_rank": min_rank})
-            else:
-                logger.debug("FTS results", extra={"matches": len(rows)})
-        except sqlite3.OperationalError as e:
-            logger.warning("FTS5 search failed", extra={"error": str(e), "query": fts_query[:100]})
-            return []
-
-        return [
-            KnowledgeChunk(
-                id=row["id"],
-                source=row["source"],
-                title=row["title"],
-                content=row["content"],
-                chunk_index=row["chunk_index"],
-                created_at=row["created_at"],
-                scope=row["scope"],
-            )
-            for row in rows[:limit]
-        ]
-
-    def search_knowledge_semantic(
-        self,
-        query: str,
         limit: int = 10,
         scopes: Optional[List[str]] = None,
-        min_score: float = 0.0,
-    ) -> List[KnowledgeChunk]:
-        """
-        Search knowledge base using semantic (embedding) similarity.
+    ) -> list:
+        """Hybrid (vector + FTS) search over knowledge_chunks.
 
-        Returns empty list if embedding model is not configured or Ollama fails.
-        Falls back gracefully — caller should then try search_knowledge() (FTS).
-        """
-        import struct
-        import math
+        Args:
+            query: Search query (plain text)
+            limit: Maximum number of results
+            scopes: List of allowed scopes (None = all, empty list = none).
+                    Empty string ('') means legacy global knowledge.
 
-        query_embedding = self._get_embedding(query)
-        if query_embedding is None:
+        Returns:
+            List of row dicts (id, scope, source, title, content, chunk_index, created_at),
+            in fused-rank order.
+        """
+        from . import hybrid as _hybrid
+
+        if not query:
             return []
 
-        n_dims = len(query_embedding) // 4
-        query_vec = struct.unpack(f"{n_dims}f", query_embedding)
-
-        conn = self._connect()
-
-        # If scopes is empty list, no access to anything
+        # Empty scopes list = no access
         if scopes is not None and len(scopes) == 0:
             return []
 
+        conn = self._connect()
+
         if scopes is None:
-            cursor = conn.execute(
-                """
-                SELECT id, scope, source, title, content, chunk_index, created_at, embedding
-                FROM knowledge_chunks
-                WHERE embedding IS NOT NULL
-                """
-            )
+            pre_sql = "SELECT id FROM knowledge_chunks"
+            pre_params: list = []
         else:
             placeholders = ",".join("?" * len(scopes))
-            cursor = conn.execute(
-                f"""
-                SELECT id, scope, source, title, content, chunk_index, created_at, embedding
-                FROM knowledge_chunks
-                WHERE embedding IS NOT NULL
-                  AND scope IN ({placeholders})
-                """,
-                list(scopes),
-            )
+            pre_sql = f"SELECT id FROM knowledge_chunks WHERE scope IN ({placeholders})"
+            pre_params = list(scopes)
 
-        rows = cursor.fetchall()
-        if not rows:
+        eligible = _hybrid.eligible_rowids(conn, pre_sql, pre_params)
+        if len(eligible) > ELIGIBLE_CAP:
+            logger.warning(
+                "hybrid_search.eligible_capped",
+                extra={
+                    "surface": "knowledge_chunks",
+                    "scopes": scopes,
+                    "total": len(eligible),
+                    "cap": ELIGIBLE_CAP,
+                    "action": "eligible_cap",
+                },
+            )
+            eligible = eligible[:ELIGIBLE_CAP]
+        if not eligible:
             return []
 
-        # Compute cosine similarity for each chunk
-        mag_q = math.sqrt(sum(x * x for x in query_vec))
-        scored = []
-        for row in rows:
-            chunk_bytes = row["embedding"]
-            chunk_vec = struct.unpack(f"{len(chunk_bytes) // 4}f", chunk_bytes)
-            dot = sum(a * b for a, b in zip(query_vec, chunk_vec))
-            mag_c = math.sqrt(sum(x * x for x in chunk_vec))
-            score = dot / (mag_q * mag_c) if mag_q and mag_c else 0.0
-            scored.append((score, row))
-
-        scored.sort(key=lambda x: x[0], reverse=True)
-        if min_score > 0.0:
-            scored = [(s, r) for s, r in scored if s >= min_score]
-            logger.debug("Knowledge semantic search", extra={
-                "candidates": len(rows), "above_threshold": len(scored), "limit": limit
-            })
-        else:
-            logger.debug("Knowledge semantic search", extra={"candidates": len(rows), "limit": limit})
-
-        return [
-            KnowledgeChunk(
-                id=row["id"],
-                source=row["source"],
-                title=row["title"],
-                content=row["content"],
-                chunk_index=row["chunk_index"],
-                created_at=row["created_at"],
-                scope=row["scope"],
+        query_vec = self._get_embedding(query)
+        if query_vec is None or len(query_vec) != 4096:
+            logger.warning(
+                "hybrid_search.embed_failed",
+                extra={"surface": "knowledge_chunks", "scopes": scopes, "action": "embed_fail"},
             )
-            for _, row in scored[:limit]
-        ]
+            return []
+
+        vec_hits = _hybrid.vec_search(conn, "vec_knowledge", query_vec, eligible)
+        fts_hits = _hybrid.fts_search(
+            conn, "knowledge_fts", self._sanitize_fts_query(query), eligible,
+        )
+        fused = _hybrid.rrf_fuse([vec_hits, fts_hits])
+
+        logger.info(
+            "hybrid_search.executed",
+            extra={
+                "surface": "knowledge_chunks",
+                "scopes": scopes,
+                "query_len": len(query),
+                "vec_hits": len(vec_hits),
+                "fts_hits": len(fts_hits),
+                "fused_unique": len(fused),
+                "action": "hybrid_search",
+            },
+        )
+
+        top_ids = [rowid for rowid, _ in fused[:limit]]
+        if not top_ids:
+            return []
+        placeholders = ",".join("?" for _ in top_ids)
+        rows = conn.execute(
+            f"""
+            SELECT id, scope, source, title, content, chunk_index, created_at
+            FROM knowledge_chunks WHERE id IN ({placeholders})
+            """,
+            top_ids,
+        ).fetchall()
+        by_id = {row["id"]: row for row in rows}
+        return [dict(by_id[rid]) for rid in top_ids if rid in by_id]
+
+
 
     def get_knowledge_by_source(self, source: str, scope: Optional[str] = None) -> List[KnowledgeChunk]:
         """Get all chunks from a specific source, optionally filtered by scope."""
@@ -4088,43 +4008,30 @@ class MemoryStore:
         min_similarity: float = 0.0,
         min_bm25: float = 0.0,
     ) -> str:
-        """
-        Search knowledge and format as context for LLM.
+        """Search knowledge and format as context for LLM.
 
         Args:
             query: Search query
             max_tokens: Approximate max tokens (chars / 4)
             scopes: Allowed knowledge scopes (None = all)
-            min_similarity: Minimum cosine similarity for semantic search (0.0 = no filter)
-            min_bm25: Minimum BM25 rank for FTS fallback (0.0 = no filter, more negative = stricter)
+            min_similarity: Unused (kept for API compatibility; RRF fusion handles ranking)
+            min_bm25: Unused (kept for API compatibility; RRF fusion handles ranking)
 
         Returns:
             Formatted context string
         """
-        semantic_chunks = self.search_knowledge_semantic(query, limit=10, scopes=scopes, min_score=min_similarity)
-        fts_chunks = self.search_knowledge(query, limit=10, scopes=scopes, min_rank=min_bm25)
-
-        # Merge: semantic first (higher quality), then FTS-only results not already included
-        seen_ids = {c.id for c in semantic_chunks}
-        chunks = list(semantic_chunks)
-        for c in fts_chunks:
-            if c.id not in seen_ids:
-                chunks.append(c)
-                seen_ids.add(c.id)
-
-        if semantic_chunks:
-            logger.debug("Knowledge: semantic results", extra={"count": len(semantic_chunks)})
-        if fts_chunks:
-            logger.debug("Knowledge: FTS results", extra={"count": len(fts_chunks)})
+        chunks = self.search_knowledge(query, limit=10, scopes=scopes)
         if not chunks:
             return ""
+
+        logger.debug("Knowledge: hybrid results", extra={"count": len(chunks)})
 
         max_chars = max_tokens * 4  # Rough estimate
         lines = []
         total_chars = 0
 
         for chunk in chunks:
-            chunk_text = f"\n[{chunk.title}]\n{chunk.content}"
+            chunk_text = f"\n[{chunk['title']}]\n{chunk['content']}"
             if total_chars + len(chunk_text) > max_chars:
                 break
             lines.append(chunk_text)
