@@ -580,17 +580,23 @@ PY
 }
 
 # Print SQL clause matching pinning.is_pinned() (for `facts list --pinned`).
-# Single source of truth: imports CORE_FACT_KEYS from memory.pinning so adding
-# or removing a whitelisted (category, key) requires no changes here.
+# Single source of truth: imports pinned_filter_sql_clause() from memory.pinning
+# and inlines its `?` placeholders as quoted SQL literals.
 get_pinned_filter_sql() {
     if ! command -v python3 >/dev/null 2>&1; then
         error "python3 not available; cannot derive pinned filter."
     fi
     PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 <<'PY'
-from memory.pinning import CORE_FACT_KEYS
-pairs = sorted(CORE_FACT_KEYS)
-ws = ",".join(f"('{c}','{k}')" for c, k in pairs)
-print(f"(pinned_override = 1 OR (pinned_override IS NULL AND (category, key) IN ({ws})))")
+from memory.pinning import pinned_filter_sql_clause
+sql, params = pinned_filter_sql_clause()
+out, i = [], 0
+for ch in sql:
+    if ch == "?":
+        out.append("'" + str(params[i]).replace("'", "''") + "'")
+        i += 1
+    else:
+        out.append(ch)
+print("".join(out))
 PY
 }
 
