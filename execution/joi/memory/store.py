@@ -2420,6 +2420,9 @@ class MemoryStore:
 
         Args:
             pinned_override: None=don't touch existing pin, 0=unpin, 1=pin.
+            source_message_id: DEPRECATED in v15 — column dropped from
+                user_facts. Parameter accepted for backwards compatibility but
+                silently ignored. Will be removed when external callers update.
             ttl_hours: Hours until fact expires. None = permanent.
             detected_at: ms epoch of the source message. None = unknown.
         """
@@ -2469,7 +2472,11 @@ class MemoryStore:
             ).fetchone()
             fact_id = row["id"]
 
-        assert fact_id is not None, "store_fact: failed to resolve fact_id (no rowid and no existing row)"
+        if fact_id is None:
+            raise RuntimeError(
+                "store_fact: failed to resolve fact_id (no rowid and no existing row); "
+                "vec0 mirror would corrupt — refusing to write"
+            )
         self._mirror_vec(conn, "vec_user_facts", fact_id, vec_bytes)
 
         conn.commit()
