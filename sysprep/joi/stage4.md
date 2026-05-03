@@ -352,11 +352,14 @@ By default, knowledge retrieval uses BM25 full-text search. For semantic (meanin
 search, pull an embedding model and configure it:
 
 ```bash
-# Pull the embedding model (CPU-only, ~274MB)
-docker exec ollama ollama pull nomic-embed-text
+# Pull the embedding model (~1.5GB, supports dense + sparse + colbert)
+docker exec ollama ollama pull bge-m3
 
 # Enable in /etc/default/joi-api
-echo 'JOI_EMBEDDING_MODEL=nomic-embed-text' >> /etc/default/joi-api
+echo 'JOI_EMBEDDING_MODEL=bge-m3' >> /etc/default/joi-api
+
+# Install sqlite-vec extension for hybrid vector search (Search Rework v1)
+pip install sqlite-vec --break-system-packages
 
 # Restart
 systemctl restart joi-api

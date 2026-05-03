@@ -110,12 +110,18 @@ JOI_RAG_ENABLED=1
 # Max tokens for RAG context in prompts
 #JOI_RAG_MAX_TOKENS=1500
 # Ollama embedding model for semantic search (leave empty to use BM25 FTS only)
-# Pull with: ollama pull nomic-embed-text
-#JOI_EMBEDDING_MODEL=
+# Pull with: ollama pull bge-m3
+#JOI_EMBEDDING_MODEL=bge-m3
 # Minimum cosine similarity for semantic RAG (0.0 = no filter, 1.0 = exact match only)
 #JOI_RAG_MIN_SIMILARITY=0.45
 # Minimum BM25 score for FTS RAG fallback (0.0 = no filter, more negative = stricter)
 #JOI_RAG_MIN_BM25=-0.5
+
+# Hybrid retrieval tunables (Search Rework v1)
+# RRF smoothing constant — controls consensus emphasis (default 60)
+#JOI_RRF_K=60
+# Top-N pulled from each retriever before fusion (default 20)
+#JOI_RRF_TOP_N=20
 
 # --- Facts & Summaries FTS ---
 # Full-text search context injection (facts and conversation summaries)
