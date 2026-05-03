@@ -161,7 +161,7 @@ FACTS USAGE:
     joi-admin facts <SUBCOMMAND> [OPTIONS]
 
 FACTS SUBCOMMANDS:
-    list [--conversation ID] [--category CAT] [--order-by id|date|category|key] [--include-expired]  List stored facts
+    list [--conversation ID] [--category CAT] [--order-by id|date|category|key] [--include-expired] [--pinned]  List stored facts
     show <id>                                   Show full detail for one fact
     add --conversation ID --category CAT --key KEY --value VALUE [--confidence 0.9] [--pin]  Add a fact manually
     pin <id>                                    Set pinned_override=1 (always inject into LLM context)
@@ -175,6 +175,7 @@ FACTS EXAMPLES:
     joi-admin facts list --include-expired      # Include expired facts
     joi-admin facts list --conversation +123    # Facts for one conversation
     joi-admin facts list --category personal    # Facts in a category
+    joi-admin facts list --pinned               # Only facts pinned in LLM context (explicit + whitelisted)
     joi-admin facts show 42                     # Show full detail for fact #42
     joi-admin facts add --conversation +123 --category personal --key birthday --value "January 1"
     joi-admin facts add --conversation +123 --category personal --key job --value "engineer" --confidence 1.0
@@ -576,6 +577,21 @@ PY
     ); then
         error "Failed to delete facts via Python: ${py_err}"
     fi
+}
+
+# Print SQL clause matching pinning.is_pinned() (for `facts list --pinned`).
+# Single source of truth: imports CORE_FACT_KEYS from memory.pinning so adding
+# or removing a whitelisted (category, key) requires no changes here.
+get_pinned_filter_sql() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        error "python3 not available; cannot derive pinned filter."
+    fi
+    PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 <<'PY'
+from memory.pinning import CORE_FACT_KEYS
+pairs = sorted(CORE_FACT_KEYS)
+ws = ",".join(f"('{c}','{k}')" for c, k in pairs)
+print(f"(pinned_override = 1 OR (pinned_override IS NULL AND (category, key) IN ({ws})))")
+PY
 }
 
 # Set pinned_override on a fact via Python so FTS5 triggers fire correctly.
@@ -2869,6 +2885,7 @@ cmd_facts() {
             local category=""
             local order_by="id"
             local include_expired=0
+            local pinned_only=0
 
             while [[ $# -gt 0 ]]; do
                 case "$1" in
@@ -2897,8 +2914,12 @@ cmd_facts() {
                         include_expired=1
                         shift
                         ;;
+                    --pinned)
+                        pinned_only=1
+                        shift
+                        ;;
                     --help|-h)
-                        echo "Usage: joi-admin facts list [--conversation ID] [--category CAT] [--order-by id|date|category|key] [--include-expired]"
+                        echo "Usage: joi-admin facts list [--conversation ID] [--category CAT] [--order-by id|date|category|key] [--include-expired] [--pinned]"
                         exit 0
                         ;;
                     *)
@@ -2922,6 +2943,11 @@ cmd_facts() {
                 local now_ms
                 now_ms=$(date +%s%3N)
                 where_parts+=("(expires_at IS NULL OR expires_at > $now_ms)")
+            fi
+            if [[ "$pinned_only" -eq 1 ]]; then
+                local pin_clause
+                pin_clause=$(get_pinned_filter_sql) || error "Could not derive pinned filter from pinning.py"
+                where_parts+=("$pin_clause")
             fi
 
             local where_clause=""
