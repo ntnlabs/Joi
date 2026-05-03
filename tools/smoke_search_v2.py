@@ -119,6 +119,23 @@ def build_v14_fixture(db_path: Path) -> dict[str, int]:
             updated_at INTEGER NOT NULL,
             archived INTEGER NOT NULL DEFAULT 0
         );
+        -- Minimal v14-shaped messages table. _run_migrations short-circuits
+        -- if `messages` is absent, which would skip the v15 dispatch entirely.
+        -- Columns added by earlier migrations (archived/sender_id/sender_name
+        -- from the early block, translated_text from v20) are pre-included so
+        -- those ALTERs no-op. No FOREIGN KEY clause -> v9 FK-removal rebuild
+        -- is skipped.
+        CREATE TABLE messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT,
+            role TEXT,
+            content TEXT,
+            timestamp INTEGER,
+            archived INTEGER DEFAULT 0,
+            sender_id TEXT,
+            sender_name TEXT,
+            translated_text TEXT
+        );
     """)
     # NOTE: this fixture omits the v14 FTS5 mirror tables. The migration's
     # _rebuild_tables_v15 re-runs SCHEMA_SQL at the end, which re-creates them.
@@ -239,7 +256,7 @@ def assert_lost_pin_audit(store: MemoryStore, ids: dict[str, int], label: str) -
 
 def assert_hybrid_retrieval(store: MemoryStore, label: str) -> None:
     """Smoke-check the RRF-fused retrieval methods (vec + FTS path)."""
-    knowledge = store.search_knowledge(query="coffee drink", scope="", limit=5)
+    knowledge = store.search_knowledge(query="coffee drink", scopes=[""], limit=5)
     if not isinstance(knowledge, list):
         fail(f"[{label}] search_knowledge returned {type(knowledge).__name__}, expected list")
 
