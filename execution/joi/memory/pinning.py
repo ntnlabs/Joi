@@ -17,8 +17,8 @@ from typing import Optional
 
 CORE_FACT_KEYS: frozenset[tuple[str, str]] = frozenset({
     ("personal", "name"),
+    ("personal", "gender"),
     ("personal", "preferred_language"),
-    ("personal", "pronoun"),
     ("personal", "date_of_birth"),
     ("personal", "location_city"),
     ("health", "critical_allergy"),
