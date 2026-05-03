@@ -3674,12 +3674,21 @@ class MemoryStore:
         if not model:
             return None
         ollama_url = os.getenv("JOI_OLLAMA_URL", "http://localhost:11434").rstrip("/")
+        # bge-m3 under Ollama with flash-attention produces NaN embeddings on
+        # certain token sequences (e.g. long sentence ending in `Word)`), which
+        # Ollama then 500s on serialization. Forcing num_gpu=0 routes the
+        # embedding call to the CPU path, which uses a different attention
+        # kernel and is numerically stable. Default ON; opt out with
+        # JOI_EMBED_CPU_ONLY=0 if your model+server combo is known good.
+        request_body: Dict[str, Any] = {"model": model, "input": text}
+        if os.getenv("JOI_EMBED_CPU_ONLY", "1") == "1":
+            request_body["options"] = {"num_gpu": 0}
         try:
             import httpx
             resp = httpx.post(
                 f"{ollama_url}/api/embed",
-                json={"model": model, "input": text},
-                timeout=30.0,
+                json=request_body,
+                timeout=60.0,
             )
             resp.raise_for_status()
             data = resp.json()

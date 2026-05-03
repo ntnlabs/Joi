@@ -112,6 +112,10 @@ JOI_RAG_ENABLED=1
 # Ollama embedding model for semantic search (leave empty to use BM25 FTS only)
 # Pull with: ollama pull bge-m3
 #JOI_EMBEDDING_MODEL=bge-m3
+# Force embedding requests to CPU (num_gpu=0). Default ON to work around a
+# bge-m3 + flash-attention NaN bug that causes Ollama to 500 on certain
+# token sequences. Set to 0 only if your model+server combo is known good.
+#JOI_EMBED_CPU_ONLY=1
 # Minimum cosine similarity for semantic RAG (0.0 = no filter, 1.0 = exact match only)
 #JOI_RAG_MIN_SIMILARITY=0.45
 # Minimum BM25 score for FTS RAG fallback (0.0 = no filter, more negative = stricter)
