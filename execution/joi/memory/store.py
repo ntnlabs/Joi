@@ -569,6 +569,26 @@ END;
 """
 
 
+def _embed_input_for_fact(category: str, key: str, value: str) -> str:
+    """Text passed to bge-m3 for fact embedding."""
+    return f"{category}/{key}: {value}"
+
+
+def _embed_input_for_summary(summary_text: str) -> str:
+    """Text passed to bge-m3 for summary embedding."""
+    return summary_text
+
+
+def _embed_input_for_chunk(title: str, content: str) -> str:
+    """Text passed to bge-m3 for knowledge chunk embedding."""
+    return f"{title}\n\n{content}"
+
+
+def _embed_input_for_note(title: str, content: str) -> str:
+    """Text passed to bge-m3 for note embedding."""
+    return f"{title}\n\n{content}"
+
+
 def _fact_temporal_suffix(fact: "UserFact", now_ms: int) -> str:
     """Return a parenthetical temporal annotation for a fact, or empty string if none."""
     parts = []
@@ -1145,8 +1165,360 @@ class MemoryStore:
             conn.execute("ALTER TABLE messages ADD COLUMN translated_text TEXT")
             conn.commit()
 
+        # ============================================================
+        # Schema v14 -> v15: Search Rework (hybrid vec + FTS retrieval)
+        # ============================================================
+        cursor = conn.execute("SELECT value FROM system_state WHERE key = 'schema_version'")
+        row = cursor.fetchone()
+        current_version = int(row[0]) if row else 0
+
+        if current_version < 15:
+            self._migrate_to_v15_search_rework(conn)
+
         # Check FTS integrity and rebuild if needed
         self._check_and_repair_fts_indexes(conn)
+
+    def _migrate_to_v15_search_rework(self, conn: sqlite3.Connection) -> None:
+        """Migrate to schema v15: hybrid retrieval + pinned_override.
+
+        Fail-loud: any failure ROLLBACKs and crashes the process. The
+        operator must restore from the pre-migration backup.
+        """
+        import time
+        logger.info("Migration v15 starting (search rework)", extra={"action": "migrate_v15"})
+
+        try:
+            # --- Step 1: Schema additions (additive, idempotent ALTERs) ---
+
+            facts_cols = [r[1] for r in conn.execute("PRAGMA table_info(user_facts)").fetchall()]
+            if "pinned_override" not in facts_cols:
+                logger.info("v15: adding user_facts.pinned_override")
+                conn.execute("ALTER TABLE user_facts ADD COLUMN pinned_override INTEGER")
+            if "embedding" not in facts_cols:
+                logger.info("v15: adding user_facts.embedding (nullable, NOT NULL enforced after backfill)")
+                conn.execute("ALTER TABLE user_facts ADD COLUMN embedding BLOB")
+
+            summaries_cols = [r[1] for r in conn.execute("PRAGMA table_info(context_summaries)").fetchall()]
+            if "embedding" not in summaries_cols:
+                logger.info("v15: adding context_summaries.embedding")
+                conn.execute("ALTER TABLE context_summaries ADD COLUMN embedding BLOB")
+
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_facts_pinned ON user_facts(pinned_override, conversation_id, active)")
+
+            # --- Step 2: Wipe legacy nomic embeddings (incompatible dims) ---
+            logger.info("v15: wiping legacy nomic embeddings (knowledge_chunks, notes)")
+            conn.execute("UPDATE knowledge_chunks SET embedding = NULL")
+            conn.execute("UPDATE notes SET embedding = NULL")
+
+            # --- Step 3: Create vec0 virtual tables + delete triggers ---
+            logger.info("v15: creating vec0 virtual tables and delete triggers")
+            for vec_table in ("vec_user_facts", "vec_summaries", "vec_knowledge", "vec_notes"):
+                conn.execute(f"CREATE VIRTUAL TABLE IF NOT EXISTS {vec_table} USING vec0(embedding float[1024])")
+
+            conn.executescript("""
+                CREATE TRIGGER IF NOT EXISTS user_facts_vec_delete AFTER DELETE ON user_facts BEGIN
+                    DELETE FROM vec_user_facts WHERE rowid = old.id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS context_summaries_vec_delete AFTER DELETE ON context_summaries BEGIN
+                    DELETE FROM vec_summaries WHERE rowid = old.id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS knowledge_chunks_vec_delete AFTER DELETE ON knowledge_chunks BEGIN
+                    DELETE FROM vec_knowledge WHERE rowid = old.id;
+                END;
+                CREATE TRIGGER IF NOT EXISTS notes_vec_delete AFTER DELETE ON notes BEGIN
+                    DELETE FROM vec_notes WHERE rowid = old.id;
+                END;
+            """)
+
+            # --- Step 3.5: Inventory legacy important=1 facts (lost in rebuild) ---
+            # The new pinning model is whitelist + explicit pinned_override.
+            # We intentionally do NOT translate important=1 -> pinned_override=1
+            # (per design). But we MUST tell the operator which facts will lose
+            # their pin so they can re-pin via `joi-admin facts pin <id>`.
+            #
+            # Filter out facts whose (category, key) is on CORE_FACT_KEYS — those
+            # will auto-pin via the whitelist post-migration and need no action.
+            from .pinning import CORE_FACT_KEYS
+            important_rows = conn.execute(
+                "SELECT id, conversation_id, category, key FROM user_facts WHERE important = 1 AND active = 1"
+            ).fetchall()
+            at_risk_rows = [
+                r for r in important_rows
+                if (r["category"], r["key"]) not in CORE_FACT_KEYS
+            ]
+            if at_risk_rows:
+                logger.warning(
+                    "v15: legacy important=1 facts will lose their pin; re-pin via joi-admin",
+                    extra={
+                        "count": len(at_risk_rows),
+                        "whitelist_covered": len(important_rows) - len(at_risk_rows),
+                        "fact_ids": [r["id"] for r in at_risk_rows],
+                        "action": "migrate_v15_lost_pins",
+                    },
+                )
+                # Also write an audit row to system_state so the operator can
+                # retrieve the list post-restart even if the journal rolled.
+                import json
+                conn.execute(
+                    "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, ?)",
+                    (
+                        "v15_lost_pin_audit",
+                        json.dumps([
+                            {"id": r["id"], "conversation_id": r["conversation_id"],
+                             "category": r["category"], "key": r["key"]}
+                            for r in at_risk_rows
+                        ]),
+                        int(time.time() * 1000),
+                    ),
+                )
+
+            # --- Step 4: Bulk re-embed all rows ---
+            self._bulk_reembed_v15(conn)
+
+            # --- Step 5: Rebuild tables to enforce NOT NULL + drop legacy `important` ---
+            self._rebuild_tables_v15(conn)
+
+            # --- Step 6: Bump version + cutover marker ---
+            conn.execute(
+                "UPDATE system_state SET value = '15', updated_at = ? WHERE key = 'schema_version'",
+                (int(time.time() * 1000),),
+            )
+            conn.execute(
+                "INSERT OR REPLACE INTO system_state (key, value, updated_at) VALUES (?, ?, ?)",
+                ("search_v2_migrated", "1", int(time.time() * 1000)),
+            )
+            conn.commit()
+            logger.info("Migration v15 complete", extra={"action": "migrate_v15_done"})
+
+        except Exception as e:
+            conn.rollback()
+            logger.critical(
+                "Migration v15 failed — restore pre-migration backup and investigate",
+                extra={"error": str(e), "action": "migrate_v15_fatal"},
+            )
+            os._exit(78)
+
+    def _bulk_reembed_v15(self, conn: sqlite3.Connection) -> None:
+        """Re-embed every row across all four surfaces. Fail-loud on any failure.
+
+        Each row's embedding goes into TWO places: the main table BLOB column
+        and the matching vec_<surface> virtual table (rowid match).
+        """
+        import time
+
+        surfaces = [
+            # (main_table, vec_table, select_sql, embed_input_fn)
+            (
+                "user_facts",
+                "vec_user_facts",
+                "SELECT id, category, key, value FROM user_facts",
+                lambda row: _embed_input_for_fact(row["category"], row["key"], row["value"]),
+            ),
+            (
+                "context_summaries",
+                "vec_summaries",
+                "SELECT id, summary_text FROM context_summaries",
+                lambda row: _embed_input_for_summary(row["summary_text"]),
+            ),
+            (
+                "knowledge_chunks",
+                "vec_knowledge",
+                "SELECT id, title, content FROM knowledge_chunks",
+                lambda row: _embed_input_for_chunk(row["title"], row["content"]),
+            ),
+            (
+                "notes",
+                "vec_notes",
+                "SELECT id, title, content FROM notes",
+                lambda row: _embed_input_for_note(row["title"], row["content"]),
+            ),
+        ]
+
+        for main_table, vec_table, select_sql, embed_fn in surfaces:
+            count_row = conn.execute(f"SELECT COUNT(*) FROM {main_table}").fetchone()
+            total = count_row[0] if count_row else 0
+            logger.info(
+                "v15 reembed: starting surface",
+                extra={"surface": main_table, "total": total, "action": "migrate_v15_reembed"},
+            )
+
+            t0 = time.time()
+            processed = 0
+            for row in conn.execute(select_sql):
+                text = embed_fn(row)
+                vec_bytes = self._get_embedding(text)
+                if vec_bytes is None or len(vec_bytes) != 4096:
+                    raise RuntimeError(
+                        f"v15 reembed failed for {main_table} id={row['id']}: "
+                        f"expected 4096 bytes (1024 float32), got "
+                        f"{len(vec_bytes) if vec_bytes else 'None'}. "
+                        f"Check JOI_EMBEDDING_MODEL=bge-m3 and Ollama health."
+                    )
+                conn.execute(
+                    f"UPDATE {main_table} SET embedding = ? WHERE id = ?",
+                    (vec_bytes, row["id"]),
+                )
+                conn.execute(
+                    f"INSERT INTO {vec_table} (rowid, embedding) VALUES (?, ?)",
+                    (row["id"], vec_bytes),
+                )
+                processed += 1
+                if processed % 100 == 0:
+                    logger.info(
+                        "v15 reembed: progress",
+                        extra={
+                            "surface": main_table,
+                            "processed": processed,
+                            "total": total,
+                            "elapsed_s": round(time.time() - t0, 1),
+                            "action": "migrate_v15_reembed",
+                        },
+                    )
+
+            logger.info(
+                "v15 reembed: surface complete",
+                extra={
+                    "surface": main_table,
+                    "processed": processed,
+                    "elapsed_s": round(time.time() - t0, 1),
+                    "action": "migrate_v15_reembed_done",
+                },
+            )
+
+    def _rebuild_tables_v15(self, conn: sqlite3.Connection) -> None:
+        """Rebuild main tables to enforce NOT NULL on embedding and drop `important`.
+
+        SQLite has no direct ALTER COLUMN ... NOT NULL. Pattern:
+        CREATE NEW with constraints, INSERT FROM OLD, DROP OLD, RENAME NEW.
+        Indexes and triggers attached to the old table are dropped automatically;
+        we recreate them via SCHEMA_SQL after the rebuild.
+
+        IMPORTANT: rowids are preserved via explicit `INSERT INTO new (id, ...)
+        SELECT id, ... FROM old`. This is load-bearing — the FTS5 mirror tables
+        (user_facts_fts, summaries_fts, knowledge_fts, notes_fts) are NOT
+        dropped here (they are separate virtual tables) and they reference
+        rows by rowid. If we let SQLite auto-assign new rowids, the FTS5
+        mirror would point at stale data and queries would silently corrupt.
+        Same applies to the vec_<surface> mirrors created in step 3 above.
+        """
+        logger.info("v15: rebuilding tables to enforce NOT NULL + drop legacy")
+
+        # --- user_facts ---
+        # New schema OMITS legacy `important` column.
+        conn.executescript("""
+            CREATE TABLE user_facts_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT,
+                category TEXT NOT NULL,
+                key TEXT NOT NULL,
+                value TEXT NOT NULL,
+                confidence REAL NOT NULL DEFAULT 0.5,
+                source TEXT NOT NULL DEFAULT 'inferred',
+                learned_at INTEGER NOT NULL,
+                last_verified_at INTEGER,
+                pinned_override INTEGER,
+                embedding BLOB NOT NULL,
+                expires_at INTEGER,
+                detected_at INTEGER,
+                active INTEGER NOT NULL DEFAULT 1,
+                UNIQUE(conversation_id, category, key)
+            );
+            INSERT INTO user_facts_new (
+                id, conversation_id, category, key, value, confidence, source,
+                learned_at, last_verified_at, pinned_override, embedding,
+                expires_at, detected_at, active
+            )
+            SELECT id, conversation_id, category, key, value, confidence, source,
+                   learned_at, last_verified_at, pinned_override, embedding,
+                   expires_at, detected_at, active
+            FROM user_facts;
+            DROP TABLE user_facts;
+            ALTER TABLE user_facts_new RENAME TO user_facts;
+        """)
+
+        # --- context_summaries ---
+        # Column order matches SCHEMA_SQL: id, conversation_id, summary_type,
+        # period_start, period_end, summary_text, key_points_json, message_count,
+        # embedding, created_at
+        conn.executescript("""
+            CREATE TABLE context_summaries_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL DEFAULT '',
+                summary_type TEXT NOT NULL,
+                period_start INTEGER NOT NULL,
+                period_end INTEGER NOT NULL,
+                summary_text TEXT NOT NULL,
+                key_points_json TEXT,
+                message_count INTEGER,
+                embedding BLOB NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+            );
+            INSERT INTO context_summaries_new (
+                id, conversation_id, summary_type, period_start, period_end,
+                summary_text, key_points_json, message_count, embedding, created_at
+            )
+            SELECT id, conversation_id, summary_type, period_start, period_end,
+                   summary_text, key_points_json, message_count, embedding, created_at
+            FROM context_summaries;
+            DROP TABLE context_summaries;
+            ALTER TABLE context_summaries_new RENAME TO context_summaries;
+        """)
+
+        # --- knowledge_chunks ---
+        # Preserves UNIQUE(scope, source, chunk_index) constraint from SCHEMA_SQL.
+        conn.executescript("""
+            CREATE TABLE knowledge_chunks_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT NOT NULL DEFAULT '',
+                source TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL DEFAULT 0,
+                metadata_json TEXT,
+                embedding BLOB NOT NULL,
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+                UNIQUE(scope, source, chunk_index)
+            );
+            INSERT INTO knowledge_chunks_new (
+                id, scope, source, title, content, chunk_index, metadata_json,
+                embedding, created_at
+            )
+            SELECT id, scope, source, title, content, chunk_index, metadata_json,
+                   embedding, created_at
+            FROM knowledge_chunks;
+            DROP TABLE knowledge_chunks;
+            ALTER TABLE knowledge_chunks_new RENAME TO knowledge_chunks;
+        """)
+
+        # --- notes ---
+        # remind_at is TEXT (not INTEGER) per SCHEMA_SQL; content has NOT NULL DEFAULT ''.
+        conn.executescript("""
+            CREATE TABLE notes_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                embedding BLOB NOT NULL,
+                remind_at TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                archived INTEGER NOT NULL DEFAULT 0
+            );
+            INSERT INTO notes_new (
+                id, conversation_id, title, content, embedding, remind_at,
+                created_at, updated_at, archived
+            )
+            SELECT id, conversation_id, title, content, embedding, remind_at,
+                   created_at, updated_at, archived
+            FROM notes;
+            DROP TABLE notes;
+            ALTER TABLE notes_new RENAME TO notes;
+        """)
+
+        # All FTS triggers/indexes were dropped with the old tables.
+        # Re-running the full SCHEMA_SQL recreates them via IF NOT EXISTS guards.
+        logger.info("v15: re-running SCHEMA_SQL to recreate triggers/indexes/FTS")
+        conn.executescript(SCHEMA_SQL)
 
     def _check_and_repair_fts_indexes(self, conn: sqlite3.Connection) -> None:
         """Check FTS index integrity and repair if out of sync."""
