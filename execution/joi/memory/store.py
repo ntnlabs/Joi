@@ -1256,15 +1256,16 @@ class MemoryStore:
             # (per design). But we MUST tell the operator which facts will lose
             # their pin so they can re-pin via `joi-admin facts pin <id>`.
             #
-            # Filter out facts whose (category, key) is on CORE_FACT_KEYS — those
-            # will auto-pin via the whitelist post-migration and need no action.
+            # Filter out facts that will auto-pin post-migration without operator
+            # action: whitelist matches OR source='admin' (operator-curated).
             from .pinning import CORE_FACT_KEYS
             important_rows = conn.execute(
-                "SELECT id, conversation_id, category, key FROM user_facts WHERE important = 1 AND active = 1"
+                "SELECT id, conversation_id, category, key, source FROM user_facts WHERE important = 1 AND active = 1"
             ).fetchall()
             at_risk_rows = [
                 r for r in important_rows
                 if (r["category"], r["key"]) not in CORE_FACT_KEYS
+                and r["source"] != "admin"
             ]
             if at_risk_rows:
                 logger.warning(
@@ -2703,29 +2704,24 @@ class MemoryStore:
         as_of: Optional[int] = None,
         include_expired: bool = False,
     ) -> List[UserFact]:
-        """Return pinned (core) facts: explicit pins + whitelist matches.
-
-        Logic (matches pinning.is_pinned):
-          - pinned_override = 1                            -> pinned
-          - pinned_override IS NULL AND (cat,key) in W     -> pinned
-          - pinned_override = 0 OR not in W                -> not pinned
+        """Return pinned (core) facts. Logic in pinning.is_pinned().
 
         Bounded by MAX_CORE_FACTS (truncated by learned_at DESC).
         """
-        from .pinning import MAX_CORE_FACTS, whitelist_sql_clause
+        from .pinning import MAX_CORE_FACTS, pinned_filter_sql_clause
 
         conn = self._connect()
         now_ms = int(time.time() * 1000)
         as_of_ms = as_of if as_of is not None else now_ms
 
-        whitelist_sql, whitelist_params = whitelist_sql_clause()
+        pin_sql, pin_params = pinned_filter_sql_clause()
 
         conditions = [
             "active = 1",
             "confidence >= ?",
-            f"(pinned_override = 1 OR (pinned_override IS NULL AND {whitelist_sql}))",
+            pin_sql,
         ]
-        params: list = [min_confidence, *whitelist_params]
+        params: list = [min_confidence, *pin_params]
 
         if not include_expired:
             conditions.append("(expires_at IS NULL OR expires_at > ?)")
@@ -3617,16 +3613,16 @@ class MemoryStore:
         min_confidence: float,
         as_of_ms: int,
     ) -> tuple[str, list]:
-        from .pinning import whitelist_sql_clause
-        whitelist_sql, whitelist_params = whitelist_sql_clause()
+        from .pinning import pinned_filter_sql_clause
+        pin_sql, pin_params = pinned_filter_sql_clause()
 
         conditions = [
             "active = 1",
             "confidence >= ?",
             "(expires_at IS NULL OR expires_at > ?)",
-            f"NOT (pinned_override = 1 OR (pinned_override IS NULL AND {whitelist_sql}))",
+            f"NOT {pin_sql}",
         ]
-        params: list = [min_confidence, as_of_ms, *whitelist_params]
+        params: list = [min_confidence, as_of_ms, *pin_params]
         if conversation_id is not None:
             conditions.append("conversation_id = ?")
             params.append(conversation_id)
