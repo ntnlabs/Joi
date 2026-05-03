@@ -1626,17 +1626,23 @@ class MemoryStore:
         """Insert a new note. Returns the new note id."""
         now_ms = int(time.time() * 1000)
         conn = self._connect()
-        embedding = self._get_embedding(title + "\n\n" + content)
+        vec_bytes = self._embed_or_fail(
+            _embed_input_for_note(title, content),
+            surface="notes",
+            key_for_log=f"{conversation_id}/{title[:40]}",
+        )
         cursor = conn.execute(
             """
-            INSERT INTO notes (conversation_id, title, content, embedding, remind_at, created_at, updated_at, archived)
+            INSERT INTO notes (conversation_id, title, content, embedding,
+                               remind_at, created_at, updated_at, archived)
             VALUES (?, ?, ?, ?, ?, ?, ?, 0)
             """,
-            (conversation_id, title, content, embedding, remind_at, now_ms, now_ms),
+            (conversation_id, title, content, vec_bytes, remind_at, now_ms, now_ms),
         )
+        note_id = cursor.lastrowid
+        self._mirror_vec(conn, "vec_notes", note_id, vec_bytes)
         conn.commit()
-        note_id = cursor.lastrowid or 0
-        return note_id
+        return note_id or 0
 
     def get_note_by_title(self, conversation_id: str, title: str) -> Optional[dict]:
         """
@@ -1668,11 +1674,17 @@ class MemoryStore:
         if not row:
             return
         new_content = row["content"] + ("\n" if row["content"] else "") + text
-        embedding = self._get_embedding(row["title"] + "\n\n" + new_content)
+        title = row["title"]
+        vec_bytes = self._embed_or_fail(
+            _embed_input_for_note(title, new_content),
+            surface="notes",
+            key_for_log=f"id={note_id}",
+        )
         conn.execute(
             "UPDATE notes SET content = ?, embedding = ?, updated_at = ? WHERE id = ?",
-            (new_content, embedding, now_ms, note_id),
+            (new_content, vec_bytes, now_ms, note_id),
         )
+        self._mirror_vec(conn, "vec_notes", note_id, vec_bytes)
         conn.commit()
         logger.info("Note appended", extra={"note_id": note_id, "action": "note_append"})
 
@@ -1685,11 +1697,17 @@ class MemoryStore:
         ).fetchone()
         if not row:
             return
-        embedding = self._get_embedding(row["title"] + "\n\n" + new_content)
+        title = row["title"]
+        vec_bytes = self._embed_or_fail(
+            _embed_input_for_note(title, new_content),
+            surface="notes",
+            key_for_log=f"id={note_id}",
+        )
         conn.execute(
             "UPDATE notes SET content = ?, embedding = ?, updated_at = ? WHERE id = ?",
-            (new_content, embedding, now_ms, note_id),
+            (new_content, vec_bytes, now_ms, note_id),
         )
+        self._mirror_vec(conn, "vec_notes", note_id, vec_bytes)
         conn.commit()
         logger.info("Note replaced", extra={"note_id": note_id, "action": "note_replace"})
 
@@ -2917,16 +2935,23 @@ class MemoryStore:
         conn = self._connect()
         now_ms = int(time.time() * 1000)
 
+        vec_bytes = self._embed_or_fail(
+            _embed_input_for_summary(summary_text),
+            surface="context_summaries",
+            key_for_log=f"{conversation_id or 'global'}/{summary_type}/{period_start}",
+        )
         cursor = conn.execute(
             """
             INSERT INTO context_summaries (
                 conversation_id, summary_type, period_start, period_end, summary_text,
-                key_points_json, message_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                key_points_json, message_count, created_at, embedding
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (conversation_id, summary_type, period_start, period_end, summary_text,
-             key_points_json, message_count, now_ms)
+             key_points_json, message_count, now_ms, vec_bytes)
         )
+        summary_id = cursor.lastrowid
+        self._mirror_vec(conn, "vec_summaries", summary_id, vec_bytes)
         conn.commit()
 
         logger.info("Stored summary", extra={
@@ -2937,7 +2962,7 @@ class MemoryStore:
             "message_count": message_count,
             "action": "summary_store"
         })
-        return cursor.lastrowid or 0
+        return summary_id or 0
 
     def get_recent_summaries(
         self,
@@ -3438,6 +3463,40 @@ class MemoryStore:
             logger.warning("Embedding request failed", extra={"error": str(e), "model": model})
             return None
 
+    def _embed_or_fail(self, text: str, surface: str, key_for_log: str) -> bytes:
+        """Embed `text` via Ollama; fail-loud if empty/wrong-dims.
+
+        Returns 4096-byte (1024-dim float32) blob. Raises RuntimeError on
+        any failure — caller must let it propagate so the surrounding
+        transaction rolls back and no partial state is persisted.
+        """
+        vec_bytes = self._get_embedding(text)
+        if vec_bytes is None or len(vec_bytes) != 4096:
+            raise RuntimeError(
+                f"Embedding failed for {surface} ({key_for_log}): "
+                f"expected 4096 bytes, got {len(vec_bytes) if vec_bytes else 'None'}. "
+                f"Check JOI_EMBEDDING_MODEL=bge-m3 and Ollama health."
+            )
+        return vec_bytes
+
+    def _mirror_vec(
+        self,
+        conn: sqlite3.Connection,
+        vec_table: str,
+        row_id: int,
+        vec_bytes: bytes,
+    ) -> None:
+        """Mirror an embedding into the matching vec0 virtual table.
+
+        vec0 has no UPSERT — DELETE-then-INSERT. Safe to call for both
+        first-time inserts (DELETE is a no-op) and updates.
+        """
+        conn.execute(f"DELETE FROM {vec_table} WHERE rowid = ?", (row_id,))
+        conn.execute(
+            f"INSERT INTO {vec_table} (rowid, embedding) VALUES (?, ?)",
+            (row_id, vec_bytes),
+        )
+
     def store_knowledge_chunk(
         self,
         source: str,
@@ -3460,25 +3519,29 @@ class MemoryStore:
         conn = self._connect()
         now_ms = int(time.time() * 1000)
 
-        embedding = self._get_embedding(content)
-
+        vec_bytes = self._embed_or_fail(
+            _embed_input_for_chunk(title, content),
+            surface="knowledge_chunks",
+            key_for_log=f"{source}#{chunk_index}",
+        )
         cursor = conn.execute(
             """
-            INSERT OR REPLACE INTO knowledge_chunks (
+            INSERT INTO knowledge_chunks (
                 scope, source, title, content, chunk_index, metadata_json, embedding, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (scope, source, title, content, chunk_index, metadata_json, embedding, now_ms)
+            (scope, source, title, content, chunk_index, metadata_json, vec_bytes, now_ms)
         )
+        chunk_id = cursor.lastrowid
+        self._mirror_vec(conn, "vec_knowledge", chunk_id, vec_bytes)
         conn.commit()
 
         logger.debug("Stored knowledge chunk", extra={
             "source": source,
             "chunk_index": chunk_index,
             "scope": scope or None,
-            "embedded": embedding is not None,
         })
-        return cursor.lastrowid or 0
+        return chunk_id or 0
 
     def search_knowledge(
         self,
