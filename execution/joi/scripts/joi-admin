@@ -2778,7 +2778,7 @@ cmd_facts() {
             f_act=$(db_scalar      "SELECT active          FROM user_facts WHERE id = $fact_id;")
             f_pin=$(db_scalar      "SELECT pinned_override FROM user_facts WHERE id = $fact_id;")
             f_learned=$(db_scalar  "SELECT datetime(learned_at/1000,'unixepoch') FROM user_facts WHERE id = $fact_id;")
-            f_updated=$(db_scalar  "SELECT datetime(updated_at/1000,'unixepoch') FROM user_facts WHERE id = $fact_id;")
+            f_updated=$(db_scalar  "SELECT datetime(last_verified_at/1000,'unixepoch') FROM user_facts WHERE id = $fact_id;")
             f_expires_raw=$(db_scalar "SELECT expires_at FROM user_facts WHERE id = $fact_id;")
             f_detected_raw=$(db_scalar "SELECT detected_at FROM user_facts WHERE id = $fact_id;")
 
@@ -2812,7 +2812,7 @@ cmd_facts() {
             echo "active:          $f_act"
             echo "pinned_override: ${f_pin:-NULL (whitelist default)}"
             echo "learned_at:      $f_learned"
-            echo "updated_at:      $f_updated"
+            echo "last_verified:   $f_updated"
             echo "expires_at:      $f_expires"
             echo "detected_at:     $f_detected (first mentioned at)"
             ;;
@@ -2839,7 +2839,7 @@ cmd_facts() {
                         [[ -z "${2:-}" ]] && error "--order-by requires a value (id|date|category|key)"
                         case "$2" in
                             id)       order_by="id" ;;
-                            date)     order_by="updated_at DESC" ;;
+                            date)     order_by="last_verified_at DESC" ;;
                             category) order_by="category, key" ;;
                             key)      order_by="key" ;;
                             *)        error "--order-by must be one of: id, date, category, key" ;;
@@ -3003,10 +3003,10 @@ SQL
             if [[ -n "$new_value" ]]; then
                 local val_esc
                 val_esc=$(sql_escape_literal "$new_value")
-                db_exec "UPDATE user_facts SET expires_at = $new_expires_ms, value = '$val_esc', updated_at = $now_ms WHERE id = $fact_id${conv_where};" > /dev/null
+                db_exec "UPDATE user_facts SET expires_at = $new_expires_ms, value = '$val_esc', last_verified_at = $now_ms WHERE id = $fact_id${conv_where};" > /dev/null
                 info "Rescheduled fact #$fact_id ($old_key) — value updated, expires in ${expires_in}h"
             else
-                db_exec "UPDATE user_facts SET expires_at = $new_expires_ms, updated_at = $now_ms WHERE id = $fact_id${conv_where};" > /dev/null
+                db_exec "UPDATE user_facts SET expires_at = $new_expires_ms, last_verified_at = $now_ms WHERE id = $fact_id${conv_where};" > /dev/null
                 info "Rescheduled fact #$fact_id ($old_key) — expires in ${expires_in}h"
             fi
             ;;
