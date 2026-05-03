@@ -578,6 +578,53 @@ PY
     fi
 }
 
+# Set pinned_override on a fact via Python so FTS5 triggers fire correctly.
+# sqlcipher CLI has no FTS5 support; Python's sqlite3 does.
+# Args: fact_id, pin_value (1 = pin, 0 = unpin, NULL = clear override)
+set_fact_pin_with_python() {
+    local fact_id="$1"
+    local pin_value="$2"
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        error "python3 not available; cannot update fact pin without FTS5 support."
+    fi
+
+    local py_err
+    if ! py_err=$(PYTHONPATH="$JOI_PY_ROOT${PYTHONPATH:+:$PYTHONPATH}" \
+        JOI_MEMORY_DB="$MEMORY_DB" \
+        JOI_MEMORY_KEY_FILE="$MEMORY_KEY_FILE" \
+        JOI_FACT_PIN_ID="$fact_id" \
+        JOI_FACT_PIN_VALUE="$pin_value" \
+        python3 <<'PY' 2>&1 >/dev/null
+import os, sys
+try:
+    from memory import MemoryStore
+except Exception as e:
+    print(f"import_failed: {e}")
+    sys.exit(1)
+try:
+    store = MemoryStore(os.environ["JOI_MEMORY_DB"])
+    conn = store._connect()
+    fact_id = int(os.environ["JOI_FACT_PIN_ID"])
+    raw = os.environ["JOI_FACT_PIN_VALUE"]
+    pin_value = None if raw == "" or raw.upper() == "NULL" else int(raw)
+    cur = conn.execute(
+        "UPDATE user_facts SET pinned_override = ? WHERE id = ?",
+        (pin_value, fact_id),
+    )
+    if cur.rowcount == 0:
+        print(f"not_found: id={fact_id}")
+        sys.exit(2)
+    conn.commit()
+except Exception as e:
+    print(f"update_failed: {e}")
+    sys.exit(1)
+PY
+    ); then
+        error "Failed to update fact pin via Python: ${py_err}"
+    fi
+}
+
 # Add a fact via Python (uses store_fact() so FTS5 index stays in sync)
 # Env vars: JOI_FACT_CONV, JOI_FACT_CAT, JOI_FACT_KEY, JOI_FACT_VAL, JOI_FACT_CONF, JOI_FACT_PIN
 add_fact_with_python() {
@@ -3148,7 +3195,7 @@ SQL
                 echo "Error: fact_id must be a positive integer (got: $fact_id)"
                 return 1
             fi
-            db_exec "UPDATE user_facts SET pinned_override = 1 WHERE id = $fact_id;"
+            set_fact_pin_with_python "$fact_id" "1"
             echo "Pinned fact $fact_id."
             ;;
         unpin)
@@ -3162,7 +3209,7 @@ SQL
                 echo "Error: fact_id must be a positive integer (got: $fact_id)"
                 return 1
             fi
-            db_exec "UPDATE user_facts SET pinned_override = 0 WHERE id = $fact_id;"
+            set_fact_pin_with_python "$fact_id" "0"
             echo "Unpinned fact $fact_id."
             ;;
         --help|-h)
