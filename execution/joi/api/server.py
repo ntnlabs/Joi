@@ -943,8 +943,9 @@ Return ONLY valid JSON, nothing else:"""
             safe_name = sender_name.lower().replace(" ", "_")[:20]
             fact_key = f"{safe_name}_{result['key']}"
 
-        # Determine if fact is important (core identity)
-        is_important = _should_mark_important(text, result["category"], fact_key)
+        # Determine if fact should be pinned (core identity)
+        # True -> pinned_override=1 (pin); False -> None (leave existing pin untouched)
+        pinned_override = 1 if _should_mark_important(text, result["category"], fact_key) else None
 
         memory.store_fact(
             category=result["category"],
@@ -953,7 +954,7 @@ Return ONLY valid JSON, nothing else:"""
             confidence=0.95,  # High confidence - user explicitly stated
             source="stated",
             conversation_id=conversation_id,
-            important=is_important,
+            pinned_override=pinned_override,
             detected_at=detected_at,
         )
         if policy_manager.is_privacy_mode():
@@ -961,7 +962,7 @@ Return ONLY valid JSON, nothing else:"""
                 "conversation_id": conversation_id[:8] + "..." if conversation_id else "global",
                 "category": result["category"],
                 "key": fact_key,
-                "important": is_important,
+                "pinned": pinned_override == 1,
                 "action": "fact_save"
             })
         else:
@@ -970,7 +971,7 @@ Return ONLY valid JSON, nothing else:"""
                 "category": result["category"],
                 "key": fact_key,
                 "value": fact_value,
-                "important": is_important,
+                "pinned": pinned_override == 1,
                 "action": "fact_save"
             })
         return fact_value
@@ -2383,14 +2384,14 @@ def _generate_proactive_message(
             "gentle curiosity, warmth, or just checking in."
         )
     elif topic_type == "wakeup":
-        # Re-engagement after long silence — use core (important) facts instead of FTS
-        important_facts = memory.get_important_facts(
+        # Re-engagement after long silence — use pinned facts instead of FTS
+        pinned_facts = memory.get_pinned_facts(
             conversation_id=conversation_id,
             min_confidence=0.5,
         )
         core_facts_text = ""
-        if important_facts:
-            lines = [f"- {f.key}: {f.value}" for f in important_facts[:20]]
+        if pinned_facts:
+            lines = [f"- {f.key}: {f.value}" for f in pinned_facts[:20]]
             core_facts_text = "What you know about them:\n" + "\n".join(lines) + "\n\n"
         mood_line = (
             f"Their last observed mood: {emotional_context}\n\n"

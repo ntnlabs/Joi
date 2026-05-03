@@ -357,7 +357,7 @@ Corrected JSON:"""
             is_group = convo_id and not convo_id.startswith("+")
 
             stored_count = 0
-            important_count = 0
+            pinned_count = 0
             for fact in valid_facts:
                 try:
                     fact_key = fact["key"]
@@ -375,10 +375,12 @@ Corrected JSON:"""
                         if original_first and original_first[0].isupper() and 2 <= len(first_word) <= 20:
                             fact_key = f"{first_word}_{fact['key']}"
 
-                    # Check if fact is marked as core (important)
-                    is_important = bool(fact.get("core"))
-                    if is_important:
-                        important_count += 1
+                    # core: True  -> set pinned_override = 1 (promote)
+                    # core: False/missing -> pass None to leave any existing
+                    #   operator-set pin untouched (Task 6's COALESCE rule)
+                    pinned_override = 1 if fact.get("core") else None
+                    if pinned_override == 1:
+                        pinned_count += 1
 
                     self.memory.store_fact(
                         category=fact["category"],
@@ -387,7 +389,7 @@ Corrected JSON:"""
                         confidence=float(fact.get("confidence", 0.8)),
                         source="inferred",
                         conversation_id=convo_id,
-                        important=bool(is_important),
+                        pinned_override=pinned_override,
                         ttl_hours=fact.get("ttl_hours"),
                         detected_at=detected_at,
                     )
@@ -397,7 +399,7 @@ Corrected JSON:"""
             if stored_count:
                 logger.info("Extracted and stored facts", extra={
                     "count": stored_count,
-                    "core_count": important_count if important_count else None,
+                    "pinned_count": pinned_count if pinned_count else None,
                     "conversation_id": self._log_convo_id(convo_id)
                 })
 
