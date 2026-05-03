@@ -2888,13 +2888,13 @@ cmd_facts() {
             rows=$(db_exec "$(cat <<SQL
 SELECT
     id || char(1) ||
-    conversation_id || char(1) ||
+    COALESCE(conversation_id, '') || char(1) ||
     category || char(1) ||
     key || char(1) ||
     trim(replace(replace(value, char(10), ' '), char(13), '')) || char(1) ||
     COALESCE(source, '') || char(1) ||
     active || char(1) ||
-    pinned_override || char(1) ||
+    COALESCE(CAST(pinned_override AS TEXT), '-') || char(1) ||
     CASE
         WHEN expires_at IS NULL THEN '-'
         WHEN expires_at <= strftime('%s','now')*1000 THEN datetime(expires_at/1000,'unixepoch') || ' [expired]'
