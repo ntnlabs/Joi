@@ -26,8 +26,10 @@ production motivate v2:
    still inject a fresh topic. Heat metric helps but is a proxy. Joi
    should be able to ask: "is this conversation still going?"
 5. **No "during" for activities.** Joi handles *before* (planning) and
-   *after* (debrief) for multi-day events, but loses the activity while
-   it is running. Mid-trip, Joi forgets you are on a trip.
+   *after* (debrief) for activities, but loses the activity while it
+   is running. This shows up at every scale: a multi-day trip, but
+   also a two-hour movie, a lunch, a meeting. Mid-event, Joi forgets
+   you are in it.
 
 The thread linking all five: Wind v1 is *one* pipeline that fires when
 gates open. Wind v2 needs to know *what kind of moment this is* before
@@ -50,8 +52,9 @@ Behavioural success criteria:
   Sunday night, a recurring date) without being told.
 - A live conversation does not get interrupted by a proactive topic
   unless the dialogue is genuinely closed.
-- During a multi-day trip / project, Joi asks how it is going *now*,
-  not just before/after.
+- During an activity — whether a two-hour lunch or a multi-day trip —
+  Joi understands it is happening *now* and behaves accordingly,
+  not just before and after.
 
 ---
 
@@ -121,7 +124,7 @@ Proposed intent set:
 | `morning_open` | First send of the user's day, near learned wake | Greeting, "how did you sleep / what's today" — no topic |
 | `evening_close` | Last send of the user's day, before learned quiet-start | Reflection / "how was today" — no topic |
 | `dialogue_followup` | An open thread that did not get closure | Continues the existing thread, no new topic |
-| `activity_checkin` | User has an active multi-day activity | "How is the trip going" — biases off the topic queue |
+| `activity_checkin` | User is currently inside a known activity (any duration) | Restraint mode for short events; "how is it going" for long ones |
 | `topic_engagement` | Default — gates open and none of the above fits | Current Wind v1 behaviour |
 | `wake_up` | Long silence (existing) | Existing wake-up procedure |
 
@@ -195,18 +198,39 @@ messages to look at) is a small code constant tied to context budget.
 
 ### 5. Activity follow-through
 
-- Use existing reminders / agenda / mined topics to identify
-  multi-day activities with a known span (start + end).
-- While today is inside that span, `activity_checkin` becomes
-  available with a soft cooldown of `min_cooldown_minutes` and a hard
-  cap of one per day.
-- The activity itself biases the topic queue: while a trip is active,
-  trip-adjacent topics get an affinity bonus and unrelated topics get
-  a slight penalty. Post-activity, a debrief topic auto-enqueues.
+The "during" gap is duration-agnostic. A two-hour movie, a lunch, a
+meeting, and a multi-day trip all have the same shape: a known start,
+a known end, and a window in between where Joi should know what is
+happening. v2 treats them uniformly with behaviour scaling by
+duration.
 
-This is the most uncertain of the five — it depends on activities
-being represented in storage with start/end. May need a lightweight
-"active context" record separate from reminders.
+- Use existing reminders / agenda / mined topics to identify
+  activities with a known span (start + end). Span can be minutes,
+  hours, or days.
+- While `now` is inside that span, the activity is *current*. Wind's
+  default response to a current activity is **restraint** — do not
+  inject unrelated topics, do not interrupt. Most short activities
+  (cinema, meeting, lunch) end without Joi ever sending a thing, and
+  that is the correct behaviour.
+- For activities longer than roughly `min_silence_minutes`,
+  `activity_checkin` becomes available as an intent: a single soft
+  "how is it going" mid-way through, no more than one per activity.
+  Long activities (multi-day) get the same intent, capped at one per
+  day.
+- The activity also biases topic prompts and post-activity debrief: a
+  cinema visit makes "how was the movie" the leading topic
+  immediately after; a trip biases topic affinity for its duration
+  and auto-enqueues a debrief on completion.
+
+**Anchors:** the "is this long enough to check in" threshold is
+`min_silence_minutes` (Joi already would not send before that anyway).
+Per-activity check-in cooldown is `min_cooldown_minutes`. No new
+duration env vars.
+
+This is still the most uncertain of the five — it depends on activities
+being represented in storage with start/end and a clear "current"
+predicate. May need a lightweight "active context" record separate from
+reminders.
 
 ---
 
