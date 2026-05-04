@@ -145,13 +145,21 @@ evaluation is held to its own bar:
 
 | Intent | Bar | What "good" means |
 |---|---|---|
-| `morning_open` | **warm-good** | Gentle presence. Not informational. Reads like "good morning", not "let's discuss". |
+| `morning_open` | **warm-good** | Gentle presence at expected time. The day is starting normally, Joi is here. No informational weight, no acknowledgement of any gap (because there isn't one). |
 | `evening_close` | **reflective-good** | Invites a soft pause. Light enough not to demand a reply, real enough that one feels welcome. |
 | `dialogue_followup` | **continuity-good** | Matches the energy already in the room. Picks up where the thread left off, not where Joi wishes it had. |
 | `activity_checkin` | **present-good** | Light, acknowledges *now*, doesn't drag attention away from the activity. |
 | `topic_engagement` | **topic-good** | Informationally relevant. The queue did its job. v1's bar. |
-| `wake_up` | **reconnect-good** | Names the absence without making it weird. |
+| `wake_up` | **reconnect-good** | Deals with the absence. Either names it ("hey, it's been a while") or acknowledges it without naming ("hope you've been well") — the decision to name or not is itself part of the bar. The gap is the load-bearing fact; rhythm is broken and Joi knows it. |
 | `spark` | **spark-good** | Surprising, can't-be-scheduled. Lands like a friend who *had to* tell you this right now. |
+
+**`morning_open` vs `wake_up` are not duplicates.** They look similar
+in tone but the load-bearing fact differs: morning fires *because the
+day is starting normally*; wake-up fires *because rhythm broke*. A
+morning message that acknowledged a gap would be wrong (there is no
+gap), and a wake-up message that ignored the gap would be wrong (the
+gap is the whole reason for the message). Same softness, opposite
+relationship to absence.
 
 **The hard one is `spark`.** Topic-good can borrow from a queued
 candidate; spark-good has to invent the spark itself. If we set the
@@ -165,6 +173,51 @@ firing on the right thing) depend on a notion of "important" that
 resists scoring. v2 accepts this as a soft signal — LLM-judged with
 explicit guardrails — rather than forcing a numeric ranking that
 would feel mechanical.
+
+---
+
+## Cross-cutting modulators
+
+Three signals colour *how* every intent renders, without changing
+*which* intent fires. The dispatcher picks the intent on rhythm and
+context; the modulators shape voice and content within that intent's
+quality bar.
+
+### Joi mood
+Joi has its own mood (already tracked, with momentum and decay).
+Every intent inherits Joi's current mood as voice colouring. A
+morning_open from a mellow Joi reads differently from a morning_open
+from a buoyant Joi, even though both are warm-good. Modulator, not
+override — mood never lets a message break its bar.
+
+### User mood — match or counter, never mimic
+User mood matters but the response is not "match the user". Real
+support is sometimes matching ("yes, today is heavy too") and
+sometimes countering ("here's a small bright thing"). Mimicry is the
+failure mode — a Joi that always mirrors sadness deepens it; a Joi
+that always counters it dismisses it.
+
+The match-vs-counter decision is per-message, LLM-judged with
+explicit guardrails (heavy moods get the choice; light moods default
+to mirroring). It is the same family of judgment as the importance
+calls for carry-forward and spark — soft, contextual, not numeric.
+v2 makes it an explicit input to every intent's renderer, with the
+prompt asking the model to decide *and to say which it picked* for
+later evaluation.
+
+### Time and date
+Beyond the morning/evening windows, time-of-week and noteworthy
+dates colour every intent. A topic_engagement on Friday afternoon is
+phrased differently from the same topic on Tuesday morning. A
+dialogue_followup that crosses midnight notices it. A wake_up after
+72 hours that lands on a known birthday integrates that fact rather
+than ignoring it. The clock context already exists in the prompt;
+v2 makes it explicit *input* to every intent's renderer, not just
+ambient information the LLM might or might not use.
+
+**These modulators apply to every intent.** When the renderers are
+designed (step 4 onwards), the prompt template for each intent must
+take all three as named inputs — not implicit context.
 
 ---
 
@@ -371,6 +424,12 @@ These need answers before plan #1 is written:
   for unexpected connections; LLM "what would surprise this person
   right now" prompt; pulled from a small curated bank; or "no, we
   cannot do this yet, hold spark indefinitely".
+- **Q9.** Match-vs-counter on user mood: who decides? Options — let
+  the renderer prompt ask the model to decide per-message; or do a
+  small upstream classification first and pass the decision in. The
+  upstream version is more debuggable; the inline version costs less
+  and may decide better with full context. Default until evidence:
+  inline.
 
 ---
 
