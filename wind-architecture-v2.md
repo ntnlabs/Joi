@@ -69,7 +69,11 @@ guess sensible values for a dozen settings before Joi feels right.
 **v2 commits to a small set of core anchors.** Everything else is a
 derived value — a function of the anchors plus, where useful, the
 user's learned rhythm. Ratios and clamps are written in code, not
-exposed as env vars, unless an operator has a real reason to override.
+exposed as env vars. **No overrides.** v2 must be better than v1 by
+construction; an escape-hatch knob is a confession that the
+derivation isn't right yet, in which case fix the derivation. v2 is
+free to rename or replace v1 anchor names if the new name is clearer
+— this is a clean break, not a compatibility layer.
 
 **Core anchors** (the only things normally tuned):
 
@@ -431,9 +435,14 @@ These need answers before plan #1 is written:
 - **Q5.** Per-day intent budget: at most one rhythm intent per day,
   or allow morning + evening + one topic? What does the silence-gate
   math do when an intent fires that the user does not reply to?
-- **Q6.** Knob audit (step 1): what is the policy for env vars that
-  exist today and *do* deviate from the derivation rule? Drop them
-  silently, log a deprecation warning, or keep as overrides until v3?
+- **Q6.** Knob audit (step 1): policy for deviating env vars —
+  *decided: drop them, no overrides.* v2 picks a small set of core
+  anchors (renaming v1 names freely if it helps clarity), and every
+  other rhythm number is a code-side function of those anchors. Any
+  existing `JOI_*` env var that doesn't correspond to a v2 anchor is
+  removed. The install obligation still holds: sysprep stage scripts
+  and the systemd `.default` files must set all v2 anchors with
+  defaults — no implicit fallbacks in code.
 - **Q7.** Importance judgments (carry-forward, evening drive, spark):
   one shared "is this important" prompt, or per-intent prompts? How
   much of the conversation history does the judge see, and how is it
