@@ -265,6 +265,14 @@ take all three as named inputs — not implicit context.
 - Add `morning_open` intent. Fires once per local day, in a window
   starting at the learned `quiet_end` (wake) and lasting roughly the
   silence-gate length.
+- **Cold start.** New users have no learned `quiet_end` on day one.
+  Bootstrap with a fixed default (e.g. 07:00 local) and let the
+  learner refine from day one. The learner accepts whatever sample
+  count it has — 1 sample, 2 samples, 3 — and updates each day. The
+  pivot rate is *error-proportional*: a default that's badly wrong
+  (e.g. night-owl user gets 7am ping but actually wakes at 11) moves
+  faster than one that's close, so misalignment self-corrects within
+  a few days rather than averaging slowly toward truth.
 - Content: greeting + light context (yesterday's mood carry, weather
   of the day if known, today's calendar if any). Explicitly **not**
   the top of the topic queue.
@@ -285,6 +293,12 @@ take all three as named inputs — not implicit context.
 
 - Add `evening_close` intent. Fires once per local day, in a window
   ending at learned `quiet_start`.
+- **Cold start.** Same as morning: bootstrap `quiet_start` with a
+  fixed default (e.g. 23:00 local), learn from any available data,
+  pivot proportional to error. The existing 03:00 hard stop on
+  learned `quiet_start` (clamp from v1, commit `3a9bbff`) carries
+  over to v2 as a permanent floor — no learned value is ever
+  allowed past it, regardless of sample count.
 - Content: a soft "how was today" or reflection on a known event of
   the day, not a fresh topic.
 - **Reflects the user's cycle.** Adaptive quiet hours already give
@@ -480,9 +494,13 @@ without blocking the rest — spark is permitted to be perpetually
 
 These need answers before plan #1 is written:
 
-- **Q1.** Morning window: anchored on learned `quiet_end` only, or
-  also a default for new users with no learned rhythm yet?
-- **Q2.** Evening window: same question.
+- **Q1+Q2.** Morning and evening windows for new users — *decided.*
+  Bootstrap with fixed defaults (07:00 wake, 23:00 sleep), and the
+  learner runs from day one with whatever sample count it has.
+  Pivot rate is error-proportional — badly-wrong defaults move
+  fast, near-right defaults drift slowly. The 03:00 hard stop on
+  learned `quiet_start` (v1 clamp, commit `3a9bbff`) is preserved
+  as a permanent floor in v2.
 - **Q3.** Dialogue classifier — *decided: dedicated tiny prompt
   against the base model with binary open/closed output* (no fuzzy
   "uncertain" middle — the gate needs a decisive answer). Worth the
