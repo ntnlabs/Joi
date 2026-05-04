@@ -142,7 +142,7 @@ Proposed intent set:
 | `morning_open` | First send of the user's day, near learned wake | Greeting; *may* carry forward an unresolved evening thread if it was important — no fresh topic |
 | `evening_close` | Last send of the user's day, before learned quiet-start | Reflection / "how was today"; needs a soft topic or spark drive to feel personal, not formulaic |
 | `dialogue_followup` | An open thread that did not get closure | Continues the existing thread, no new topic |
-| `activity_checkin` | User is currently inside a known activity (any duration) | Restraint mode for short events; "how is it going" for long ones |
+| `activity_checkin` | *(deferred — see concern #5)* | Defined as target; no code in v2 |
 | `topic_engagement` | Default — gates open and none of the above fits | Current Wind v1 behaviour |
 | `wake_up` | Long silence (existing) | Existing wake-up procedure |
 | `spark` | Rare, off-rhythm, no scheduled trigger | "Had to tell you this" — must clear the spark-good bar (see Quality bars) |
@@ -365,7 +365,28 @@ gate-tick is acceptable cost for a decision this load-bearing.
 **Anchors:** "recent" = within `min_silence_minutes`. N (window of
 messages to look at) is a small code constant tied to context budget.
 
-### 5. Activity follow-through
+### 5. Activity follow-through — *paused for v2*
+
+**Status: deferred.** This concern is real (the "during" gap exists),
+but every storage shape we sketched (extending reminders, repurposing
+agenda, dedicated `active_contexts` table, soft activity ledger,
+promotion/demotion board, transient facts) felt overly *computerised*
+for what should be a natural read of conversation context. The LLM
+already knows from the chat that Adrian said "going to the cinema at
+7" — Wind shouldn't need a parallel structured representation to
+re-derive that.
+
+The honest position: this likely belongs to the LLM and its access
+to recent context, not to a Wind subsystem. v2 ships without an
+activity-tracking mechanism. The `activity_checkin` intent and its
+quality bar (`present-good`) stay defined in the doc as targets for
+a future iteration, but no code lands in v2.
+
+The original sketch is preserved below for the next attempt.
+
+---
+
+*(Original draft — for reference, not implementation in v2)*
 
 The "during" gap is duration-agnostic. A two-hour movie, a lunch, a
 meeting, and a multi-day trip all have the same shape: a known start,
@@ -475,14 +496,18 @@ observed before the next:
    `evening_close` with their own prompts and windows. Morning's
    carry-forward and evening's drive (soft-topic or spark) both
    exercise the importance / quality-bar machinery.
-5. **Activity check-in.** Adds activity tracking (any duration) and
-   the `activity_checkin` intent.
+5. **Topic carry-forward with rising threshold (concern #6).**
+   Refines existing `topic_engagement` rather than adding an intent.
+   Lands after morning/evening because morning_open uses the
+   carried-thread information for its carry-forward render.
 6. **Spark mechanism.** The hardest. Bar is fixed (spark-good); the
    open question is *how* to generate one. Land last so the rest of
    v2 has shipped enough signal (intents, importance judgments, user
    rhythm) for spark to draw on.
 7. **Time/date felt-sense polish.** Tunes prompts and small biases
    that become possible once the above land.
+
+*Activity check-in is paused (see concern #5) — not a step in v2.*
 
 Each step is independently shippable. Step 6 may slip indefinitely
 without blocking the rest — spark is permitted to be perpetually
@@ -508,9 +533,13 @@ These need answers before plan #1 is written:
   non-rhythm intent. Prompt: short instruction + last N
   user/Joi messages → single token. N is a code constant tied to
   context budget.
-- **Q4.** Active-activity representation: extend reminders with a
-  `span` flag, repurpose agenda items, or new `active_contexts`
-  table?
+- **Q4.** Active-activity representation — *paused.* Every storage
+  shape considered (extending reminders, repurposing agenda,
+  dedicated table, soft ledger, promotion board, transient facts)
+  felt overly computerised for what should come from the LLM
+  reading recent conversation. v2 ships without activity tracking.
+  Revisit in a future iteration if a clearly natural mechanism
+  surfaces.
 - **Q5.** Per-day intent budget — *decided.* The day has three
   bands: **morning** (one `morning_open`), **open** (gate-driven, no
   count cap — pressure routes to intensity, not rate), **evening**
