@@ -121,15 +121,50 @@ Proposed intent set:
 
 | Intent | When it fires | Content |
 |---|---|---|
-| `morning_open` | First send of the user's day, near learned wake | Greeting, "how did you sleep / what's today" — no topic |
-| `evening_close` | Last send of the user's day, before learned quiet-start | Reflection / "how was today" — no topic |
+| `morning_open` | First send of the user's day, near learned wake | Greeting; *may* carry forward an unresolved evening thread if it was important — no fresh topic |
+| `evening_close` | Last send of the user's day, before learned quiet-start | Reflection / "how was today"; needs a soft topic or spark drive to feel personal, not formulaic |
 | `dialogue_followup` | An open thread that did not get closure | Continues the existing thread, no new topic |
 | `activity_checkin` | User is currently inside a known activity (any duration) | Restraint mode for short events; "how is it going" for long ones |
 | `topic_engagement` | Default — gates open and none of the above fits | Current Wind v1 behaviour |
 | `wake_up` | Long silence (existing) | Existing wake-up procedure |
+| `spark` | Rare, off-rhythm, no scheduled trigger | "Had to tell you this" — must clear the spark-good bar (see Quality bars) |
 
 A single tick can match at most one intent. Priority is roughly the
-order above: rhythm and continuity before topic queue.
+order above: rhythm and continuity before topic queue. `spark` is
+special — it bypasses the rhythm priority with low probability when
+the spark-good bar is met, otherwise it is suppressed entirely.
+
+---
+
+## Quality bars
+
+Each intent has its own definition of "good". v1 conflated them all
+under one bar (topic-good — informationally relevant, picked from a
+priority queue). v2 separates them. Each intent's renderer / prompt /
+evaluation is held to its own bar:
+
+| Intent | Bar | What "good" means |
+|---|---|---|
+| `morning_open` | **warm-good** | Gentle presence. Not informational. Reads like "good morning", not "let's discuss". |
+| `evening_close` | **reflective-good** | Invites a soft pause. Light enough not to demand a reply, real enough that one feels welcome. |
+| `dialogue_followup` | **continuity-good** | Matches the energy already in the room. Picks up where the thread left off, not where Joi wishes it had. |
+| `activity_checkin` | **present-good** | Light, acknowledges *now*, doesn't drag attention away from the activity. |
+| `topic_engagement` | **topic-good** | Informationally relevant. The queue did its job. v1's bar. |
+| `wake_up` | **reconnect-good** | Names the absence without making it weird. |
+| `spark` | **spark-good** | Surprising, can't-be-scheduled. Lands like a friend who *had to* tell you this right now. |
+
+**The hard one is `spark`.** Topic-good can borrow from a queued
+candidate; spark-good has to invent the spark itself. If we set the
+bar but cannot deliver, we get topic-good messages mislabeled as
+sparks — worse than no sparks. Spark mechanism is **TBD**; the bar is
+fixed, the means of meeting it is the open problem.
+
+**Importance is not mathematical.** Several intents (morning carrying
+an evening thread, evening drawing on something from the day, spark
+firing on the right thing) depend on a notion of "important" that
+resists scoring. v2 accepts this as a soft signal — LLM-judged with
+explicit guardrails — rather than forcing a numeric ranking that
+would feel mechanical.
 
 ---
 
@@ -143,6 +178,12 @@ order above: rhythm and continuity before topic queue.
 - Content: greeting + light context (yesterday's mood carry, weather
   of the day if known, today's calendar if any). Explicitly **not**
   the top of the topic queue.
+- **Carry-forward from evening.** If the prior day's `evening_close`
+  surfaced an unresolved thread judged important, morning may pick it
+  up softly ("yesterday you mentioned X — how is that sitting today?").
+  Importance is LLM-judged, not scored — see Quality bars.
+  Carry-forward never becomes a topic injection: it is a continuation,
+  held to warm-good.
 - Topic queue is paused during this window. If the user replies and
   conversation develops, normal flow resumes and topics can fire
   later.
@@ -156,6 +197,20 @@ order above: rhythm and continuity before topic queue.
   ending at learned `quiet_start`.
 - Content: a soft "how was today" or reflection on a known event of
   the day, not a fresh topic.
+- **Reflects the user's cycle.** Adaptive quiet hours already give
+  the *when*; v2 needs to give it the *what*. A pure formulaic "how
+  was today" hits reflective-good only by accident — it needs a
+  drive. Two candidate sources:
+  - **Soft topic drive.** Pull a low-intensity topic from the queue
+    that fits reflective-good (a check-in on something the user
+    raised earlier today, not a new analytical topic).
+  - **Spark drive.** When the spark mechanism is ready, evening is a
+    natural channel for it — the day's tail is when "had to tell you
+    this" lands well.
+  Either drive must clear reflective-good, not topic-good. If
+  neither has material, evening_close still fires but with a pure
+  reflective form (and is allowed to feel slightly thinner — a real
+  evening can be quiet).
 - Skipped if the day already had a substantive conversation in the
   last `min_cooldown_minutes` (Joi shouldn't poke when Adrian is
   already winding down with Joi).
@@ -180,6 +235,12 @@ up landing inside `morning_open` and `evening_close` rather than as
 standalone messages.
 
 ### 4. Dialogue detection
+
+**The most tractable of the five.** Not easy, but the least
+non-deterministic — closure of an exchange is something the LLM can
+judge with reasonable consistency, and the action on top (continue
+vs. let topics fire) is binary. Recommended as the first new intent
+to ship after the dispatcher skeleton.
 
 Add a *dialogue-open check* that runs before any non-rhythm intent
 fires:
@@ -260,17 +321,26 @@ observed before the next:
    intent per tick. Initially only `topic_engagement` and `wake_up`
    exist (behaviour identical to today). Pure structural change with
    tests.
-3. **Morning + evening intents.** Adds `morning_open` and
-   `evening_close` with their own prompts and windows.
-4. **Dialogue-open classifier.** Adds the open-thread check before any
-   non-rhythm intent.
-5. **Activity check-in.** Adds active-activity tracking and the
-   `activity_checkin` intent.
-6. **Time/date felt-sense polish.** Tunes prompts and small biases
+3. **Dialogue-open classifier (`dialogue_followup`).** First new
+   intent to ship — the most tractable, binary action, no new
+   storage. Validates the dispatcher under real traffic before
+   harder intents land.
+4. **Morning + evening intents.** Adds `morning_open` and
+   `evening_close` with their own prompts and windows. Morning's
+   carry-forward and evening's drive (soft-topic or spark) both
+   exercise the importance / quality-bar machinery.
+5. **Activity check-in.** Adds activity tracking (any duration) and
+   the `activity_checkin` intent.
+6. **Spark mechanism.** The hardest. Bar is fixed (spark-good); the
+   open question is *how* to generate one. Land last so the rest of
+   v2 has shipped enough signal (intents, importance judgments, user
+   rhythm) for spark to draw on.
+7. **Time/date felt-sense polish.** Tunes prompts and small biases
    that become possible once the above land.
 
-Each step is independently shippable. Steps 5 and 6 may swap order
-depending on what the previous steps reveal.
+Each step is independently shippable. Step 6 may slip indefinitely
+without blocking the rest — spark is permitted to be perpetually
+"not yet good enough" rather than ship a watered-down version.
 
 ---
 
@@ -292,6 +362,15 @@ These need answers before plan #1 is written:
 - **Q6.** Knob audit (step 1): what is the policy for env vars that
   exist today and *do* deviate from the derivation rule? Drop them
   silently, log a deprecation warning, or keep as overrides until v3?
+- **Q7.** Importance judgments (carry-forward, evening drive, spark):
+  one shared "is this important" prompt, or per-intent prompts? How
+  much of the conversation history does the judge see, and how is it
+  budgeted?
+- **Q8.** Spark generation mechanism: what is the candidate source?
+  Options to evaluate when we get there — random walk over user_facts
+  for unexpected connections; LLM "what would surprise this person
+  right now" prompt; pulled from a small curated bank; or "no, we
+  cannot do this yet, hold spark indefinitely".
 
 ---
 
