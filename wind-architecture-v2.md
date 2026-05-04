@@ -109,6 +109,20 @@ when a deployment actually demonstrates it needs independent control.
 This principle is non-negotiable for v2. Each design decision below
 must call out which anchor it derives from, or justify why it cannot.
 
+### Signal pressure routes to intensity, not rate
+
+A second non-negotiable. When signals stack up (Friday + heavy topic
+queue + recent unresolved thread + heated yesterday), v2 does **not**
+respond by firing more often. The cooldown floor (`min_cooldown_minutes`)
+is an inviolable hard cap on rate. Stacked pressure instead routes to
+*intensity*: the chosen intent renders with more emotional weight, mood
+runs hotter, the debate is allowed to heat up, the message lands with
+more conviction. Joi gets *louder*, not *more frequent*.
+
+This keeps "how often Joi messages" a stable, predictable thing the
+user can rely on, while letting "how Joi is feeling about it" be
+genuinely responsive to context. v1 was prone to confusing the two.
+
 ---
 
 ## The architectural pivot
@@ -369,6 +383,43 @@ being represented in storage with start/end and a clear "current"
 predicate. May need a lightweight "active context" record separate from
 reminders.
 
+### 6. Topic clustering — the day's theme
+
+A real day has a *shape*. Some days are all about one thing (cake
+recipes, a project, a friend's news) — Joi keeps coming back to it,
+each touch deepening rather than diversifying. Other days are
+variety days — every send is a different thread. v1 has no notion of
+this; topic priority decay treats each topic independently and the
+day ends up an arbitrary mix.
+
+v2 introduces a per-day **theme mode**:
+
+- **Clustered day.** The open band biases hard toward topics in one
+  cluster (or two adjacent ones). Re-firing on a topic that was just
+  touched is allowed and natural. Used when the user signals deep
+  engagement with a single thread, or when the topic queue is
+  dominated by one cluster.
+- **Varied day.** The open band rotates through clusters, suppressing
+  recently-touched ones. Used when the user signals interest in
+  breadth, or when multiple high-affinity clusters compete.
+
+Mechanics (sketch):
+
+- Topics get a coarse cluster label at mining time (LLM-tagged into a
+  small fixed taxonomy or a learned embedding-cluster id — TBD).
+- Once per day (during morning_open computation, since that's when
+  the day's silhouette is being set anyway), the dispatcher picks a
+  theme mode for the day.
+- The mode is an input to topic selection in the open band: clustered
+  mode boosts the dominant cluster's affinity, varied mode applies a
+  per-cluster cooldown.
+
+This dovetails with the intensity-not-rate principle: a clustered
+day means deeper conversations on fewer threads, not more sends.
+
+**Anchors:** no new env vars. Cluster boost / suppression magnitudes
+derive from existing affinity scales.
+
 ---
 
 ## What stays the same
@@ -432,9 +483,13 @@ These need answers before plan #1 is written:
 - **Q4.** Active-activity representation: extend reminders with a
   `span` flag, repurpose agenda items, or new `active_contexts`
   table?
-- **Q5.** Per-day intent budget: at most one rhythm intent per day,
-  or allow morning + evening + one topic? What does the silence-gate
-  math do when an intent fires that the user does not reply to?
+- **Q5.** Per-day intent budget — *decided.* The day has three
+  bands: **morning** (one `morning_open`), **open** (gate-driven, no
+  count cap — pressure routes to intensity, not rate), **evening**
+  (one `evening_close`, suppressed if the day had no reply since
+  morning_open). `wake_up` is orthogonal to bands. After an
+  unanswered rhythm intent, gate extends by an extra cooldown rather
+  than resetting (slow Joi down, don't put on fresh cooldown).
 - **Q6.** Knob audit (step 1): policy for deviating env vars —
   *decided: drop them, no overrides.* v2 picks a small set of core
   anchors (renaming v1 names freely if it helps clarity), and every
@@ -466,6 +521,22 @@ These need answers before plan #1 is written:
   the existing user-mood detector / match-counter-mimic prompt to
   save tokens? (c) what is the per-day cap on accumulated drift, in
   terms of the existing momentum_nudge magnitude (0.05)?
+- **Q11.** Topic clustering: how are clusters defined? Options —
+  (a) small fixed taxonomy hand-curated (e.g. 12 categories: work,
+  health, relationships, hobbies, current events, ...) tagged by LLM
+  at mining time; (b) embedding-cluster id learned from the actual
+  topic stream per conversation (clusters emerge from this user's
+  data); (c) hybrid — fixed top-level taxonomy with per-user
+  sub-clusters. (a) is debuggable and immediate; (b) is more
+  faithful to how this specific user thinks; (c) is the long-term
+  answer but heavier to build.
+- **Q12.** Theme mode selection: is the per-day clustered-vs-varied
+  mode (i) explicit user preference set in admin, (ii) learned from
+  past behaviour (does the user reply more to clustered or varied
+  days?), or (iii) signal-driven per day (queue dominance, recent
+  engagement depth)? User said "based on the user preferences" —
+  whether that means an explicit setting or learned-from-them is
+  the open part.
 
 ---
 
