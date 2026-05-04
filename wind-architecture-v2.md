@@ -383,42 +383,43 @@ being represented in storage with start/end and a clear "current"
 predicate. May need a lightweight "active context" record separate from
 reminders.
 
-### 6. Topic clustering — the day's theme
+### 6. Topic continuity — heat-driven carry, rising threshold
 
-A real day has a *shape*. Some days are all about one thing (cake
-recipes, a project, a friend's news) — Joi keeps coming back to it,
-each touch deepening rather than diversifying. Other days are
-variety days — every send is a different thread. v1 has no notion of
-this; topic priority decay treats each topic independently and the
-day ends up an arbitrary mix.
+A real day has a shape that *emerges from intensity*, not from a
+per-day mode picker. Some days end up all about cake because
+yesterday's cake conversation was genuinely hot; other days are
+mixed because nothing from yesterday burned hard enough to carry.
+v2 doesn't decide "today is a theme day" up front — the theme (or
+absence of one) falls out of the topic-carry math.
 
-v2 introduces a per-day **theme mode**:
+Mechanics:
 
-- **Clustered day.** The open band biases hard toward topics in one
-  cluster (or two adjacent ones). Re-firing on a topic that was just
-  touched is allowed and natural. Used when the user signals deep
-  engagement with a single thread, or when the topic queue is
-  dominated by one cluster.
-- **Varied day.** The open band rotates through clusters, suppressing
-  recently-touched ones. Used when the user signals interest in
-  breadth, or when multiple high-affinity clusters compete.
+- Each topic accumulates a heat score from the day's discussion
+  (intensity, message count, mood depth — reusing existing signals).
+- At day rollover, topics whose heat exceeds a per-topic threshold
+  *carry forward* with a priority boost into the next day's queue.
+- **The threshold ratchets up on each carry.** A topic that carried
+  yesterday needs *more* heat to carry again today, more still
+  tomorrow. Sustained obsession is allowed but each repeat is
+  harder to qualify for.
+- Topics that don't clear the threshold decay normally; the day
+  defaults to varied (the queue presents mixed candidates).
+- A theme day emerges only when a topic stays hot enough to clear an
+  ever-rising bar. Naturally most days are mixed; genuine deep
+  threads produce strings of theme days that eventually self-fade.
 
-Mechanics (sketch):
+This composes cleanly with the intensity-not-rate principle: deep
+engagement → topic stays hot → topic re-fires next day at higher
+priority → more sends *on that thread*, not more sends overall.
+Mixed days happen automatically when no topic earns the carry.
 
-- Topics get a coarse cluster label at mining time (LLM-tagged into a
-  small fixed taxonomy or a learned embedding-cluster id — TBD).
-- Once per day (during morning_open computation, since that's when
-  the day's silhouette is being set anyway), the dispatcher picks a
-  theme mode for the day.
-- The mode is an input to topic selection in the open band: clustered
-  mode boosts the dominant cluster's affinity, varied mode applies a
-  per-cluster cooldown.
+There are no clusters as a separate concept. The "cluster" is just
+*the topic itself* with its heat-driven carry. If two related topics
+are both hot, both carry; the day feels themed because they live
+near each other in the user's mind, not because Joi labelled them.
 
-This dovetails with the intensity-not-rate principle: a clustered
-day means deeper conversations on fewer threads, not more sends.
-
-**Anchors:** no new env vars. Cluster boost / suppression magnitudes
-derive from existing affinity scales.
+**Anchors:** carry threshold and ratchet step derive from the
+existing topic priority / heat scales. No new env vars.
 
 ---
 
@@ -521,22 +522,15 @@ These need answers before plan #1 is written:
   the existing user-mood detector / match-counter-mimic prompt to
   save tokens? (c) what is the per-day cap on accumulated drift, in
   terms of the existing momentum_nudge magnitude (0.05)?
-- **Q11.** Topic clustering: how are clusters defined? Options —
-  (a) small fixed taxonomy hand-curated (e.g. 12 categories: work,
-  health, relationships, hobbies, current events, ...) tagged by LLM
-  at mining time; (b) embedding-cluster id learned from the actual
-  topic stream per conversation (clusters emerge from this user's
-  data); (c) hybrid — fixed top-level taxonomy with per-user
-  sub-clusters. (a) is debuggable and immediate; (b) is more
-  faithful to how this specific user thinks; (c) is the long-term
-  answer but heavier to build.
-- **Q12.** Theme mode selection: is the per-day clustered-vs-varied
-  mode (i) explicit user preference set in admin, (ii) learned from
-  past behaviour (does the user reply more to clustered or varied
-  days?), or (iii) signal-driven per day (queue dominance, recent
-  engagement depth)? User said "based on the user preferences" —
-  whether that means an explicit setting or learned-from-them is
-  the open part.
+- **Q11.** Topic continuity (clustering and theme mode collapsed) —
+  *decided: no separate cluster concept, no explicit theme mode.*
+  Heat-driven topic carry with a rising per-topic threshold produces
+  theme days and mixed days as an emergent property. Remaining
+  sub-questions: (a) what shape is the ratchet — linear step, geometric,
+  or threshold doubles each carry? (b) does the threshold also decay
+  if the topic *isn't* discussed for a few days, so a once-hot topic
+  can re-qualify later at a normal bar? (c) is "heat" reused from
+  v1's existing heat metric or computed fresh from intensity signals?
 
 ---
 
