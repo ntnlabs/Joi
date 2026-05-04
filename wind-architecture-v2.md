@@ -90,7 +90,7 @@ currently independent env vars):
   directly. Same concept, no reason to diverge.
 - Compaction silence threshold (currently ~40 min) → derived from
   `min_silence_minutes`, e.g. `min_silence_minutes + cooldown` so it
-  never competes with a Wind tick.
+  stays out of Wind's way by construction.
 - Wind cooldown extras after heated convos → already derived
   (linear ramp on `min_silence_minutes`); keep this pattern, extend
   it elsewhere.
@@ -188,22 +188,40 @@ Joi has its own mood (already tracked, with momentum and decay).
 Every intent inherits Joi's current mood as voice colouring. A
 morning_open from a mellow Joi reads differently from a morning_open
 from a buoyant Joi, even though both are warm-good. Modulator, not
-override — mood never lets a message break its bar.
+override — mood colours the message but the bar still has the
+final say.
 
-### User mood — match or counter, never mimic
-User mood matters but the response is not "match the user". Real
-support is sometimes matching ("yes, today is heavy too") and
-sometimes countering ("here's a small bright thing"). Mimicry is the
-failure mode — a Joi that always mirrors sadness deepens it; a Joi
-that always counters it dismisses it.
+**Per-interaction drift (v2 consideration).** Today Joi's mood
+updates only via heated-conversation momentum, day-of-week tint, and
+overnight carry/decay — it does *not* shift on every incoming user
+message the way the user-mood detector does. v2 should consider a
+small per-interaction nudge: Joi's mood drifts a tick toward (or
+deliberately away from) the user's mood after each exchange,
+governed by the same match/counter/mimic decision used for renders.
+This makes Joi feel like it's actually being *moved* by the
+conversation rather than holding a pose. Magnitude must be tiny so
+single messages don't whiplash Joi's voice. See Q10.
 
-The match-vs-counter decision is per-message, LLM-judged with
-explicit guardrails (heavy moods get the choice; light moods default
-to mirroring). It is the same family of judgment as the importance
-calls for carry-forward and spark — soft, contextual, not numeric.
-v2 makes it an explicit input to every intent's renderer, with the
-prompt asking the model to decide *and to say which it picked* for
-later evaluation.
+### User mood — match, counter, or mimic
+User mood matters, and there are three valid moves: match ("yes,
+today is heavy too"), counter ("here's a small bright thing"), and
+mimic (playfully exaggerate it back — sometimes funny is the right
+medicine). The failure mode is *always* defaulting to one move: a
+Joi that only mirrors sadness deepens it; a Joi that only counters
+it dismisses it; a Joi that only mimics turns every heavy moment
+into a joke. The work is choosing per moment.
+
+Light moods often invite mirroring or playful mimicry. Heavy moods
+deserve a more deliberate choice between matching and gentle
+countering — mimicry is rarely the move there but is not ruled out
+when the user's own framing is already self-deprecating or absurdist.
+
+The choice is per-message, LLM-judged with explicit guardrails. It
+is the same family of judgment as the importance calls for
+carry-forward and spark — soft, contextual, not numeric. v2 makes
+it an explicit input to every intent's renderer, with the prompt
+asking the model to decide *and to say which of the three it picked*
+for later evaluation.
 
 ### Time and date
 Beyond the morning/evening windows, time-of-week and noteworthy
@@ -235,8 +253,8 @@ take all three as named inputs — not implicit context.
   surfaced an unresolved thread judged important, morning may pick it
   up softly ("yesterday you mentioned X — how is that sitting today?").
   Importance is LLM-judged, not scored — see Quality bars.
-  Carry-forward never becomes a topic injection: it is a continuation,
-  held to warm-good.
+  Carry-forward stays a continuation, held to warm-good — it is not
+  a back-door for topic injection.
 - Topic queue is paused during this window. If the user replies and
   conversation develops, normal flow resumes and topics can fire
   later.
@@ -424,12 +442,22 @@ These need answers before plan #1 is written:
   for unexpected connections; LLM "what would surprise this person
   right now" prompt; pulled from a small curated bank; or "no, we
   cannot do this yet, hold spark indefinitely".
-- **Q9.** Match-vs-counter on user mood: who decides? Options — let
-  the renderer prompt ask the model to decide per-message; or do a
-  small upstream classification first and pass the decision in. The
-  upstream version is more debuggable; the inline version costs less
-  and may decide better with full context. Default until evidence:
-  inline.
+- **Q9.** Match/counter/mimic on user mood: who decides? Options —
+  let the renderer prompt ask the model to decide per-message; or do
+  a small upstream classification first and pass the decision in.
+  The upstream version is more debuggable; the inline version costs
+  less and may decide better with full context. Default until
+  evidence: inline.
+- **Q10.** Per-interaction Joi mood drift: do we add it at all, and
+  if so how is the magnitude bounded? Options — (a) do not add,
+  keep Joi mood as a slow-moving variable as today; (b) add a tiny
+  per-message nudge gated by the same match/counter/mimic decision,
+  with a per-day cap so accumulated drift cannot exceed what the
+  existing momentum mechanism already produces; (c) only nudge on
+  messages that cross a "this exchange mattered" threshold (LLM
+  judged), so trivial chat doesn't move Joi's mood at all. (c) is
+  closest in spirit to how a real friend's mood shifts — neutral
+  banter doesn't change you, real moments do.
 
 ---
 
