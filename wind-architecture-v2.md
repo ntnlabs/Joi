@@ -191,16 +191,17 @@ from a buoyant Joi, even though both are warm-good. Modulator, not
 override — mood colours the message but the bar still has the
 final say.
 
-**Per-interaction drift (v2 consideration).** Today Joi's mood
-updates only via heated-conversation momentum, day-of-week tint, and
-overnight carry/decay — it does *not* shift on every incoming user
-message the way the user-mood detector does. v2 should consider a
-small per-interaction nudge: Joi's mood drifts a tick toward (or
-deliberately away from) the user's mood after each exchange,
-governed by the same match/counter/mimic decision used for renders.
-This makes Joi feel like it's actually being *moved* by the
-conversation rather than holding a pose. Magnitude must be tiny so
-single messages don't whiplash Joi's voice. See Q10.
+**Per-interaction drift.** Today Joi's mood updates only via
+heated-conversation momentum, day-of-week tint, and overnight
+carry/decay — it does *not* shift on every incoming user message the
+way the user-mood detector does. v2 adds a small per-interaction
+nudge, but only on exchanges that crossed a "this mattered"
+threshold (LLM judged). Trivial banter does not move Joi's mood;
+real moments do, the way a real friend's mood shifts. The direction
+of the nudge is governed by the same match/counter/mimic decision
+used for renders, and the magnitude is small enough that no single
+exchange can whiplash Joi's voice. Open sub-questions (threshold
+shape, per-day cap, where the nudge is computed) are tracked in Q10.
 
 ### User mood — match, counter, or mimic
 User mood matters, and there are three valid moves: match ("yes,
@@ -448,16 +449,14 @@ These need answers before plan #1 is written:
   The upstream version is more debuggable; the inline version costs
   less and may decide better with full context. Default until
   evidence: inline.
-- **Q10.** Per-interaction Joi mood drift: do we add it at all, and
-  if so how is the magnitude bounded? Options — (a) do not add,
-  keep Joi mood as a slow-moving variable as today; (b) add a tiny
-  per-message nudge gated by the same match/counter/mimic decision,
-  with a per-day cap so accumulated drift cannot exceed what the
-  existing momentum mechanism already produces; (c) only nudge on
-  messages that cross a "this exchange mattered" threshold (LLM
-  judged), so trivial chat doesn't move Joi's mood at all. (c) is
-  closest in spirit to how a real friend's mood shifts — neutral
-  banter doesn't change you, real moments do.
+- **Q10.** Per-interaction Joi mood drift — *decided: only nudge on
+  exchanges that cross a "this mattered" threshold.* Remaining
+  sub-questions: (a) what does the "mattered" judgment look at — the
+  user's last message alone, or the whole exchange since the last
+  Joi reply? (b) is the threshold a separate LLM call or folded into
+  the existing user-mood detector / match-counter-mimic prompt to
+  save tokens? (c) what is the per-day cap on accumulated drift, in
+  terms of the existing momentum_nudge magnitude (0.05)?
 
 ---
 
