@@ -336,13 +336,17 @@ Add a *dialogue-open check* that runs before any non-rhythm intent
 fires:
 
 - Look at the last N user/Joi messages.
-- A small LLM classification: "is this exchange closed, or does it
-  invite continuation?"
+- A dedicated tiny LLM prompt: short instruction + the message
+  window → single token, **open** or **closed**. No "uncertain"
+  middle — the gate needs a decisive answer to act on.
 - If open and recent: prefer `dialogue_followup` (or simply skip this
   tick) over firing a new topic.
+- If closed: gate clears, downstream intents are eligible.
 
-Heat is kept as one input but no longer the only signal. The
-classifier is cheap and runs only when gates would otherwise open.
+Heat is kept as one input to the prompt but no longer the only
+signal. The classifier runs only when gates would otherwise open
+(roughly ten times a day at most), so the extra LLM call per
+gate-tick is acceptable cost for a decision this load-bearing.
 
 **Anchors:** "recent" = within `min_silence_minutes`. N (window of
 messages to look at) is a small code constant tied to context budget.
@@ -479,8 +483,13 @@ These need answers before plan #1 is written:
 - **Q1.** Morning window: anchored on learned `quiet_end` only, or
   also a default for new users with no learned rhythm yet?
 - **Q2.** Evening window: same question.
-- **Q3.** Dialogue classifier: dedicated tiny model, or repurpose the
-  curiosity/engagement model?
+- **Q3.** Dialogue classifier — *decided: dedicated tiny prompt
+  against the base model with binary open/closed output* (no fuzzy
+  "uncertain" middle — the gate needs a decisive answer). Worth the
+  one extra LLM call per gate-open since the classifier governs every
+  non-rhythm intent. Prompt: short instruction + last N
+  user/Joi messages → single token. N is a code constant tied to
+  context budget.
 - **Q4.** Active-activity representation: extend reminders with a
   `span` flag, repurpose agenda items, or new `active_contexts`
   table?
