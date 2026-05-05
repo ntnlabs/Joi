@@ -123,6 +123,21 @@ This keeps "how often Joi messages" a stable, predictable thing the
 user can rely on, while letting "how Joi is feeling about it" be
 genuinely responsive to context. v1 was prone to confusing the two.
 
+### LLM call budget: free out-of-pipeline, fold on the user path
+
+A third principle, governing where small judgment calls live. v2 is
+willing to spend extra LLM calls *generously* when they are
+out-of-pipeline (Wind ticks, background classifications, anything the
+user is not waiting for) — the latency does not reach the user and
+isolated focused calls are debuggable. On the user-facing reply path,
+where every added call is latency the user feels, judgments fold
+into calls that already run rather than spawning new ones.
+
+Concretely: the Q3 dialogue classifier and the Q9 match/counter/mimic
+decision both get their own out-of-pipeline LLM calls in the Wind
+path; on the reactive reply path the same kind of judgment folds
+into `_detect_user_mood()` which already runs per message.
+
 ---
 
 ## The architectural pivot
@@ -564,12 +579,20 @@ These need answers before plan #1 is written:
   for unexpected connections; LLM "what would surprise this person
   right now" prompt; pulled from a small curated bank; or "no, we
   cannot do this yet, hold spark indefinitely".
-- **Q9.** Match/counter/mimic on user mood: who decides? Options —
-  let the renderer prompt ask the model to decide per-message; or do
-  a small upstream classification first and pass the decision in.
-  The upstream version is more debuggable; the inline version costs
-  less and may decide better with full context. Default until
-  evidence: inline.
+- **Q9.** Match/counter/mimic on user mood — *decided as a hybrid
+  by trigger type.*
+  - **Wind intents (proactive):** dedicated upstream LLM call before
+    render. Same shape as the Q3 dialogue classifier — the user is
+    not waiting on this output, so an extra call is acceptable
+    cost for a debuggable, isolated decision that gates voice on
+    every proactive send.
+  - **Reactive replies (user-facing):** fold into the existing
+    `_detect_user_mood()` call that already runs per message. The
+    user IS waiting in this path, so adding a separate call would
+    add latency to the response cycle.
+  - Underlying principle: extra LLM calls are acceptable when they
+    are out-of-pipeline (no user waiting); on the user-facing
+    latency path, fold decisions into calls that already run.
 - **Q10.** Per-interaction Joi mood drift — *decided: only nudge on
   exchanges that cross a "this mattered" threshold.* Remaining
   sub-questions: (a) what does the "mattered" judgment look at — the
