@@ -205,7 +205,53 @@ an evening thread, evening drawing on something from the day, spark
 firing on the right thing) depend on a notion of "important" that
 resists scoring. v2 accepts this as a soft signal — LLM-judged with
 explicit guardrails — rather than forcing a numeric ranking that
-would feel mechanical.
+would feel mechanical. The substrate v2 uses for this is Plutchik's
+wheel; see next section.
+
+---
+
+## Emotional state model — Plutchik's wheel
+
+v2 leans on **Plutchik's wheel of emotions** as the shared substrate
+for mood, intensity, and emotional importance. The wheel gives us
+eight primary emotions in opposed pairs (joy/sadness, trust/disgust,
+fear/anger, surprise/anticipation), each with three intensity rings
+(e.g. annoyance → anger → rage). Structured enough to compute on,
+human enough that the LLM understands it natively without invented
+vocabulary.
+
+**Per-message tagging.** Every user message gets a wheel position
+`(emotion, intensity)` written during `_detect_user_mood()` — the
+call already runs per message, this just expands its output schema.
+Joi's own messages get tagged similarly (cheap, same call shape).
+Storage: one small column on the message row.
+
+**The wheel arc.** A window of recent messages becomes a sequence of
+wheel positions — the *emotional arc* of the conversation. Importance
+judges read the arc, not raw message text, which keeps token costs
+manageable even when the window is long.
+
+**Where the wheel is used:**
+
+- **Joi mood / user mood modulators** (cross-cutting, next section)
+  ride on the wheel rather than ad-hoc valence numbers.
+- **Importance judgments** (Q7) read the wheel arc; high-intensity
+  rings signal "this mattered" with per-intent thresholds.
+- **Topic heat** (concern #6 carry-forward) can derive partly from
+  wheel intensity peaks during the topic's discussion, alongside
+  message count and engagement signals.
+- **Q10 mood-drift threshold** ("this mattered" gate for nudging
+  Joi's mood) reads the wheel position of the just-completed
+  exchange — high-intensity rim → drift, low-intensity centre → no
+  drift.
+
+**What the wheel does not handle: factual importance.** "User
+mentioned getting married next week" is important even when discussed
+calmly. v2 leaves that to the existing facts extraction pipeline —
+factual importance flows through user_facts and the pinning layer
+(per the recent CORE_FACT_KEYS / `source='admin'` work), not through
+the wheel. The wheel handles emotional weight; facts handle factual
+weight; they compose without overlap.
 
 ---
 
@@ -217,12 +263,13 @@ context; the modulators shape voice and content within that intent's
 quality bar.
 
 ### Joi mood
-Joi has its own mood (already tracked, with momentum and decay).
-Every intent inherits Joi's current mood as voice colouring. A
-morning_open from a mellow Joi reads differently from a morning_open
-from a buoyant Joi, even though both are warm-good. Modulator, not
-override — mood colours the message but the bar still has the
-final say.
+Joi has its own mood (already tracked, with momentum and decay),
+and in v2 it lives on Plutchik's wheel — `(emotion, intensity)`
+rather than a single valence scalar. Every intent inherits Joi's
+current wheel position as voice colouring. A morning_open from a
+serene Joi reads differently from a morning_open from a joyful Joi,
+even though both are warm-good. Modulator, not override — mood
+colours the message but the bar still has the final say.
 
 **Per-interaction drift.** Today Joi's mood updates only via
 heated-conversation momentum, day-of-week tint, and overnight
@@ -237,13 +284,14 @@ exchange can whiplash Joi's voice. Open sub-questions (threshold
 shape, per-day cap, where the nudge is computed) are tracked in Q10.
 
 ### User mood — match, counter, or mimic
-User mood matters, and there are three valid moves: match ("yes,
-today is heavy too"), counter ("here's a small bright thing"), and
-mimic (playfully exaggerate it back — sometimes funny is the right
-medicine). The failure mode is *always* defaulting to one move: a
-Joi that only mirrors sadness deepens it; a Joi that only counters
-it dismisses it; a Joi that only mimics turns every heavy moment
-into a joke. The work is choosing per moment.
+User mood is read into Plutchik's wheel per message (during
+`_detect_user_mood()`), and there are three valid response moves:
+match ("yes, today is heavy too"), counter ("here's a small bright
+thing"), and mimic (playfully exaggerate it back — sometimes funny
+is the right medicine). The failure mode is *always* defaulting to
+one move: a Joi that only mirrors sadness deepens it; a Joi that
+only counters it dismisses it; a Joi that only mimics turns every
+heavy moment into a joke. The work is choosing per moment.
 
 Light moods often invite mirroring or playful mimicry. Heavy moods
 deserve a more deliberate choice between matching and gentle
@@ -570,10 +618,16 @@ These need answers before plan #1 is written:
   removed. The install obligation still holds: sysprep stage scripts
   and the systemd `.default` files must set all v2 anchors with
   defaults — no implicit fallbacks in code.
-- **Q7.** Importance judgments (carry-forward, evening drive, spark):
-  one shared "is this important" prompt, or per-intent prompts? How
-  much of the conversation history does the judge see, and how is it
-  budgeted?
+- **Q7.** Importance judgments — *decided.* All importance calls
+  (morning carry-forward, evening drive, spark trigger, mood-drift
+  threshold) ride on Plutchik's wheel as a shared signal: each
+  message gets tagged with `(emotion, intensity)` during
+  `_detect_user_mood()`, judges read the resulting **wheel arc** of
+  the relevant window (yesterday's tail, today's arc, recent
+  exchange, lifetime), and per-intent **intensity thresholds**
+  decide what counts as "important". Factual importance is handled
+  separately by the existing facts extraction pipeline — the two
+  signals compose without overlap.
 - **Q8.** Spark generation mechanism: what is the candidate source?
   Options to evaluate when we get there — random walk over user_facts
   for unexpected connections; LLM "what would surprise this person
@@ -594,13 +648,15 @@ These need answers before plan #1 is written:
     are out-of-pipeline (no user waiting); on the user-facing
     latency path, fold decisions into calls that already run.
 - **Q10.** Per-interaction Joi mood drift — *decided: only nudge on
-  exchanges that cross a "this mattered" threshold.* Remaining
-  sub-questions: (a) what does the "mattered" judgment look at — the
-  user's last message alone, or the whole exchange since the last
-  Joi reply? (b) is the threshold a separate LLM call or folded into
-  the existing user-mood detector / match-counter-mimic prompt to
-  save tokens? (c) what is the per-day cap on accumulated drift, in
-  terms of the existing momentum_nudge magnitude (0.05)?
+  exchanges that cross a "this mattered" threshold.* Sub-Q (b)
+  resolved by Q7: the threshold is the wheel position of the
+  just-completed exchange (high-intensity rim → drift, low-intensity
+  centre → no drift), folded into the per-message wheel tagging in
+  `_detect_user_mood()`. No separate call. Remaining sub-questions:
+  (a) does "the exchange" mean just the user's last message or the
+  whole user/Joi pair since the last drift check? (c) what is the
+  per-day cap on accumulated drift, in terms of the existing
+  momentum_nudge magnitude (0.05)?
 - **Q11.** Topic continuity (clustering and theme mode collapsed) —
   *decided: no separate cluster concept, no explicit theme mode.*
   Heat-driven topic carry with a rising per-topic threshold produces
