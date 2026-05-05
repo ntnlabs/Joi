@@ -334,8 +334,12 @@ threshold (LLM judged). Trivial banter does not move Joi's mood;
 real moments do, the way a real friend's mood shifts. The direction
 of the nudge is governed by the same match/counter/mimic decision
 used for renders, and the magnitude is small enough that no single
-exchange can whiplash Joi's voice. Open sub-questions (threshold
-shape, per-day cap, where the nudge is computed) are tracked in Q10.
+exchange can whiplash Joi's voice. The drift mechanism is fully
+specified in Q10: trigger only on high-intensity-rim wheel readings
+(folded into `_detect_user_mood()` with prior wheel positions as
+context), only the newest message contributes drift, cold-start
+waits for ≥3 prior messages, and no per-day cap (Plutchik's
+intensity bounds plus existing decay are sufficient).
 
 ### User mood — match, counter, or mimic
 User mood is read into Plutchik's wheel per message (during
