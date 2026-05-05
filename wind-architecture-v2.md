@@ -253,6 +253,52 @@ factual importance flows through user_facts and the pinning layer
 the wheel. The wheel handles emotional weight; facts handle factual
 weight; they compose without overlap.
 
+### Audit: v1 is already on the wheel internally
+
+A quick audit of the v1 codebase shows the wheel is already the
+internal mood representation — adopting it in v2 is not a rewrite,
+it is a retrofit and an extension:
+
+- `wind/state.py:15-29` defines `_MOOD_VALENCE` (8 primaries + neutral)
+  and `_MOOD_VOCABULARY` (3 intensity rings per primary, e.g.
+  serenity / joy / ecstasy). `_mood_word()` resolves a `(state,
+  intensity)` to the right vocabulary word, and `_mood_jump_distance()`
+  already uses ring-based math.
+- `_detect_user_mood()` (api/server.py:836) returns `(state,
+  intensity)` from Plutchik's primary set and 0-1 intensity. The
+  prompt already constrains the LLM to the wheel.
+- `WindState.user_mood_state` / `mood_state` and matching
+  `*_intensity` fields already store the wheel position per
+  conversation.
+
+The actual v2 work is therefore narrower than "add Plutchik": it is
+filling specific gaps so the wheel becomes the canonical mood
+substrate everywhere it is pulled, not just where it is stored.
+
+**Gaps to close (v2 retrofit):**
+
+1. **No persisted per-message arc.** Today only the *latest* wheel
+   position is kept on `WindState` (one row per conversation). The
+   "wheel arc" that importance judges need does not exist yet.
+   Add per-message tagging persisted in a queryable shape — either
+   a column on the message row, or a small `mood_observations`
+   table indexed by conversation + timestamp.
+2. **Joi's outgoing messages are not tagged.** `_detect_user_mood()`
+   runs on user messages only. v2 needs the same tag on Joi's own
+   messages so the arc covers both sides of the exchange.
+3. **`topics.py:40` `emotional_context` is free-form text.** A Phase
+   4c addition that predates the wheel formalisation. Upgrade to
+   wheel format (or wheel + optional free-text annotation).
+4. **Wheel concepts are internal-only.** v2 wants the wheel to be a
+   *named input* to renderer prompts and importance judges, not just
+   a backend representation. Renderer prompts should receive the
+   recent wheel arc as a structured input, and importance judges
+   should report which wheel positions led to their verdict.
+
+These four are the concrete deliverables of the wheel-arc retrofit
+step (see sequencing below). The retrofit is foundational because
+several v2 intents and judges depend on the arc existing.
+
 ---
 
 ## Cross-cutting modulators
@@ -547,27 +593,37 @@ observed before the next:
    tunable, classify each as anchor or derivable, replace derivables
    with code-side functions of anchors. Pure refactor, no behaviour
    change. **Land before any new intent.**
-2. **Intent dispatcher skeleton.** Refactor orchestrator to pick an
+2. **Wheel-arc retrofit.** The four gaps from the Plutchik audit:
+   (a) per-message wheel-position storage, (b) tag Joi's outgoing
+   messages with the same shape, (c) upgrade `topics.py`
+   `emotional_context` to wheel format, (d) make the wheel arc a
+   named input to renderer prompts and importance judges. Land
+   before the dispatcher because every later step depends on the
+   arc existing as a queryable structure.
+3. **Intent dispatcher skeleton.** Refactor orchestrator to pick an
    intent per tick. Initially only `topic_engagement` and `wake_up`
    exist (behaviour identical to today). Pure structural change with
    tests.
-3. **Dialogue-open classifier (`dialogue_followup`).** First new
+4. **Dialogue-open classifier (`dialogue_followup`).** First new
    intent to ship — the most tractable, binary action, no new
-   storage. Validates the dispatcher under real traffic before
-   harder intents land.
-4. **Morning + evening intents.** Adds `morning_open` and
+   storage beyond the arc. The classifier reads the wheel arc as
+   one input alongside raw last-N messages.
+5. **Morning + evening intents.** Adds `morning_open` and
    `evening_close` with their own prompts and windows. Morning's
    carry-forward and evening's drive (soft-topic or spark) both
-   exercise the importance / quality-bar machinery.
-5. **Topic carry-forward with rising threshold (concern #6).**
+   exercise the importance / quality-bar machinery riding on the
+   wheel arc.
+6. **Topic carry-forward with rising threshold (concern #6).**
    Refines existing `topic_engagement` rather than adding an intent.
+   Topic heat reuses wheel intensity peaks during a topic's
+   discussion as one input alongside message count and engagement.
    Lands after morning/evening because morning_open uses the
    carried-thread information for its carry-forward render.
-6. **Spark mechanism.** The hardest. Bar is fixed (spark-good); the
+7. **Spark mechanism.** The hardest. Bar is fixed (spark-good); the
    open question is *how* to generate one. Land last so the rest of
    v2 has shipped enough signal (intents, importance judgments, user
-   rhythm) for spark to draw on.
-7. **Time/date felt-sense polish.** Tunes prompts and small biases
+   rhythm, wheel arc) for spark to draw on.
+8. **Time/date felt-sense polish.** Tunes prompts and small biases
    that become possible once the above land.
 
 *Activity check-in is paused (see concern #5) — not a step in v2.*
