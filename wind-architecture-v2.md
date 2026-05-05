@@ -547,14 +547,24 @@ absence of one) falls out of the topic-carry math.
 
 Mechanics:
 
-- Each topic accumulates a heat score from the day's discussion
-  (intensity, message count, mood depth — reusing existing signals).
+- Each topic accumulates a **heat score** from the day's discussion.
+  Heat = `v1_heat × wheel_intensity_factor` — v1's engagement
+  metric multiplied by Plutchik wheel intensity peaks during the
+  topic's discussion. High engagement with flat emotion is dampened;
+  brief but emotionally intense exchanges can still earn high heat.
 - At day rollover, topics whose heat exceeds a per-topic threshold
   *carry forward* with a priority boost into the next day's queue.
-- **The threshold ratchets up on each carry.** A topic that carried
-  yesterday needs *more* heat to carry again today, more still
-  tomorrow. Sustained obsession is allowed but each repeat is
-  harder to qualify for.
+- **The threshold ratchets up geometrically on each carry**
+  (1, 2, 4, 8, …). A topic that carried yesterday needs 2× the
+  heat today, 4× tomorrow. Sustained obsession is allowed but each
+  repeat earns the right with exponentially stronger evidence.
+- **When a carried topic is *not* discussed in a day, the threshold
+  decays back toward baseline** — but the decay rate scales with
+  daily activity volume: factor = `0.5 ^ (today_count / rolling_avg)`.
+  Quiet days barely decay (no competition for attention); heated
+  days decay aggressively (the topic actively lost in the
+  competition). On average days, topics return to baseline in 3-4
+  days of silence — emergent, not hardcoded.
 - Topics that don't clear the threshold decay normally; the day
   defaults to varied (the queue presents mixed candidates).
 - A theme day emerges only when a topic stays hot enough to clear an
@@ -745,15 +755,41 @@ These need answers before plan #1 is written:
     read happens inside `_detect_user_mood()` (the call that
     already runs per message), now with prior wheel positions added
     to its context. No separate LLM call.
-- **Q11.** Topic continuity (clustering and theme mode collapsed) —
-  *decided: no separate cluster concept, no explicit theme mode.*
-  Heat-driven topic carry with a rising per-topic threshold produces
-  theme days and mixed days as an emergent property. Remaining
-  sub-questions: (a) what shape is the ratchet — linear step, geometric,
-  or threshold doubles each carry? (b) does the threshold also decay
-  if the topic *isn't* discussed for a few days, so a once-hot topic
-  can re-qualify later at a normal bar? (c) is "heat" reused from
-  v1's existing heat metric or computed fresh from intensity signals?
+- **Q11.** Topic continuity — *fully decided.*
+  - **High-level:** no separate cluster concept, no explicit theme
+    mode. Heat-driven topic carry with a rising per-topic threshold
+    produces theme days and mixed days as an emergent property.
+  - **(a) Ratchet shape: geometric doubling** (1, 2, 4, 8, …). Day
+    after a topic carried, threshold is 2× baseline; day after that,
+    4×; etc. Easy on day 2, exponentially harder each repeat —
+    sustained obsession is allowed but earns the right with
+    increasingly strong evidence.
+  - **(b) Decay: symmetric halving, modulated by daily activity
+    volume.** When a carried topic is *not* discussed in a day, its
+    threshold decays back toward baseline. The decay factor is
+    `0.5 ^ (today_count / rolling_avg)` where `rolling_avg` is the
+    per-conversation learned daily message average:
+    - Quiet day (≈0.2× avg) → factor ≈ 0.87 (barely any decay — a
+      topic not discussed on a quiet day isn't really evidence it
+      lost attention; there was no competition).
+    - Normal day (≈1× avg) → factor = 0.5 (standard halving).
+    - Heated day (≈2× avg) → factor = 0.25 (active competition
+      dropped this topic; threshold collapses fast).
+    - Cap the exponent at ~4× to protect against pathological spikes.
+    - Naturally produces a 3-4 day return to baseline for highly
+      elevated topics on average days, no hardcoded day count. The
+      mechanism aligns with the intensity-not-rate principle —
+      decay reflects opportunity cost, not calendar time.
+  - **(c) Heat: multiplicative hybrid of v1 metric and wheel
+    intensity.** `heat = v1_heat × wheel_intensity_factor`. The
+    wheel acts as a multiplier on v1's engagement signal. High
+    engagement + high intensity → big heat (this really mattered).
+    High engagement + flat emotion → dampened heat (long calm
+    discussion, e.g. grinding through admin work, doesn't earn
+    carry). Brief but emotionally charged exchanges can still earn
+    carry if the wheel intensity peak is high enough to lift even
+    modest v1 heat. Addresses v1's weakness directly: engagement
+    alone wasn't a clean "this mattered" signal.
 
 ---
 
