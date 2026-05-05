@@ -241,9 +241,12 @@ manageable even when the window is long.
   wheel intensity peaks during the topic's discussion, alongside
   message count and engagement signals.
 - **Q10 mood-drift threshold** ("this mattered" gate for nudging
-  Joi's mood) reads the wheel position of the just-completed
-  exchange — high-intensity rim → drift, low-intensity centre → no
-  drift.
+  Joi's mood) reads the wheel position of the *newest* message,
+  with the last 3-4 messages providing context for the read. Only
+  the newest message can trigger drift — earlier messages in the
+  window are context only, never re-counted. High-intensity rim →
+  drift, low-intensity centre → no drift. No per-day cap; the
+  wheel's own intensity bounds plus event decay are enough.
 
 **What the wheel does not handle: factual importance.** "User
 mentioned getting married next week" is important even when discussed
@@ -703,16 +706,27 @@ These need answers before plan #1 is written:
   - Underlying principle: extra LLM calls are acceptable when they
     are out-of-pipeline (no user waiting); on the user-facing
     latency path, fold decisions into calls that already run.
-- **Q10.** Per-interaction Joi mood drift — *decided: only nudge on
-  exchanges that cross a "this mattered" threshold.* Sub-Q (b)
-  resolved by Q7: the threshold is the wheel position of the
-  just-completed exchange (high-intensity rim → drift, low-intensity
-  centre → no drift), folded into the per-message wheel tagging in
-  `_detect_user_mood()`. No separate call. Remaining sub-questions:
-  (a) does "the exchange" mean just the user's last message or the
-  whole user/Joi pair since the last drift check? (c) what is the
-  per-day cap on accumulated drift, in terms of the existing
-  momentum_nudge magnitude (0.05)?
+- **Q10.** Per-interaction Joi mood drift — *fully decided.*
+  - Trigger: only nudge on messages whose wheel position is on the
+    high-intensity rim (Q7 threshold).
+  - **Window for reading: last 3-4 messages as context** so the LLM
+    can read the new message correctly (single messages in isolation
+    are often ambiguous).
+  - **Drift trigger: only the newest message in the window counts.**
+    Each message contributes drift exactly once — when it is the
+    newest one being checked. Earlier messages in the window are
+    pure context, not re-counted on each check. This avoids the
+    sliding-window double-count problem (a heavy message doesn't
+    keep nudging Joi every turn while it's still visible).
+  - **No per-day cap on accumulated drift.** Plutchik's wheel
+    already bounds intensity to `[0, 1]` and the state can shift
+    across the wheel between events; existing decay between events
+    pulls mood back toward neutral. These natural bounds are
+    sufficient — humans don't have artificial daily limits on how
+    much a day can move them, and Joi shouldn't either.
+  - Sub-Q (b) on prompt placement was resolved by Q7: the wheel
+    position read happens inside `_detect_user_mood()` (the call
+    that already runs per message), no separate LLM call.
 - **Q11.** Topic continuity (clustering and theme mode collapsed) —
   *decided: no separate cluster concept, no explicit theme mode.*
   Heat-driven topic carry with a rising per-topic threshold produces
