@@ -242,11 +242,13 @@ manageable even when the window is long.
   message count and engagement signals.
 - **Q10 mood-drift threshold** ("this mattered" gate for nudging
   Joi's mood) reads the wheel position of the *newest* message,
-  with the last 3-4 messages providing context for the read. Only
-  the newest message can trigger drift — earlier messages in the
-  window are context only, never re-counted. High-intensity rim →
-  drift, low-intensity centre → no drift. No per-day cap; the
-  wheel's own intensity bounds plus event decay are enough.
+  with the *prior 3 messages' stored wheel positions* (not raw
+  text) provided as context. Only the newest message can trigger
+  drift — older messages are stable stored context. Cold start
+  (fewer than 3 priors, or all stale) tags the message but does
+  not trigger drift. High-intensity rim → drift, centre → no drift.
+  No per-day cap; the wheel's intensity bounds plus event decay
+  are enough.
 
 **What the wheel does not handle: factual importance.** "User
 mentioned getting married next week" is important even when discussed
@@ -597,12 +599,14 @@ observed before the next:
    with code-side functions of anchors. Pure refactor, no behaviour
    change. **Land before any new intent.**
 2. **Wheel-arc retrofit.** The four gaps from the Plutchik audit:
-   (a) per-message wheel-position storage, (b) tag Joi's outgoing
-   messages with the same shape, (c) upgrade `topics.py`
-   `emotional_context` to wheel format, (d) make the wheel arc a
-   named input to renderer prompts and importance judges. Land
-   before the dispatcher because every later step depends on the
-   arc existing as a queryable structure.
+   (a) per-message wheel-position storage *queryable as
+   context for the next read* (so new wheel readings can use prior
+   positions as context rather than re-deriving them — see Q10),
+   (b) tag Joi's outgoing messages with the same shape,
+   (c) upgrade `topics.py` `emotional_context` to wheel format,
+   (d) make the wheel arc a named input to renderer prompts and
+   importance judges. Land before the dispatcher because every later
+   step depends on the arc existing as a queryable structure.
 3. **Intent dispatcher skeleton.** Refactor orchestrator to pick an
    intent per tick. Initially only `topic_engagement` and `wake_up`
    exist (behaviour identical to today). Pure structural change with
@@ -709,24 +713,38 @@ These need answers before plan #1 is written:
 - **Q10.** Per-interaction Joi mood drift — *fully decided.*
   - Trigger: only nudge on messages whose wheel position is on the
     high-intensity rim (Q7 threshold).
-  - **Window for reading: last 3-4 messages as context** so the LLM
-    can read the new message correctly (single messages in isolation
-    are often ambiguous).
-  - **Drift trigger: only the newest message in the window counts.**
-    Each message contributes drift exactly once — when it is the
-    newest one being checked. Earlier messages in the window are
-    pure context, not re-counted on each check. This avoids the
-    sliding-window double-count problem (a heavy message doesn't
-    keep nudging Joi every turn while it's still visible).
+  - **Reading method: prior wheel positions as context, not raw
+    re-reads.** The wheel-arc retrofit (step 2) persists each
+    message's `(emotion, intensity)` once. When a new message
+    arrives, the wheel-reading prompt receives the *prior 3
+    messages' stored wheel positions* as context (not their raw
+    text), plus the new message's raw text. The prompt is shaped as
+    "the previous 3 messages were tagged X, Y, Z — read this new
+    message in that light." This avoids re-deriving older wheel
+    positions every turn (cheaper, and the previous reads stay
+    stable rather than fighting fresh re-interpretations).
+  - **Drift trigger: only the newest message counts.** Each message
+    contributes drift exactly once — when it is the newest one
+    being checked. Earlier messages are stored context, not
+    re-counted. This avoids the sliding-window double-count problem.
+  - **Cold start: wait for context before triggering drift.** When a
+    conversation has fewer than 3 prior messages (fresh
+    conversation, or all priors are stale after a long silence
+    gap), the new message is still tagged with a wheel position but
+    drift is *not* triggered. Same reason humans do not read
+    sarcasm or jokes from a single sentence — context is required
+    to read mood reliably. Drift activates once enough recent
+    context exists.
   - **No per-day cap on accumulated drift.** Plutchik's wheel
     already bounds intensity to `[0, 1]` and the state can shift
-    across the wheel between events; existing decay between events
-    pulls mood back toward neutral. These natural bounds are
-    sufficient — humans don't have artificial daily limits on how
-    much a day can move them, and Joi shouldn't either.
+    across the wheel between events; existing decay pulls mood
+    back toward neutral. These natural bounds are sufficient —
+    humans don't have artificial daily limits, and Joi shouldn't
+    either.
   - Sub-Q (b) on prompt placement was resolved by Q7: the wheel
-    position read happens inside `_detect_user_mood()` (the call
-    that already runs per message), no separate LLM call.
+    read happens inside `_detect_user_mood()` (the call that
+    already runs per message), now with prior wheel positions added
+    to its context. No separate LLM call.
 - **Q11.** Topic continuity (clustering and theme mode collapsed) —
   *decided: no separate cluster concept, no explicit theme mode.*
   Heat-driven topic carry with a rising per-topic threshold produces
