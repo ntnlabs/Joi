@@ -160,7 +160,7 @@ Proposed intent set:
 | `activity_checkin` | *(deferred — see concern #5)* | Defined as target; no code in v2 |
 | `topic_engagement` | Default — gates open and none of the above fits | Current Wind v1 behaviour |
 | `wake_up` | Long silence (existing) | Existing wake-up procedure |
-| `spark` | Rare, off-rhythm, no scheduled trigger | "Had to tell you this" — must clear the spark-good bar (see Quality bars) |
+| `spark` | Irregular — candidate-driven, not scheduled. Quiet for weeks or several in a day are both correct | "Had to tell you this" — synthesised forward from facts (the *opposite* of topic, which is mined backward from discussion). Must clear the spark-good bar (see Quality bars) |
 
 A single tick can match at most one intent. Priority is roughly the
 order above: rhythm and continuity before topic queue. `spark` is
@@ -197,8 +197,11 @@ relationship to absence.
 **The hard one is `spark`.** Topic-good can borrow from a queued
 candidate; spark-good has to invent the spark itself. If we set the
 bar but cannot deliver, we get topic-good messages mislabeled as
-sparks — worse than no sparks. Spark mechanism is **TBD**; the bar is
-fixed, the means of meeting it is the open problem.
+sparks — worse than no sparks. The generation principle is settled
+(*spark is the opposite of topic — synthesised forward from facts
+that have not been connected in discussion, rather than mined
+backward from discussion that has happened*); the specific mechanism
+is open. See Q8.
 
 **Importance is not mathematical.** Several intents (morning carrying
 an evening thread, evening drawing on something from the day, spark
@@ -636,10 +639,16 @@ observed before the next:
    discussion as one input alongside message count and engagement.
    Lands after morning/evening because morning_open uses the
    carried-thread information for its carry-forward render.
-7. **Spark mechanism.** The hardest. Bar is fixed (spark-good); the
-   open question is *how* to generate one. Land last so the rest of
-   v2 has shipped enough signal (intents, importance judgments, user
-   rhythm, wheel arc) for spark to draw on.
+7. **Spark mechanism.** The hardest. Bar is fixed (spark-good) and
+   the generation principle is settled (synthesise forward from
+   facts — opposite of topic). The open question is the *specific
+   mechanism*: how to scan facts for connection candidates, how to
+   judge "would this create a discussion that wouldn't otherwise
+   happen", and how the candidate buffer interacts with the
+   dispatcher. Lands last so the facts pipeline, the wheel arc, and
+   the other intents have shipped enough signal for spark to draw
+   on. Permitted to slip indefinitely if the mechanism doesn't
+   reach spark-good — empty spark > fake spark.
 8. **Time/date felt-sense polish.** Tunes prompts and small biases
    that become possible once the above land.
 
@@ -701,11 +710,37 @@ These need answers before plan #1 is written:
   decide what counts as "important". Factual importance is handled
   separately by the existing facts extraction pipeline — the two
   signals compose without overlap.
-- **Q8.** Spark generation mechanism: what is the candidate source?
-  Options to evaluate when we get there — random walk over user_facts
-  for unexpected connections; LLM "what would surprise this person
-  right now" prompt; pulled from a small curated bank; or "no, we
-  cannot do this yet, hold spark indefinitely".
+- **Q8.** Spark generation — *direction set, mechanism open.*
+  - **Frequency profile:** not gated, not top-priority, not bottom.
+    Spark may stay quiet for weeks and may fire several times in a
+    single day; both patterns are correct. Frequency emerges from
+    *candidate availability*, not from a schedule, quota, or
+    cooldown of its own.
+  - **Outcome path (the loop):** spark fires → discussion →
+    discussion mines a new topic → topic discussion enriches facts
+    → richer facts feed future spark candidates. Spark is the entry
+    point of a loop that grows Joi's understanding of the user, not
+    a one-shot delivery of a clever line.
+  - **Generation principle — spark is the opposite of topic.**
+    Topic is *retrospective*: mined from discussion that has already
+    happened. Spark is *prospective*: synthesised from facts/hints
+    that would *not* otherwise have created a discussion. The two
+    pipelines invert — topic looks back at conversation, spark looks
+    forward from facts. This means spark leans hard on the existing
+    facts infrastructure (user_facts, CORE_FACT_KEYS, source='admin'
+    pinning) rather than on the topic queue.
+  - **Open sub-Q (mechanism):** how to operationalise "connects facts
+    that wouldn't otherwise create a discussion". Candidate direction
+    to evaluate: a background scan over `user_facts` for pairs or
+    small clusters with low joint-discussion overlap (haven't been
+    surfaced together in past topics or recent conversation) and
+    high LLM-judged connection potential. Candidates clearing
+    spark-good accumulate in a buffer; spark fires only when the
+    dispatcher offers the slot *and* the buffer has material. Empty
+    buffer = no spark, no fallback to topic-good (that would be the
+    failure mode the Quality bars section warns against). Concrete
+    shape — scan cadence, scoring of "joint-discussion overlap",
+    buffer size, eviction — to be designed in step 7.
 - **Q9.** Match/counter/mimic on user mood — *decided as a hybrid
   by trigger type.*
   - **Wind intents (proactive):** dedicated upstream LLM call before
