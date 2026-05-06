@@ -375,7 +375,65 @@ ambient information the LLM might or might not use.
 
 **These modulators apply to every intent.** When the renderers are
 designed (step 4 onwards), the prompt template for each intent must
-take all three as named inputs — not implicit context.
+take all three as named inputs — not implicit context. The
+delivery shape for these (and a few derived signals beyond them)
+is the **situation report** below.
+
+### Situation report — the renderer's anchor
+
+The cross-cutting modulators above — plus a few derived signals
+already produced elsewhere in v2 (Q10 mood drift, wheel-arc
+trajectory, Q3 dialogue state, noteworthy-date cache) — reach
+every renderer as a single compact **sitrep** block, not as
+scattered prompt fragments. The sitrep is an explicit input
+contract: the LLM gets one anchor that says *where things are and
+which way they're heading*, instead of having to infer state from
+incidental mentions across the prompt.
+
+Starting shape (intentionally compact, one line per axis):
+
+```
+SITUATION
+Time:     Friday, workday, 11:38 — late morning
+User:     stable happy (joy, mid; arc: stable last 3 messages)
+Joi:      contented (joy, low; shifted from neutral on last exchange)
+Dialogue: open thread, light momentum
+Notable:  Sara's birthday is Sunday
+```
+
+Properties:
+
+- **Pure assembly, no new LLM call.** Each line is a read from
+  state already produced elsewhere — clock,
+  `_detect_user_mood()` output, persisted wheel arc, Q10 drift
+  result, Q3 dialogue classifier, noteworthy-date cache, etc.
+  The sitrep is *packaging*, not computation. No latency cost on
+  the reactive path beyond a slightly larger prompt.
+- **Trajectory, not just snapshot.** "shifted from neutral on
+  last exchange" is the Q10 drift result; "arc: stable last 3
+  messages" summarises the persisted wheel arc. The sitrep
+  conveys *direction*, which is what the renderer actually needs
+  to colour voice — current state alone is too thin.
+- **Same sitrep on both paths.** Wind renderers (proactive) and
+  reactive reply rendering both consume the same block. One
+  contract, two callers. This is also what makes the modulators
+  finally *used* on the reactive path — today they sit in
+  `WindState` but rarely reach the reply prompt.
+- **Composable, mid-flight.** The starting axes are
+  Time / User / Joi / Dialogue / Notable. New axes can be added
+  when a need surfaces (recent topic, active activity if Q4 ever
+  un-pauses, last fact extracted, etc.). The bar for adding a
+  line: would the LLM render meaningfully better with this signal
+  *explicitly stated* rather than inferred? If no, don't add it —
+  the sitrep stays an anchor, not a dossier.
+
+Implementation: a single `build_sitrep(conversation_id) -> str`
+function in the orchestrator path, called immediately before every
+render (Wind or reactive). Renderer prompts are restructured to
+take the sitrep block as their first input. **Step 8 of the
+sequencing absorbs into shipping this** — the original "Friday
+biases tone" sketch is no longer a special case, Friday is just
+one line in the sitrep and the LLM handles the rest.
 
 ---
 
@@ -771,8 +829,20 @@ observed before the next:
    the other intents have shipped enough signal for spark to draw
    on. Permitted to slip indefinitely if the mechanism doesn't
    reach spark-good — empty spark > fake spark.
-8. **Time/date felt-sense polish.** Tunes prompts and small biases
-   that become possible once the above land.
+8. **Sitrep + time/date felt-sense.** Build the
+   `build_sitrep(conversation_id)` assembly path that consolidates
+   time/date, user mood + wheel arc, Joi mood + Q10 drift, Q3
+   dialogue state, and the noteworthy-date cache into a single
+   compact prompt block consumed by every renderer (Wind and
+   reactive). Restructure renderer prompts to take the sitrep as
+   their first named input. Time/date felt-sense lands automatically
+   — Friday is just one line in the sitrep, the LLM does the rest.
+   Lands last because the sitrep is *assembly* over signals
+   produced by every earlier step (wheel arc, dialogue classifier,
+   morning/evening intents, topic carry, noteworthy-date detector).
+   Starting axes are Time / User / Joi / Dialogue / Notable;
+   additional axes are added mid-flight when a signal earns its
+   line.
 
 *Activity check-in is paused (see concern #5) — not a step in v2.*
 
