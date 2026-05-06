@@ -922,17 +922,45 @@ These need answers before plan #1 is written:
     facts infrastructure (user_facts, CORE_FACT_KEYS, source='admin'
     pinning) rather than on the topic queue.
   - **Open sub-Q (mechanism):** how to operationalise "connects facts
-    that wouldn't otherwise create a discussion". Candidate direction
-    to evaluate: a background scan over `user_facts` for pairs or
-    small clusters with low joint-discussion overlap (haven't been
-    surfaced together in past topics or recent conversation) and
-    high LLM-judged connection potential. Candidates clearing
-    spark-good accumulate in a buffer; spark fires only when the
-    dispatcher offers the slot *and* the buffer has material. Empty
-    buffer = no spark, no fallback to topic-good (that would be the
-    failure mode the Quality bars section warns against). Concrete
-    shape — scan cadence, scoring of "joint-discussion overlap",
-    buffer size, eviction — to be designed in step 7.
+    that wouldn't otherwise create a discussion". Concrete shape —
+    "joint-discussion overlap" scoring, buffer size, eviction — to
+    be designed in step 7. Candidates clearing spark-good accumulate
+    in a buffer; spark fires only when the dispatcher offers the
+    slot *and* the buffer has material. Empty buffer = no spark, no
+    fallback to topic-good (that would be the failure mode the
+    Quality bars section warns against).
+  - **Current lean (user reflecting, not decided): per-message
+    trigger, post-reply, three-stage cheap-gate-first pipeline.**
+    - **Trigger.** Run after every user message, *after* Joi's reply
+      has been sent. Per-message trigger keeps the candidate buffer
+      responsive to the conversation (a fact mentioned five minutes
+      ago can produce a candidate by the next spark opportunity).
+      Post-reply execution keeps it out-of-pipeline — user latency
+      is never affected (Q9 principle).
+    - **Scope.** Full current-conversation context + the last 3-5
+      conversation recaps (compacted summaries from
+      `memory/consolidation.py`). Wide enough to catch
+      cross-session connections, bounded enough to stay tractable.
+    - **Stage 1 — cheap gate.** Single LLM call: query + available
+      context → "does anything here look like a spark?" If no,
+      abort. Cost: one wasted call per uneventful message, in the
+      background, user never knows.
+    - **Stage 2 — vector enrichment (only if stage 1 says yes).**
+      Vector searches over `user_facts` and history to gather
+      supporting evidence for the candidate connection (related
+      facts, past joint mentions, contextual depth). Existing
+      `memory/hybrid.py` retrieval is the substrate.
+    - **Stage 3 — final compose/judge (only if stage 2 yields
+      enough).** Final LLM call composes the spark phrasing and
+      decides whether to commit to the buffer or discard. This is
+      where the spark-good bar is enforced.
+    - **Steady-state cost.** Most messages stop at stage 1 (one
+      cheap call). Spark-rich messages get the full pipeline. All
+      stages run post-reply, so the user never waits on any of it.
+      Compute is real but the gate ordering bounds it sharply: the
+      expensive stages (vector search, multi-call composition) only
+      fire on messages that already passed a cheap "is there
+      anything here" filter.
 - **Q9.** Match/counter/mimic on user mood — *decided as a hybrid
   by trigger type.*
   - **Wind intents (proactive):** dedicated upstream LLM call before
