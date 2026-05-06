@@ -450,14 +450,123 @@ Two complementary moves:
   block already gives the LLM the data; Wind should also *act* on it.
   Example: a Friday evening tick biases mood and tone choice in the
   prompt; a late-Sunday-night tick biases toward gentler intents.
-- **Add a "noteworthy date" detector.** Anniversaries, birthdays of
-  known people (already in user_facts), recurring user events. When
-  today matches, that becomes its own micro-intent (rendered into the
-  morning message, not a separate ping).
+- **Add a noteworthy-date detector.** Birthdays, anniversaries, and
+  other date-anchored facts the user has surfaced (their own or
+  named people's) feed `morning_open` as enriched render input —
+  never a separate ping.
 
 This concern overlaps the other four — most of the "time feel" ends
 up landing inside `morning_open` and `evening_close` rather than as
 standalone messages.
+
+#### Noteworthy-date detector — design
+
+**Source of truth: layered (hard + soft).** Two existing pipelines
+already store dates; v2 reads both rather than building a third
+storage:
+
+- **Hard channel — reminders.** Reminders carry structured `due_at`
+  and recurrence (`reminders.py`). A user-set "wife's birthday" or
+  "anniversary" reminder is the assertive source. Render confidence
+  is high; phrasing can be definite ("today is Sara's birthday").
+- **Soft channel — facts.** The facts pipeline already extracts
+  birthdays/anniversaries as `user_facts` rows
+  (`category=personal`, `key=birthday`, value as free text like
+  "February 28th"). Render confidence is lower; phrasing is
+  tentative ("isn't this around your sister's birthday?") so a
+  hallucinated or mis-extracted date doesn't land as if Joi were
+  certain.
+
+The two channels compose: a reminder *and* a matching fact for the
+same person upgrade confidence; a fact alone stays soft. No new
+storage table.
+
+**Lookahead window: today + ~3-workday human-prep window.**
+Anchored in human rhythm rather than picked as a number. A 7-day
+week has 5 workdays; humans need roughly half of those (rounded to
+3) to actually prepare for an event — buy a card, book a table,
+make a call. That window is what a present friend covers. So:
+
+- **Day-of always fires.** "Today is X's birthday" is the
+  load-bearing case.
+- **One pre-mention** within the 3-workday prep window before the
+  event. Joi flags it once during prep ("you've got X's birthday
+  this Saturday"); not three mornings in a row.
+- **Workday-aware, not calendar-aware.** Window counts workdays
+  back from the event, not raw days, so an event on Monday triggers
+  pre-mention the prior Thursday or Friday (when the user has time
+  to actually prepare), not on the weekend just before. Weekend
+  events count back into the workweek.
+- **Day-of and pre-mention render differently.** Day-of is
+  celebratory / acknowledging; pre-mention is logistical / a
+  nudge ("worth thinking about gifts?").
+
+**Detector cadence and judgment.** The detector runs once per day,
+**~1 hour before learned `quiet_end`** (i.e. while the user is
+still asleep). It collects all dated reminders and facts that
+match today or fall in the pre-mention window, then makes a single
+LLM call — out-of-pipeline, no user waiting — that **tags each
+item with a Plutchik wheel position** `(emotion, intensity)`
+rather than a render category. The wheel is already v2's shared
+emotional substrate (Q7); the date detector reuses it instead of
+inventing a parallel `celebrate|support|acknowledge` taxonomy that
+would be a third emotional vocabulary in the system.
+
+Examples of how the wheel reading collapses across cases:
+
+| Date | Wheel reading | What morning_open does with it |
+|---|---|---|
+| Wife's birthday | joy, high (`ecstasy` ring) | Celebratory warmth |
+| User's exam tomorrow | anticipation, mid | "You've got this" support |
+| Father's death anniversary | sadness, high | Gentle acknowledgement |
+| Routine dentist appointment | neutral, low | Skipped (below intensity floor) |
+| Divorce anniversary | sadness/disgust mix, mid | Quiet "thinking of you" |
+| Sober milestone | joy + trust, high | Warm congratulation |
+
+**`skip` falls out automatically** — low-intensity readings don't
+surface. The intensity floor reuses the per-intent rim concept
+from Q7 (no new tunable). Heavy/somber/celebratory shapes are not
+categories the system enforces; they emerge from the renderer
+reading high-intensity sadness, joy, anticipation, etc. in
+context.
+
+The judgment call is the same shape as the Q3 dialogue classifier
+and Q9 match/counter/mimic — small focused LLM call,
+out-of-pipeline, debuggable in isolation. The LLM decides the
+wheel position per item, which lets odd-shaped facts (e.g.
+"user's grandmother's name day") get handled gracefully without
+needing a hardcoded category list.
+
+The judgment result caches for that day only; the next morning
+re-judges fresh because the underlying facts may have changed
+(new reminder added, fact deprecated, etc.). No mid-day re-fires:
+if morning_open missed (user offline, late wake past the cache
+window), the date is silently skipped that day rather than firing
+"oh by the way, today *was* your birthday" awkwardly late.
+
+**Cold-start and fallback.** New conversations without a learned
+`quiet_end` use the bootstrap default (07:00 — Q1+Q2) so the
+detector runs at ~06:00. If the user wakes before the judgment
+call has completed (genuinely earlier than learned wake), the
+morning_open render fires without noteworthy enrichment for that
+day — the detector never blocks rhythm. The judgment will be
+ready for the next morning.
+
+**Render integration.** Detected dates feed `morning_open`'s
+prompt as named structured input (`noteworthy_today`,
+`noteworthy_upcoming`), each tagged with the wheel position from
+the pre-wake judgment plus channel confidence (`hard|soft`). The
+renderer is told to weave them into the greeting, not append as a
+list — and to let *all* items pass through one composition rather
+than picking one (collisions render naturally, e.g. "today's a
+big one — Sara's birthday and your presentation"). Items with
+intensity below the floor never reach the renderer. Pure
+morning_open without dates still works — date input is optional
+context, not required.
+
+**Anchors:** lookahead = `3 workdays` (derived constant in code,
+not env var). Detector cadence = once per `morning_open`. No new
+env vars.
 
 ### 4. Dialogue detection
 
