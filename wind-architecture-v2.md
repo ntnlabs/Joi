@@ -974,10 +974,17 @@ These need answers before plan #1 is written:
          another productive angle worth digging? If yes, build
          the next query and loop. If no, finalize.
 
-      Iteration is capped (≈3-5 rounds, derived in implementation,
-      not env-var) to bound the loop. The per-iteration LLM call
-      is cheap and fires only on messages that passed stage 1, so
-      the per-message-cost story holds.
+      Iteration is capped at **7 rounds**, derived from Miller's
+      7±2 working-memory bound: a spark requiring more than ~7
+      supporting facts is structurally a sprawling chain rather
+      than a tight surprising connection, and won't form spark-good
+      output anyway. The cap doubles as both **cost ceiling** (loop
+      bound) and **quality ceiling** (if you can't sketch the
+      connection in ~7 facts, it's not spark material). Stays a
+      code constant — anchored to a human-cognition fact, not an
+      env-var. The per-iteration LLM call is cheap and fires only
+      on messages that passed stage 1, so the per-message-cost
+      story holds.
 
       **Stage 2's external contract is unchanged: only "no
       supporting depth, abandon" or "maybe, here is the
@@ -993,6 +1000,24 @@ These need answers before plan #1 is written:
       would over-engineer this pipeline; if stage 3 can't decide
       from the bundle, it discards). This is the *only* stage
       where a positive spark-good verdict can issue.
+    - **No rejected-candidate dedup, by design.** A natural
+      thought is to cache rejections so a sticky false positive in
+      first memory doesn't burn the pipeline every message. Worth
+      explicitly *not* doing: spark-worthiness depends on evidence
+      state, which evolves continuously (new facts, new messages,
+      recap rotation). A "no" at query 1 can legitimately become a
+      "maybe" at query 10 as new context accumulates — any dedup
+      mechanism robust enough to handle that drift becomes
+      complex enough to defeat its own purpose (TTLs, invalidation
+      triggers, freshness budgets — each adds a knob v2 doesn't
+      want). Instead, rely on stage gating + the iteration cap as
+      the cost ceiling. Worst case for a sticky false positive is
+      stages 1+2 (capped) every message until the trigger context
+      ages out of first memory — bounded by design, and the moment
+      new context arrives that turns "no" into "maybe", the
+      pipeline catches it naturally with no invalidation logic.
+      Revisit only if real-world deployment data shows the cost is
+      genuinely too high; don't pre-optimise.
     - **Steady-state cost.** Most messages stop at stage 1 (one
       cheap call). Spark-rich messages get the full pipeline. All
       stages run post-reply, so the user never waits on any of it.
