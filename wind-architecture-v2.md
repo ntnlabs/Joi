@@ -951,25 +951,48 @@ These need answers before plan #1 is written:
       just yes/no — it produces the query that drives stage 2.
       Cost: one wasted call per uneventful message, in the
       background, user never knows.
-    - **Stage 2 — targeted vector enrichment (only if stage 1
-      flagged something).** Vector searches over `user_facts`,
-      `memory/hybrid.py` retrieval, and deeper history,
-      *parameterised by stage 1's flag* — searches dig
-      specifically for supporting evidence about the candidate
-      connection (related facts, past joint mentions, contextual
-      depth). Spark is not topic: topics are retrospective and
-      supported-by-definition; sparks are prospective and must be
-      *built up* with evidence to earn the maybe. **Stage 2's only
-      outputs are "no supporting depth, abandon" or "maybe, here
-      is the evidence bundle" — it never says yes.** Stage 2 is
-      data-gathering, not judgment; the commit decision belongs
-      to stage 3.
+    - **Stage 2 — targeted vector enrichment with internal
+      follow-the-leads loop (only if stage 1 flagged something).**
+      Vector searches over `user_facts`, `memory/hybrid.py`
+      retrieval, and deeper history, *parameterised by stage 1's
+      flag* — searches dig specifically for supporting evidence
+      about the candidate connection (related facts, past joint
+      mentions, contextual depth). Spark is not topic: topics are
+      retrospective and supported-by-definition; sparks are
+      prospective and must be *built up* with evidence to earn
+      the maybe.
+
+      **Stage 2 iterates internally.** One round of vector search
+      rarely surfaces everything relevant — a pull about "aunt
+      Margaret + recipe" might reveal "she runs a catering
+      business in Bratislava", which opens a new angle (cooking?
+      Bratislava? professional life?) that the original query
+      never would have hit. Each iteration:
+
+      1. Run vector search(es) against the current query.
+      2. Small LLM call: given everything found so far, is there
+         another productive angle worth digging? If yes, build
+         the next query and loop. If no, finalize.
+
+      Iteration is capped (≈3-5 rounds, derived in implementation,
+      not env-var) to bound the loop. The per-iteration LLM call
+      is cheap and fires only on messages that passed stage 1, so
+      the per-message-cost story holds.
+
+      **Stage 2's external contract is unchanged: only "no
+      supporting depth, abandon" or "maybe, here is the
+      consolidated evidence bundle".** It never says yes. The
+      loop is internal; stage 3 sees one bundle, not the
+      iteration history.
     - **Stage 3 — final compose/judge (only if stage 2 says
       maybe).** Final LLM call receives the original stage 1 flag
-      + the stage 2 evidence bundle. Composes the spark phrasing
-      and decides whether to commit to the buffer or discard. This
-      is the *only* stage where a positive spark-good verdict can
-      issue.
+      + the stage 2 consolidated bundle. Composes the spark
+      phrasing and decides whether to commit to the buffer or
+      discard. **Stage 3 is final-decision-only — no bounce-back
+      to stage 2 for more enrichment** (a second loop boundary
+      would over-engineer this pipeline; if stage 3 can't decide
+      from the bundle, it discards). This is the *only* stage
+      where a positive spark-good verdict can issue.
     - **Steady-state cost.** Most messages stop at stage 1 (one
       cheap call). Spark-rich messages get the full pipeline. All
       stages run post-reply, so the user never waits on any of it.
