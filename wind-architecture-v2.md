@@ -949,11 +949,15 @@ These need answers before plan #1 is written:
       Vector searches over `user_facts` and history to gather
       supporting evidence for the candidate connection (related
       facts, past joint mentions, contextual depth). Existing
-      `memory/hybrid.py` retrieval is the substrate.
-    - **Stage 3 — final compose/judge (only if stage 2 yields
-      enough).** Final LLM call composes the spark phrasing and
+      `memory/hybrid.py` retrieval is the substrate. **Stage 2's
+      only outputs are "no, abandon" or "maybe, pass to stage 3" —
+      it never says yes.** Stage 2 is data-gathering, not
+      judgment; the commit decision belongs to stage 3.
+    - **Stage 3 — final compose/judge (only if stage 2 says
+      maybe).** Final LLM call composes the spark phrasing and
       decides whether to commit to the buffer or discard. This is
-      where the spark-good bar is enforced.
+      the *only* stage where a positive spark-good verdict can
+      issue.
     - **Steady-state cost.** Most messages stop at stage 1 (one
       cheap call). Spark-rich messages get the full pipeline. All
       stages run post-reply, so the user never waits on any of it.
