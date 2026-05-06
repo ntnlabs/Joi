@@ -519,13 +519,21 @@ Examples of how the wheel reading collapses across cases:
 | Wife's birthday | joy, high (`ecstasy` ring) | Celebratory warmth |
 | User's exam tomorrow | anticipation, mid | "You've got this" support |
 | Father's death anniversary | sadness, high | Gentle acknowledgement |
-| Routine dentist appointment | neutral, low | Skipped (below intensity floor) |
+| Routine dentist appointment | neutral, low | Brief, matter-of-fact note ("dentist at 3 today, btw") |
 | Divorce anniversary | sadness/disgust mix, mid | Quiet "thinking of you" |
 | Sober milestone | joy + trust, high | Warm congratulation |
 
-**`skip` falls out automatically** — low-intensity readings don't
-surface. The intensity floor reuses the per-intent rim concept
-from Q7 (no new tunable). Heavy/somber/celebratory shapes are not
+**Storage is the editorial gate, not intensity.** If a date got
+saved — explicitly by the user (reminder) or extracted by the
+facts pipeline — someone already judged it worth keeping. The
+detector does not second-guess that with an intensity floor.
+Every dated item that matches today or the pre-mention window
+reaches the renderer. The wheel reading controls *tone*, not
+*whether to mention*: high-intensity items get warmth or weight,
+low-intensity items get a brief mention. This also closes a
+failure mode where mis-judged intensity (e.g. "exam" read as
+anticipation/low) would silently drop a date the user expected
+Joi to know about. Heavy/somber/celebratory shapes are not
 categories the system enforces; they emerge from the renderer
 reading high-intensity sadness, joy, anticipation, etc. in
 context.
@@ -559,10 +567,11 @@ the pre-wake judgment plus channel confidence (`hard|soft`). The
 renderer is told to weave them into the greeting, not append as a
 list — and to let *all* items pass through one composition rather
 than picking one (collisions render naturally, e.g. "today's a
-big one — Sara's birthday and your presentation"). Items with
-intensity below the floor never reach the renderer. Pure
-morning_open without dates still works — date input is optional
-context, not required.
+big one — Sara's birthday and your presentation"). Low-intensity
+items still surface but as brief, matter-of-fact mentions; the
+intensity controls weight in the composition, not membership in
+it. Pure morning_open without dates still works — date input is
+optional context, not required.
 
 **Anchors:** lookahead = `3 workdays` (derived constant in code,
 not env var). Detector cadence = once per `morning_open`. No new
