@@ -937,26 +937,38 @@ These need answers before plan #1 is written:
       ago can produce a candidate by the next spark opportunity).
       Post-reply execution keeps it out-of-pipeline — user latency
       is never affected (Q9 principle).
-    - **Scope.** Full current-conversation context + the last 3-5
-      conversation recaps (compacted summaries from
-      `memory/consolidation.py`). Wide enough to catch
-      cross-session connections, bounded enough to stay tractable.
-    - **Stage 1 — cheap gate.** Single LLM call: query + available
-      context → "does anything here look like a spark?" If no,
-      abort. Cost: one wasted call per uneventful message, in the
+    - **Scope split.** Stage 1 reads "first memory" — current
+      conversation context + the last 3-5 conversation recaps
+      (compacted summaries from `memory/consolidation.py`). Stage 2
+      reaches deeper — into the `user_facts` archive, vector store,
+      and older history beyond what's in active context. The split
+      keeps stage 1 cheap and stage 2 targeted.
+    - **Stage 1 — cheap gate, identifies what's special.** Single
+      LLM call: query + first-memory context → either "nothing
+      here, abort" OR a flagged candidate (e.g. "user just mentioned
+      aunt Margaret + earlier they mentioned a recipe — might
+      connect"). Stage 1's output is *what to investigate*, not
+      just yes/no — it produces the query that drives stage 2.
+      Cost: one wasted call per uneventful message, in the
       background, user never knows.
-    - **Stage 2 — vector enrichment (only if stage 1 says yes).**
-      Vector searches over `user_facts` and history to gather
-      supporting evidence for the candidate connection (related
-      facts, past joint mentions, contextual depth). Existing
-      `memory/hybrid.py` retrieval is the substrate. **Stage 2's
-      only outputs are "no, abandon" or "maybe, pass to stage 3" —
-      it never says yes.** Stage 2 is data-gathering, not
-      judgment; the commit decision belongs to stage 3.
+    - **Stage 2 — targeted vector enrichment (only if stage 1
+      flagged something).** Vector searches over `user_facts`,
+      `memory/hybrid.py` retrieval, and deeper history,
+      *parameterised by stage 1's flag* — searches dig
+      specifically for supporting evidence about the candidate
+      connection (related facts, past joint mentions, contextual
+      depth). Spark is not topic: topics are retrospective and
+      supported-by-definition; sparks are prospective and must be
+      *built up* with evidence to earn the maybe. **Stage 2's only
+      outputs are "no supporting depth, abandon" or "maybe, here
+      is the evidence bundle" — it never says yes.** Stage 2 is
+      data-gathering, not judgment; the commit decision belongs
+      to stage 3.
     - **Stage 3 — final compose/judge (only if stage 2 says
-      maybe).** Final LLM call composes the spark phrasing and
-      decides whether to commit to the buffer or discard. This is
-      the *only* stage where a positive spark-good verdict can
+      maybe).** Final LLM call receives the original stage 1 flag
+      + the stage 2 evidence bundle. Composes the spark phrasing
+      and decides whether to commit to the buffer or discard. This
+      is the *only* stage where a positive spark-good verdict can
       issue.
     - **Steady-state cost.** Most messages stop at stage 1 (one
       cheap call). Spark-rich messages get the full pipeline. All
