@@ -153,8 +153,8 @@ def validate_summary(summary: str) -> tuple[bool, str]:
     if not summary or len(summary) < 10:
         return False, ""
 
-    if len(summary) > 2000:
-        summary = summary[:2000]
+    if len(summary) > 6000:
+        summary = summary[:6000]
 
     # Check for suspicious patterns (injection attempts)
     suspicious_patterns = [
