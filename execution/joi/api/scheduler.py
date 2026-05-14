@@ -759,11 +759,30 @@ class Scheduler:
             last_proactive_sent_at=now,
             last_outbound_at=now,
         )
+        if success:
+            self._ack_snooze_resume(conversation_id)
+
         logger.info("Wake-up proactive sent", extra={
             "conversation_id": conversation_id,
             "action": "wakeup_proactive_done",
             "success": success,
         })
+
+    def _ack_snooze_resume(self, conversation_id: str) -> None:
+        """Clear the pending shh-resume flag after a successful proactive send.
+
+        Safe to call unconditionally on every successful proactive send. If the
+        flag was True at generation time, the resume notice was injected into
+        the proactive message (server.py: _generate_proactive_message); calling
+        this after a successful mesh send marks the notice as delivered.
+        If the flag was already False, this is a no-op write.
+
+        See plan: /home/peter/.claude/plans/cryptic-inventing-pnueli.md (Task 4).
+        """
+        self._wind_orchestrator.state_manager.update_state(
+            conversation_id,
+            wind_snooze_resume_pending=False,
+        )
 
     def _run_global_daily_tasks(self, now: datetime) -> None:
         """Run global daily maintenance tasks (once per calendar day, in-memory gate)."""
@@ -941,6 +960,9 @@ class Scheduler:
                         threshold_offset=threshold_offset,
                         threshold=threshold,
                     )
+
+                    # Acknowledge any pending shh-resume notice (delivered by Task 3 injection).
+                    self._ack_snooze_resume(conv_id)
                 else:
                     logger.error("Wind: failed to send", extra={"conversation_id": conv_id})
 

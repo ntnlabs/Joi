@@ -324,7 +324,10 @@ CREATE TABLE IF NOT EXISTS wind_state (
     -- Wake-up procedure tracking (v16)
     last_wakeup_at TEXT DEFAULT NULL,
     -- Wake-up proactive scheduled send time (v17)
-    wakeup_send_at TEXT DEFAULT NULL
+    wakeup_send_at TEXT DEFAULT NULL,
+    -- Wind shh awareness (v21): when shh was issued + whether resume notice still owed
+    wind_snooze_set_at TEXT DEFAULT NULL,
+    wind_snooze_resume_pending INTEGER DEFAULT 0
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -1171,6 +1174,19 @@ class MemoryStore:
             logger.info("Migration v20: Adding 'translated_text' column to messages")
             conn.execute("ALTER TABLE messages ADD COLUMN translated_text TEXT")
             conn.commit()
+
+        # Migration v21: track when wind snooze was set + whether resume is unacknowledged
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='wind_state'")
+        if cursor.fetchone():
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+            if "wind_snooze_set_at" not in cols:
+                logger.info("Migration v21: Adding 'wind_snooze_set_at' column to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN wind_snooze_set_at TEXT DEFAULT NULL")
+                conn.commit()
+            if "wind_snooze_resume_pending" not in cols:
+                logger.info("Migration v21: Adding 'wind_snooze_resume_pending' column to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN wind_snooze_resume_pending INTEGER DEFAULT 0")
+                conn.commit()
 
         # ============================================================
         # Schema v14 -> v15: Search Rework (hybrid vec + FTS retrieval)

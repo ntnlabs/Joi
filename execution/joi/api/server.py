@@ -2060,6 +2060,27 @@ def receive_message(msg: InboundMessage):
                 f"\n\nNote: A reminder was just successfully set: \"{r_title}\" due in {r_label}."
             )
 
+        # Wind shh awareness: if user is messaging during an active quiet window,
+        # inject a notice — they broke their own quiet, treat as worth that breach.
+        # `_ws` is in scope from earlier (used in _build_enriched_prompt above).
+        _now = datetime.now(timezone.utc)
+        if (
+            not reminder_result
+            and msg.conversation.type == "direct"
+            and _ws
+            and _ws.wind_snooze_until
+            and _ws.wind_snooze_until > _now
+        ):
+            _tz = _get_tz(msg.conversation.id)
+            _until_local = _ws.wind_snooze_until.astimezone(_tz)
+            _remaining_min = max(1, int((_ws.wind_snooze_until - _now).total_seconds() / 60))
+            _remaining_label = _format_duration_label(_remaining_min)
+            enriched_prompt = (enriched_prompt or "") + (
+                f"\n\nThe user asked you to be quiet until {_until_local.strftime('%H:%M')} "
+                f"({_remaining_label} remaining), but they have messaged you anyway. "
+                "Treat this as something they thought worth breaking the silence for."
+            )
+
         # Reminder list / agenda-set: both gated by _REMINDER_LIST_TRIGGER.
         # Agenda-set check runs first; list-query is the fallback.
         if not reminder_result and msg.conversation.type == "direct" and user_text:
@@ -2311,6 +2332,44 @@ def _generate_proactive_message(
             )
     if facts_ctx:
         system_parts.append(f"\n\n{facts_ctx}")
+
+    # Wind shh awareness: if there's an unacknowledged resume (natural OR manual),
+    # inject a one-shot notice into the system prompt. Wind generation does NOT
+    # include conversation history (see comment near top of this function), so this
+    # is the only path by which Joi can know shh happened.
+    _now = datetime.now(timezone.utc)
+    _quiet_ended = _ws and _ws.wind_snooze_resume_pending and (
+        _ws.wind_snooze_until is None         # manual clear ("wind resumed")
+        or _ws.wind_snooze_until < _now        # natural expiry
+    )
+    if _quiet_ended:
+        _tz = _get_tz(conversation_id)
+        _set_at_local = _ws.wind_snooze_set_at.astimezone(_tz) if _ws.wind_snooze_set_at else None
+        _set_at_str = _set_at_local.strftime("%H:%M") if _set_at_local else "earlier"
+        if _ws.wind_snooze_until is None:
+            _notice = (
+                f"\n\nThe user asked you to be quiet at {_set_at_str}, then later "
+                "explicitly told you to resume — this is your first message back."
+            )
+        else:
+            _quiet_duration_min = (
+                int((_ws.wind_snooze_until - _ws.wind_snooze_set_at).total_seconds() / 60)
+                if _ws.wind_snooze_set_at else None
+            )
+            _duration_label = (
+                _format_duration_label(_quiet_duration_min)
+                if _quiet_duration_min else "a while"
+            )
+            _minutes_ago = max(1, int((_now - _ws.wind_snooze_until).total_seconds() / 60))
+            _notice = (
+                f"\n\nThe user asked you to be quiet for {_duration_label} at {_set_at_str}. "
+                f"That window ended {_minutes_ago} minute(s) ago — this is your first "
+                "message to them since."
+            )
+        system_parts.append(_notice)
+        # Pending flag is cleared in the scheduler after a successful send (see
+        # _ack_snooze_resume) so an LLM/send failure preserves the pending state.
+
     system_prompt = "".join(system_parts)
 
     # Proactive declaration (apply to all Wind messages)

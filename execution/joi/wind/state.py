@@ -53,6 +53,8 @@ class WindState:
     proactive_fire_times: List[datetime] = field(default_factory=list)
     unanswered_proactive_count: int = 0
     wind_snooze_until: Optional[datetime] = None
+    wind_snooze_set_at: Optional[datetime] = None     # When the most recent shh was issued
+    wind_snooze_resume_pending: bool = False          # True while Wind owes Joi a "back from quiet" notice
     updated_at: Optional[datetime] = None
     # WindMood: threshold drift and accumulator
     threshold_offset: Optional[float] = None  # NULL = use baseline from config
@@ -137,6 +139,7 @@ class WindStateManager:
             SELECT conversation_id, last_user_interaction_at, last_outbound_at,
                    last_proactive_sent_at, last_impulse_check_at,
                    unanswered_proactive_count, wind_snooze_until,
+                   wind_snooze_set_at, wind_snooze_resume_pending,
                    updated_at, threshold_offset, accumulated_impulse,
                    engagement_score, total_proactives_sent, total_engaged,
                    total_ignored, total_deflected, last_engaged_at, last_deflected_at,
@@ -173,6 +176,8 @@ class WindStateManager:
             last_impulse_check_at=_parse_datetime(row["last_impulse_check_at"]),
             unanswered_proactive_count=row["unanswered_proactive_count"] or 0,
             wind_snooze_until=_parse_datetime(row["wind_snooze_until"]),
+            wind_snooze_set_at=_parse_datetime(row["wind_snooze_set_at"]),
+            wind_snooze_resume_pending=bool(row["wind_snooze_resume_pending"]),
             updated_at=_parse_datetime(row["updated_at"]),
             threshold_offset=row["threshold_offset"],  # NULL preserved as None
             accumulated_impulse=row["accumulated_impulse"] or 0.0,
@@ -232,7 +237,8 @@ class WindStateManager:
     _VALID_STATE_COLUMNS = frozenset({
         "last_user_interaction_at", "last_outbound_at", "last_proactive_sent_at",
         "last_impulse_check_at",
-        "unanswered_proactive_count", "wind_snooze_until", "updated_at",
+        "unanswered_proactive_count", "wind_snooze_until",
+        "wind_snooze_set_at", "wind_snooze_resume_pending", "updated_at",
         "threshold_offset", "accumulated_impulse",
         "engagement_score", "total_proactives_sent", "total_engaged",
         "total_ignored", "total_deflected", "last_engaged_at", "last_deflected_at",
@@ -421,22 +427,40 @@ class WindStateManager:
     def set_snooze(self, conversation_id: str, until: datetime) -> None:
         """
         Snooze Wind for a conversation until specified time.
+
+        Also stamps `wind_snooze_set_at` (for the resume notice anchor)
+        and sets `wind_snooze_resume_pending=True` so the next Wind fire
+        after the window ends knows to inject the "first message back" notice.
         """
         self.update_state(
             conversation_id,
             wind_snooze_until=until,
+            wind_snooze_set_at=datetime.now(timezone.utc),
+            wind_snooze_resume_pending=True,
         )
         logger.info("Snoozed Wind", extra={"conversation_id": conversation_id, "until": str(until)})
 
     def clear_snooze(self, conversation_id: str) -> None:
         """
         Clear Wind snooze for a conversation.
+
+        If a snooze was actually active (in the future), also sets
+        `wind_snooze_resume_pending=True` so the next Wind fire injects
+        the manual-clear variant of the resume notice. If no snooze was
+        active, just clears `wind_snooze_until` without touching the
+        pending flag (avoids confusing notices on stray "wind resumed"
+        commands with no prior shh).
         """
-        self.update_state(
-            conversation_id,
-            wind_snooze_until=None,
+        state = self.get_state(conversation_id)
+        had_active = bool(
+            state and state.wind_snooze_until
+            and state.wind_snooze_until > datetime.now(timezone.utc)
         )
-        logger.debug("Cleared Wind snooze", extra={"conversation_id": conversation_id})
+        updates: dict = {"wind_snooze_until": None}
+        if had_active:
+            updates["wind_snooze_resume_pending"] = True
+        self.update_state(conversation_id, **updates)
+        logger.debug("Cleared Wind snooze", extra={"conversation_id": conversation_id, "had_active": had_active})
 
     def get_all_conversation_ids(self) -> list[str]:
         """
