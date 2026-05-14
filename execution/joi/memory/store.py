@@ -327,7 +327,9 @@ CREATE TABLE IF NOT EXISTS wind_state (
     wakeup_send_at TEXT DEFAULT NULL,
     -- Wind shh awareness (v21): when shh was issued + whether resume notice still owed
     wind_snooze_set_at TEXT DEFAULT NULL,
-    wind_snooze_resume_pending INTEGER DEFAULT 0
+    wind_snooze_resume_pending INTEGER DEFAULT 0,
+    -- First-of-day Wind tracking (v22)
+    morning_message_sent INTEGER DEFAULT 0
 );
 
 -- Pending topics table (topic queue for Wind)
@@ -1186,6 +1188,15 @@ class MemoryStore:
             if "wind_snooze_resume_pending" not in cols:
                 logger.info("Migration v21: Adding 'wind_snooze_resume_pending' column to wind_state table")
                 conn.execute("ALTER TABLE wind_state ADD COLUMN wind_snooze_resume_pending INTEGER DEFAULT 0")
+                conn.commit()
+
+        # Migration v22: per-conversation calendar-day flag for first-of-day Wind framing
+        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='wind_state'")
+        if cursor.fetchone():
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(wind_state)")}
+            if "morning_message_sent" not in cols:
+                logger.info("Migration v22: Adding 'morning_message_sent' column to wind_state table")
+                conn.execute("ALTER TABLE wind_state ADD COLUMN morning_message_sent INTEGER DEFAULT 0")
                 conn.commit()
 
         # ============================================================

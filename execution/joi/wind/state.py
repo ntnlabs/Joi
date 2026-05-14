@@ -84,6 +84,7 @@ class WindState:
     last_daily_tasks_at: Optional[datetime] = None  # When end-of-day tasks last ran
     last_wakeup_at: Optional[datetime] = None        # When wake-up procedure last ran
     wakeup_send_at: Optional[datetime] = None        # Scheduled proactive re-engagement send time
+    morning_message_sent: bool = False               # Day's first-of-day Wind already fired (per local calendar day)
 
 
 from .utils import _parse_datetime, _format_datetime
@@ -150,7 +151,8 @@ class WindStateManager:
                    learned_quiet_start_minutes,
                    last_daily_tasks_at,
                    last_wakeup_at,
-                   wakeup_send_at
+                   wakeup_send_at,
+                   morning_message_sent
             FROM wind_state
             WHERE conversation_id = ?
             """,
@@ -201,6 +203,7 @@ class WindStateManager:
             last_daily_tasks_at=_parse_datetime(row["last_daily_tasks_at"]),
             last_wakeup_at=_parse_datetime(row["last_wakeup_at"]),
             wakeup_send_at=_parse_datetime(row["wakeup_send_at"]),
+            morning_message_sent=bool(row["morning_message_sent"]),
         )
 
     def get_or_create_state(self, conversation_id: str) -> WindState:
@@ -250,6 +253,7 @@ class WindStateManager:
         "last_daily_tasks_at",
         "last_wakeup_at",
         "wakeup_send_at",
+        "morning_message_sent",
     })
 
     def update_state(self, conversation_id: str, **updates) -> None:

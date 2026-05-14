@@ -2373,11 +2373,24 @@ def _generate_proactive_message(
     system_prompt = "".join(system_parts)
 
     # Proactive declaration (apply to all Wind messages)
-    _cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    _first_of_day = (
-        _ws is not None
-        and not any(t > _cutoff for t in _ws.proactive_fire_times)
-        and not (_ws.last_proactive_sent_at and _ws.last_proactive_sent_at > _cutoff)
+    # `_first_of_day` is True if today's first-of-day Wind hasn't fired yet.
+    # The flag is set after a successful proactive send (scheduler.py) and reset
+    # at end-of-day (scheduler._run_daily_tasks_for). Belt-and-suspenders: if
+    # end-of-day didn't fire (irregular schedule), also treat the flag as False
+    # when the last proactive was on a different local calendar date.
+    _tz_for_check = _get_tz(conversation_id)
+    _now_local = datetime.now(_tz_for_check)
+    _last_proactive_local = (
+        _ws.last_proactive_sent_at.astimezone(_tz_for_check)
+        if _ws and _ws.last_proactive_sent_at else None
+    )
+    _different_calendar_day = (
+        _last_proactive_local is None
+        or _last_proactive_local.date() != _now_local.date()
+    )
+    _first_of_day = _ws is not None and (
+        not _ws.morning_message_sent
+        or _different_calendar_day  # auto-reset: end-of-day must have missed
     )
     if _first_of_day:
         system_prompt = (

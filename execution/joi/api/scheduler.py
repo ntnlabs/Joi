@@ -519,7 +519,9 @@ class Scheduler:
                     "conversation_id": conversation_id, "error": str(e),
                 })
         self._wind_orchestrator.state_manager.update_state(
-            conversation_id, last_daily_tasks_at=now
+            conversation_id,
+            last_daily_tasks_at=now,
+            morning_message_sent=False,
         )
         logger.info("End-of-day tasks complete", extra={
             "conversation_id": conversation_id,
@@ -761,6 +763,10 @@ class Scheduler:
         )
         if success:
             self._ack_snooze_resume(conversation_id)
+            self._wind_orchestrator.state_manager.update_state(
+                conversation_id,
+                morning_message_sent=True,
+            )
 
         logger.info("Wake-up proactive sent", extra={
             "conversation_id": conversation_id,
@@ -963,6 +969,13 @@ class Scheduler:
 
                     # Acknowledge any pending shh-resume notice (delivered by Task 3 injection).
                     self._ack_snooze_resume(conv_id)
+
+                    # Mark this calendar day's first-of-day Wind as used; the read-side
+                    # auto-resets across calendar days, end-of-day reset clears within day.
+                    self._wind_orchestrator.state_manager.update_state(
+                        conv_id,
+                        morning_message_sent=True,
+                    )
                 else:
                     logger.error("Wind: failed to send", extra={"conversation_id": conv_id})
 
