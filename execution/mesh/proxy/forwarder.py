@@ -77,7 +77,7 @@ def _get_client() -> httpx.Client:
     if _client is None:
         with _client_lock:
             if _client is None:
-                timeout = float(os.getenv("MESH_FORWARD_TIMEOUT", "150"))
+                timeout = float(os.getenv("MESH_FORWARD_TIMEOUT", "330"))
                 _client = httpx.Client(timeout=timeout)
     return _client
 
