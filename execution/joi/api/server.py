@@ -260,7 +260,7 @@ def _get_valid_hmac_secrets() -> list[bytes]:
     return []
 
 # Initialize Ollama client
-LLM_TIMEOUT = float(os.getenv("JOI_LLM_TIMEOUT", "300"))
+LLM_TIMEOUT = float(os.getenv("JOI_LLM_TIMEOUT", "250"))
 LLM_KEEP_ALIVE = os.getenv("JOI_LLM_KEEP_ALIVE", "30m")
 TRANSLATE_MODEL_PREFIX = os.getenv("JOI_TRANSLATE_MODEL_PREFIX", "translategemma")
 llm = OllamaClient(
