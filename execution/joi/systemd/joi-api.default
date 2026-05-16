@@ -30,7 +30,7 @@ JOI_SIGNAL_FORMAT_ENABLED=1
 # --- LLM ---
 JOI_OLLAMA_URL=http://localhost:11434
 JOI_OLLAMA_MODEL=llama3
-JOI_LLM_TIMEOUT=180
+JOI_LLM_TIMEOUT=300
 # How long to keep model loaded in VRAM after request (e.g., 30m, 1h, 0 to unload immediately)
 JOI_LLM_KEEP_ALIVE=30m
 # Context window size - prefer setting this in Modelfile (PARAMETER num_ctx)
