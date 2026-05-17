@@ -782,6 +782,57 @@ existing topic priority / heat scales. No new env vars.
 
 ---
 
+## Known v1 gaps to address in v2
+
+### Failed proactive sends are silent
+
+When a Wind send fails (mesh 500, Ollama down, generation timeout,
+etc.), v1 handles the topic-state side **correctly** but is otherwise
+**deaf** to the failure. Confirmed by tracing `scheduler.py` impulse
+loop's `else:` branch on `if success:` — it logs `Wind: failed to
+send` and moves on, calling none of:
+
+- `record_proactive_sent` (so topic stays `pending`, `unanswered_proactive_count` not bumped, no message_id registered)
+- `topic_manager.mark_sent` (so engagement classifier never sees this topic as "needing tracking")
+- `decision_logger.log_decision` (so the decision log has no record of a "tried but failed" event)
+
+That part is right — the topic isn't falsely penalised, the engagement
+classifier doesn't pollute its learning with phantom "ignored"
+events, and the topic can be re-fired on the next impulse pass.
+
+But three things are missing and matter for v2:
+
+1. **No outbound retry queue.** The generated message text is lost
+   the moment send fails. If generation was expensive (~60-90s on
+   slow hardware) we burnt LLM compute and have nothing to show for
+   it. v2 should buffer the rendered message and retry with a small
+   backoff, dropping only if retries are exhausted.
+2. **No Joi-side context awareness.** When the next attempt
+   eventually succeeds (could be hours later), it's a fresh first
+   attempt from Joi's perspective. No injection of *"this is the Nth
+   try, the previous attempts didn't land"* into the renderer. If a
+   topic genuinely matters, repeating attempts without acknowledging
+   them risks tonal weirdness (or repeated near-duplicate messages
+   across long outages). v2 should expose failed-attempt history to
+   the renderer for the same intent, in the situation report.
+3. **No operator visibility.** Only signal of failure is one log
+   line. No counter, no admin command, no aggregated metric. v2
+   should surface "N proactive sends failed in last 24h, topics
+   affected: ..." in the same place daily-tasks results land.
+
+Connects to the sitrep concept — failed-send history is one more
+signal the renderer's anchor block could carry: *"You've tried to
+mention this topic 3 times in the last 6 hours; previous attempts
+didn't reach the user. This is a fresh attempt, treat with care
+about repetition."*
+
+Not urgent — the topic-state correctness means v1 doesn't break in
+practice, just loses messages occasionally during infra blips. But
+worth solving as part of v2's general "Joi knows what's happening
+around her" theme.
+
+---
+
 ## Decomposition / sequencing
 
 This is too large for one plan. Proposed split, each shipped and
