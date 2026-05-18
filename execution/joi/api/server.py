@@ -2370,9 +2370,9 @@ def _generate_proactive_message(
         # Pending flag is cleared in the scheduler after a successful send (see
         # _ack_snooze_resume) so an LLM/send failure preserves the pending state.
 
-    system_prompt = "".join(system_parts)
-
-    # Proactive declaration (apply to all Wind messages)
+    # Compute _first_of_day BEFORE the system_prompt join so the same flag gates
+    # both the evening context block (added to system_parts below) and the warm
+    # prefix that prepends to system_prompt after the join.
     # `_first_of_day` is True if today's first-of-day Wind hasn't fired yet.
     # The flag is set after a successful proactive send (scheduler.py) and reset
     # at end-of-day (scheduler._run_daily_tasks_for). Belt-and-suspenders: if
@@ -2392,6 +2392,52 @@ def _generate_proactive_message(
         not _ws.morning_message_sent
         or _different_calendar_day  # auto-reset: end-of-day must have missed
     )
+
+    # Evening context: morning message gets the last 4 messages from the past 24h
+    # so Joi can wake the user with awareness of last night's thread. Skips wakeup
+    # (long silence = no meaningful evening). include_archived=True is critical —
+    # _compact_before_wind has already run and flipped archived=1 on these rows.
+    if _first_of_day and topic_type != "wakeup":
+        _since_ts_ms = int((datetime.now(timezone.utc) - timedelta(hours=24)).timestamp() * 1000)
+        _evening_msgs = memory.get_recent_messages(
+            limit=4,
+            conversation_id=conversation_id,
+            since_ts=_since_ts_ms,
+            include_archived=True,
+        )
+        if _evening_msgs:
+            # _STORAGE_PREFIXES covers JOI-WIND + JOI-REMINDER; wakeup outbounds
+            # use [JOI-WAKEUP] (scheduler.py) so strip that locally too without
+            # modifying the global tuple (other callers depend on its shape).
+            _strippable_prefixes = _STORAGE_PREFIXES + ("[JOI-WAKEUP] ",)
+            _lines = []
+            for _m in _evening_msgs:
+                _text = _m.content_text or ""
+                for _prefix in _strippable_prefixes:
+                    if _text.startswith(_prefix):
+                        _text = _text[len(_prefix):]
+                        break
+                _text = _text.strip()
+                if not _text:
+                    continue  # skip empty or whitespace-only entries
+                _label = "User" if _m.direction == "inbound" else "Joi"
+                _local_time = datetime.fromtimestamp(_m.timestamp / 1000, _tz_for_check)
+                _hhmm = _local_time.strftime("%H:%M")
+                _lines.append(f"  {_label} ({_hhmm}): {_text}")
+            if _lines:
+                _evening_block = (
+                    "\n\nRecent conversation from the past day (most recent last):\n"
+                    + "\n".join(_lines)
+                    + "\n\nThis is here as context for your morning greeting — "
+                      "feel free to reference it if a connection feels natural, but "
+                      "don't force it. You don't need to acknowledge every prior message."
+                )
+                system_parts.append(_evening_block)
+
+    system_prompt = "".join(system_parts)
+
+    # Proactive declaration (apply to all Wind messages) — uses _first_of_day
+    # computed above.
     if _first_of_day:
         system_prompt = (
             "You are reaching out on your own — this is not a reply to anything the user said. "

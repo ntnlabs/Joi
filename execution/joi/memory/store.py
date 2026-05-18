@@ -2156,6 +2156,7 @@ class MemoryStore:
         conversation_id: Optional[str] = None,
         content_type: str = "text",
         since_ts: Optional[int] = None,
+        include_archived: bool = False,
     ) -> List[Message]:
         """
         Get recent messages for LLM context.
@@ -2165,21 +2166,25 @@ class MemoryStore:
             conversation_id: Filter by conversation (optional)
             content_type: Filter by content type (default: text)
             since_ts: Only return messages with timestamp >= this value (ms, optional)
+            include_archived: If True, include messages marked archived=1
+                (compacted by consolidator). Default False preserves existing
+                caller behavior — they want only live messages.
 
         Returns:
             List of Message objects, oldest first (for context building)
         """
         conn = self._connect()
+        _archived_clause = "" if include_archived else "AND archived = 0"
 
         if conversation_id:
             if since_ts is not None:
                 cursor = conn.execute(
-                    """
+                    f"""
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
                            archived, sender_id, sender_name, translated_text
                     FROM messages
-                    WHERE content_type = ? AND conversation_id = ? AND archived = 0
+                    WHERE content_type = ? AND conversation_id = ? {_archived_clause}
                       AND timestamp >= ?
                     ORDER BY timestamp DESC
                     LIMIT ?
@@ -2188,12 +2193,12 @@ class MemoryStore:
                 )
             else:
                 cursor = conn.execute(
-                    """
+                    f"""
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
                            archived, sender_id, sender_name, translated_text
                     FROM messages
-                    WHERE content_type = ? AND conversation_id = ? AND archived = 0
+                    WHERE content_type = ? AND conversation_id = ? {_archived_clause}
                     ORDER BY timestamp DESC
                     LIMIT ?
                     """,
@@ -2202,12 +2207,12 @@ class MemoryStore:
         else:
             if since_ts is not None:
                 cursor = conn.execute(
-                    """
+                    f"""
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
                            archived, sender_id, sender_name, translated_text
                     FROM messages
-                    WHERE content_type = ? AND archived = 0
+                    WHERE content_type = ? {_archived_clause}
                       AND timestamp >= ?
                     ORDER BY timestamp DESC
                     LIMIT ?
@@ -2216,12 +2221,12 @@ class MemoryStore:
                 )
             else:
                 cursor = conn.execute(
-                    """
+                    f"""
                     SELECT id, message_id, direction, channel, content_type,
                            content_text, conversation_id, reply_to_id, timestamp, created_at,
                            archived, sender_id, sender_name, translated_text
                     FROM messages
-                    WHERE content_type = ? AND archived = 0
+                    WHERE content_type = ? {_archived_clause}
                     ORDER BY timestamp DESC
                     LIMIT ?
                     """,
