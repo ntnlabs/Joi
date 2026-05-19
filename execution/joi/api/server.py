@@ -2689,14 +2689,17 @@ def _translate_text(text: str, lang: str, direction: str) -> Optional[str]:
     return translated
 
 
+# Storage prefixes used by Wind/reminder scheduler — strip before sending to LLM.
+# Module-level so both _build_chat_messages and _generate_proactive_message
+# (evening context block) can reference the same list.
+_STORAGE_PREFIXES = ("[JOI-WIND] ", "[JOI-REMINDER] ")
+
+
 def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[str, str]]:
     """Convert stored messages to LLM chat format.
 
     For group conversations, includes sender name prefix so Joi knows who said what.
     """
-    # Storage prefixes used by Wind/reminder scheduler — strip before sending to LLM
-    _STORAGE_PREFIXES = ("[JOI-WIND] ", "[JOI-REMINDER] ")
-
     chat_messages = []
     for msg in messages:
         if msg.content_text:
