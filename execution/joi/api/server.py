@@ -2081,6 +2081,37 @@ def receive_message(msg: InboundMessage):
                 "Treat this as something they thought worth breaking the silence for."
             )
 
+        # Wind morning-already-greeted: if today's morning Wind has already fired
+        # (and the flag isn't stale from a prior day — verify by checking the last
+        # proactive was on TODAY's local calendar day), tell the LLM not to repeat
+        # the greeting. Prevents the double-good-morning pattern when user mirrors
+        # the morning Wind back. Reads the `morning_message_sent` flag set by the
+        # proactive path (one flag, two readers — same pattern as shh-awareness).
+        if (
+            msg.conversation.type == "direct"
+            and _ws
+            and _ws.morning_message_sent
+        ):
+            _tz_morn = _get_tz(msg.conversation.id)
+            _now_local_morn = datetime.now(_tz_morn)
+            _last_proactive_local_morn = (
+                _ws.last_proactive_sent_at.astimezone(_tz_morn)
+                if _ws.last_proactive_sent_at else None
+            )
+            # Belt-and-suspenders: only suppress if last proactive was actually today,
+            # not a stale flag from yesterday (mirrors the proactive path's auto-reset).
+            if (
+                _last_proactive_local_morn
+                and _last_proactive_local_morn.date() == _now_local_morn.date()
+            ):
+                enriched_prompt = (enriched_prompt or "") + (
+                    "\n\nYou already greeted the user this morning in your proactive "
+                    "message ('good morning' or similar morning greeting). Don't open "
+                    "this reply with another 'good morning' — they've already had "
+                    "today's morning greeting from you. Other time-of-day greetings "
+                    "(like 'good afternoon' later in the day) are fine."
+                )
+
         # Reminder list / agenda-set: both gated by _REMINDER_LIST_TRIGGER.
         # Agenda-set check runs first; list-query is the fallback.
         if not reminder_result and msg.conversation.type == "direct" and user_text:
