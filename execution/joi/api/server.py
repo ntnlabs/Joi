@@ -3022,7 +3022,7 @@ def _parse_timezone_with_llm(text: str) -> Optional[str]:
 
 def _handle_timezone_command(text: str, conversation_id: str) -> Optional[str]:
     """Return a confirmation string if text is a timezone command, else None."""
-    if len(text.split()) > 8:
+    if len(text.split()) > 12:
         return None
     if not _TIMEZONE_TRIGGER.search(text):
         return None
@@ -3074,7 +3074,7 @@ def _handle_timezone_command(text: str, conversation_id: str) -> Optional[str]:
 
 def _handle_wind_snooze_command(text: str, conversation_id: str) -> Optional[str]:
     """Return a confirmation string if text is a Wind snooze/clear command, else None."""
-    if len(text.split()) > 8:
+    if len(text.split()) > 12:
         return None
 
     if _SNOOZE_CLEAR.search(text):
@@ -3116,7 +3116,7 @@ def _handle_reminder_snooze_command(text: str, conversation_id: str) -> Optional
     Only matches if a reminder fired within JOI_REMINDER_SNOOZE_WINDOW_MINUTES (default 45m)
     — avoids stealing new reminder creation requests like "remind me in 1h".
     """
-    if len(text.split()) > 8:
+    if len(text.split()) > 12:
         return None
     if not _REMINDER_SNOOZE_TRIGGER.search(text):
         return None
