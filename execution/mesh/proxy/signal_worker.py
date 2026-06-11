@@ -1293,11 +1293,11 @@ def _normalize_signal_message(raw: Dict[str, Any], bot_account: str = "", bot_uu
         if exc_type == "UntrustedIdentityException":
             logger.warning("UNTRUSTED IDENTITY - run: signal-cli trust <uuid>", extra={
                 "exception_type": exc_type,
-                "message": exc_msg,
+                "exc_message": exc_msg,
                 "action": "untrusted_identity"
             })
         else:
-            logger.warning("Signal exception", extra={"exception_type": exc_type, "message": exc_msg})
+            logger.warning("Signal exception", extra={"exception_type": exc_type, "exc_message": exc_msg})
         return None
 
     envelope = _as_dict(raw.get("envelope"))
