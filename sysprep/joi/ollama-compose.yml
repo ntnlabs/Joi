@@ -37,6 +37,17 @@ services:
       - OLLAMA_NO_CLOUD=1
     volumes:
       - ollama:/root/.ollama
+    # Cap docker log retention. ollama 0.30.7 hardcodes `--log-verbosity 4`
+    # in llm/llama_server.go (no env override exists upstream), which spams
+    # ~30 KB/min of per-token `slot`/`srv` lines during inference. Default
+    # json-file driver retains forever, so unbounded growth fills the disk.
+    # 3 files × 20 MB = 60 MB ring buffer; `docker logs ollama` still shows
+    # the recent window for debugging, anything older rotates out.
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
     deploy:
       resources:
         reservations:
