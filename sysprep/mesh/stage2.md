@@ -31,6 +31,20 @@ Use upstream Nebula binary (`>= 1.7` recommended).
     - `host.crt` (mesh cert)
     - `host.key` (mesh key)
   - `signal-cli` package or standalone binary (for mesh stage 2 runtime setup)
+- **CPU baseline check (only if using the `-Linux-native` build of signal-cli):**
+  Recent signal-cli native binaries (0.14.x and up) are Graal native-image
+  builds that require **x86-64-v3** ISA baseline (AVX2 + BMI1/2 + FMA — Haswell
+  era, 2013+). If running in a VM, the vCPU model must be at least `x86-64-v3`
+  or `host-passthrough`. Older defaults like `x86-64-v2-AES` silently fail with:
+  ```
+  /usr/local/bin/signal-cli: CPU ISA level is lower than required
+  ```
+  Verify with:
+  ```bash
+  cat /proc/cpuinfo | grep -oE 'avx2|bmi1|bmi2|fma' | sort -u
+  ```
+  All four should appear. If they don't, bump the vCPU model BEFORE installing
+  the native build, or use the JVM tarball instead (needs JRE 21+).
 
 ## Files in This Repo Used by Stage 2
 
@@ -129,6 +143,13 @@ apt install -y /root/signal-cli_*.deb
 
 ### Option B: Standalone extracted binary (single binary layout)
 
+> **Native build CPU requirement:** the `-Linux-native.tar.gz` flavor (Graal
+> native-image) needs **x86-64-v3** baseline. Verify the CPU supports it
+> (`cat /proc/cpuinfo | grep -oE 'avx2|bmi1|bmi2|fma' | sort -u` — all four
+> should appear) BEFORE installing. See Preconditions. If the CPU is older,
+> use the regular `signal-cli-X.Y.Z.tar.gz` JVM build (needs JRE 21+) instead
+> of the native one.
+
 ```bash
 mkdir -p /opt/signal-cli/bin
 install -m 0755 /path/to/signal-cli /opt/signal-cli/bin/signal-cli
@@ -142,6 +163,10 @@ Verify install:
 signal-cli --version
 sudo -u signal /usr/local/bin/signal-cli --version
 ```
+
+If you see `CPU ISA level is lower than required`, the vCPU model is too old
+for the native build — bump it (e.g., Proxmox: CPU type `x86-64-v3` or `host`)
+or switch to the JVM build.
 
 ## 7. Link Signal Device
 
