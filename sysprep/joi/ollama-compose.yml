@@ -1,0 +1,47 @@
+# Ollama container — Joi VM
+#
+# Replaces the imperative `docker run` documented in stage3.md.
+# Apply with:
+#   sudo docker compose -f /opt/joi/ollama/docker-compose.yml up -d
+#
+# Update version:
+#   1. Edit `image:` tag below
+#   2. `sudo docker compose -f /opt/joi/ollama/docker-compose.yml pull`
+#   3. `sudo docker compose -f /opt/joi/ollama/docker-compose.yml up -d`
+#   (Data volume `ollama` persists across container recreations.)
+#
+# Rollback: edit `image:` back to previous tag, `up -d` again.
+
+services:
+  ollama:
+    image: ollama/ollama:0.30.7
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    environment:
+      # Bind to all interfaces inside the container so the published
+      # port reaches the host.
+      - OLLAMA_HOST=0.0.0.0:11434
+      # Disable cloud routing (cloud models, ollama.com remotes,
+      # model recommendation refresh). Joi VM is air-gapped — explicit
+      # disable removes the failed-connection log noise and prevents
+      # any accidental future leak. Added in ollama 0.30.x; was the
+      # reason we noticed `OLLAMA_NO_CLOUD: false` in startup logs.
+      - OLLAMA_NO_CLOUD=1
+    volumes:
+      - ollama:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  ollama:
+    # Reuse the existing docker volume created by the original
+    # `docker run -v ollama:/root/.ollama ...` invocation. external=true
+    # tells compose NOT to create a new one — preserves all models.
+    external: true
