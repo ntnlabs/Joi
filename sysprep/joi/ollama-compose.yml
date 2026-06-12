@@ -17,6 +17,12 @@ services:
     image: ollama/ollama:0.30.7
     container_name: ollama
     restart: unless-stopped
+    # Use the default docker0 bridge network (same as `docker run` without
+    # --network flag). Without this, compose creates a project-scoped network
+    # whose iptables DNAT rules don't catch loopback (127.0.0.1) traffic on
+    # the host — joi-api hits `localhost:11434` and gets ReadTimeout while
+    # 10.42.0.10:11434 works fine. Pin to bridge so localhost routing works.
+    network_mode: bridge
     ports:
       - "11434:11434"
     environment:
