@@ -157,26 +157,50 @@ Should now show `Default Runtime: nvidia`.
 
 ## 7. Deploy / Start Ollama Container (GPU)
 
-Run Ollama with GPU access:
+Use the docker compose config from the repo (`sysprep/joi/ollama-compose.yml`).
+It pins the ollama version (no `:latest` drift), sets `OLLAMA_NO_CLOUD=1` to
+disable the cloud feature added in 0.30.x, and uses the existing `ollama`
+docker volume so model data persists across container recreations.
 
 ```bash
+# Operational location for the compose file
+mkdir -p /opt/joi/ollama-runtime
+cp /opt/joi/sysprep/joi/ollama-compose.yml /opt/joi/ollama-runtime/docker-compose.yml
+
+# Verify the docker volume name matches `ollama` (or edit external: name: in
+# the compose file if the volume is named differently)
+docker volume ls | grep ollama
+
+# Stop any existing manual container (idempotent — safe if none exists)
 docker stop ollama 2>/dev/null || true
 docker rm ollama 2>/dev/null || true
-docker run -d --gpus all \
-  -v ollama:/root/.ollama \
-  -p 11434:11434 \
-  --name ollama \
-  --restart unless-stopped \
-  ollama/ollama
+
+# Start via compose
+cd /opt/joi/ollama-runtime
+docker compose pull
+docker compose up -d
 ```
 
 Verify container state:
 
 ```bash
 docker ps
-docker logs --tail 100 ollama
+docker exec ollama ollama --version             # should match pinned version
+docker logs --tail 30 ollama 2>&1 | grep -iE "cloud|version"
+# Expect: "Ollama cloud disabled: true"
 docker exec ollama nvidia-smi
 ```
+
+**Updating ollama later:** edit the `image:` tag in
+`/opt/joi/ollama-runtime/docker-compose.yml`, then:
+
+```bash
+cd /opt/joi/ollama-runtime
+docker compose pull
+docker compose up -d   # recreates container with new image; volume persists
+```
+
+**Rollback:** edit the tag back to the previous version, `up -d` again.
 
 ## 8. Pull / Verify Model in Ollama
 
