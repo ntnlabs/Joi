@@ -35,6 +35,13 @@ services:
       # any accidental future leak. Added in ollama 0.30.x; was the
       # reason we noticed `OLLAMA_NO_CLOUD: false` in startup logs.
       - OLLAMA_NO_CLOUD=1
+      # Disable llama.cpp auto-fit. Added in llama.cpp builds used by
+      # ollama 0.30.x — the "fitting params to device memory" step
+      # crashes with `GGML_ASSERT(n_inputs < GGML_SCHED_MAX_SPLIT_INPUTS)`
+      # on gemma4 + GTX 1650 + ctx >= 7500 during the layer-fitting
+      # search. With FIT=off, layers are placed by the old static
+      # algorithm which works fine for this GPU/model combo.
+      - LLAMA_ARG_FIT=off
     volumes:
       - ollama:/root/.ollama
     # Cap docker log retention. ollama 0.30.7 hardcodes `--log-verbosity 4`
