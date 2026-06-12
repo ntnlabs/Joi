@@ -92,6 +92,16 @@ FQDN="$HOSTNAME.$DOMAIN"
 sed -i '/^127\.0\.1\.1[[:space:]]/d' /etc/hosts
 echo "127.0.1.1 $FQDN $HOSTNAME" >> /etc/hosts
 
+# Defense-in-depth: blackhole ollama.com so the ollama cloud feature
+# (added in 0.30.x) cannot reach upstream even if OLLAMA_NO_CLOUD=1 is
+# ever accidentally unset. Joi VM is air-gapped so the connection
+# wouldn't succeed anyway, but explicit DNS pin removes failed-connection
+# log noise and provides belt-and-suspenders against config drift.
+# NOTE: only `ollama.com` is blackholed, not `ollama.ai` — the latter is
+# the model registry (used by `ollama pull`), which is a separate domain.
+sed -i '/^127\.0\.0\.1[[:space:]].*ollama\.com/d' /etc/hosts
+echo "127.0.0.1 ollama.com" >> /etc/hosts
+
 ###########################################
 # JOI USER + DIRECTORIES
 ###########################################
