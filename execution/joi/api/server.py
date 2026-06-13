@@ -85,6 +85,10 @@ MAX_INPUT_LENGTH = int(os.getenv("JOI_MAX_INPUT_LENGTH", "1500"))
 JOI_MAX_DOCUMENT_SIZE = int(os.getenv("JOI_MAX_DOCUMENT_SIZE", str(1 * 1024 * 1024)))  # 1 MB default
 # Max output length (Signal supports up to ~6000 chars, but long messages can be annoying)
 MAX_OUTPUT_LENGTH = int(os.getenv("JOI_MAX_OUTPUT_LENGTH", "2000"))
+# Max length for Wind (proactive) messages — kept tighter than reactive replies
+# so Wind stays punchy and doesn't ramble. Bumped from a hardcoded 500 after
+# real proactives kept getting cut mid-sentence around 700-800 chars.
+WIND_MAX_LENGTH = int(os.getenv("JOI_WIND_MAX_LENGTH", "1200"))
 # Signal formatting - convert **bold** to Unicode bold (Signal doesn't support markdown)
 SIGNAL_FORMAT_ENABLED = os.getenv("JOI_SIGNAL_FORMAT_ENABLED", "0") == "1"
 
@@ -2580,10 +2584,22 @@ def _generate_proactive_message(
             logger.warning("Wind: generated message failed validation", extra={"action": "wind_validate"})
             return None
 
-        # Length check (proactive messages should be short)
-        if len(text) > 500:
-            logger.warning("Wind: generated message too long, truncating", extra={"length": len(text)})
-            text = text[:500]
+        # Length check (proactive messages should be short).
+        # If we exceed the cap, prefer cutting at a sentence boundary so the
+        # tail reads as a complete thought rather than a mid-word dangle.
+        if len(text) > WIND_MAX_LENGTH:
+            original_len = len(text)
+            cut = text[:WIND_MAX_LENGTH]
+            boundary = max(cut.rfind("."), cut.rfind("!"), cut.rfind("?"))
+            if boundary >= WIND_MAX_LENGTH // 2:
+                text = cut[: boundary + 1]
+            else:
+                text = cut
+            logger.warning("Wind: generated message too long, truncating", extra={
+                "original_length": original_len,
+                "truncated_length": len(text),
+                "cap": WIND_MAX_LENGTH,
+            })
 
         logger.info("Wind: generated message", extra={
             "length": len(text),
