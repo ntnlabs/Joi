@@ -84,7 +84,7 @@ MAX_INPUT_LENGTH = int(os.getenv("JOI_MAX_INPUT_LENGTH", "1500"))
 # Max document size pushed by mesh (operators should match MESH_MAX_DOCUMENT_SIZE)
 JOI_MAX_DOCUMENT_SIZE = int(os.getenv("JOI_MAX_DOCUMENT_SIZE", str(1 * 1024 * 1024)))  # 1 MB default
 # Max output length (Signal supports up to ~6000 chars, but long messages can be annoying)
-MAX_OUTPUT_LENGTH = int(os.getenv("JOI_MAX_OUTPUT_LENGTH", "2000"))
+MAX_OUTPUT_LENGTH = int(os.getenv("JOI_MAX_OUTPUT_LENGTH", "2500"))
 # Max length for Wind (proactive) messages — kept tighter than reactive replies
 # so Wind stays punchy and doesn't ramble. Bumped from a hardcoded 500 after
 # real proactives kept getting cut mid-sentence around 700-800 chars.
