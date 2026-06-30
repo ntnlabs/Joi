@@ -21,7 +21,7 @@ JOI_BIND_PORT=8443
 # Max input length (chars) - messages exceeding this are rejected
 #JOI_MAX_INPUT_LENGTH=1500
 # Max output length (Signal supports up to ~6000 chars)
-#JOI_MAX_OUTPUT_LENGTH=2000
+#JOI_MAX_OUTPUT_LENGTH=2500
 # Max length for Wind (proactive) messages — separate from reactive replies
 # so Wind stays tighter. Truncation prefers a sentence boundary.
 #JOI_WIND_MAX_LENGTH=1200
