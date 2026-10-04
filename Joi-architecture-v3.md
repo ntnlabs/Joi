@@ -107,6 +107,57 @@ These seams reshape `execution/joi/memory/store.py` and the reply flow in
 
 *Each seam's detailed design is added below as it is agreed.*
 
+### Seam 1: Memory Record — envelope plus per-kind detail
+
+**v2.0 today.** Each kind of memory has its own table (`user_facts`,
+`context_summaries`, `knowledge_chunks`, `notes`), each with its own FTS
+table, vector table and triggers. Metadata differs per table. A correction
+overwrites a fact in place (`UNIQUE(conversation_id, category, key)`), so
+history is lost. Summaries record only a time span, not the messages they
+came from.
+
+**v3.** One `memory_items` table holds the **envelope** every memory shares;
+small **detail tables** hold what is specific to a kind.
+
+Envelope (common to all kinds):
+
+| Field | Purpose |
+|-------|---------|
+| kind | fact, summary, knowledge, note; later episode, rule |
+| scope | conversation the memory belongs to (or global) |
+| speaker | who it came from (first-class for group chats) |
+| source | stated, inferred, admin, ingested |
+| confidence | how sure Joi is |
+| provenance | source message IDs or document reference |
+| valid_from / valid_until | when the memory is (or was) true |
+| superseded_by | the record that replaced this one |
+| text | searchable content (one FTS index, one vector index) |
+| metadata_json | fields that are not first-class columns yet |
+| created_at / updated_at | timestamps |
+
+Detail tables keep kind-specific columns, keyed to the envelope: a fact's
+category and key, a note's reminder time, a knowledge chunk's document and
+position.
+
+**What this buys:**
+- Richer metadata later is one envelope column, or a `metadata_json` key
+  until it earns a column. No change ripples through every kind.
+- **Correction** writes a new record and sets `superseded_by` on the old one.
+  **Forgetting** sets `valid_until`. History survives; no special cases.
+- New kinds (episodes, procedural rules) are a detail table plus a `kind`
+  value; recall finds them without extra work.
+- Group-chat hardening is a query condition: scope and speaker are on every
+  record.
+- One FTS index and one vector index instead of four of each.
+
+**Stays as is:** `messages` (conversation history and the provenance target),
+Wind state tables, reminders, tasks, conversation settings. They are history
+or operational state, not memory.
+
+**Cost:** the largest single change in v3 — migrating the four tables into
+envelope plus detail and reworking every read/write path in
+`memory/store.py`, in place.
+
 ## Phases
 
 | Phase | Meaning |
@@ -126,6 +177,7 @@ These seams reshape `execution/joi/memory/store.py` and the reply flow in
 | 2026-10-04 | All v2.0 known gaps must be fixed before beta. |
 | 2026-10-04 | Behavioural memory is the first feature; all other areas stay in scope. |
 | 2026-10-04 | Contracts first: memory record, recall, turn pipeline, decision log are designed before features. |
+| 2026-10-04 | Memory record = shared envelope table plus per-kind detail tables (not one flat table, not per-table column contracts). Corrections supersede, forgetting expires; history is kept. |
 
 ## Related Documents
 
