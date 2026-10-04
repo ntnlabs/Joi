@@ -320,6 +320,38 @@ The contract — Turn ids, `related_to`, the person key, late binding, abort and
 restart hooks, the time-critical line, per-message perception — is part of
 the seam from day one. Behaviour built on it ships with the reply-path work.
 
+### Seam 4: Decision Log — Joi's main log
+
+**v2.0 today.** `wind_decision_log` gets a row on every Wind tick (about 1,440
+rows a day per conversation, 30-day retention) and stores the draft text in
+shadow mode, yet nothing in Joi reads it (`get_decision_stats` is never
+called). Replies have no queryable record, only journal lines. Brain debug
+(`JOI_BRAIN_DEBUG`) writes full prompts to separate opt-in YAML files.
+
+**v3.** One `turn_log` table is Joi's **main log**: one row per Turn, for
+every trigger. Wind decisions live here too — a Wind tick is a Turn that ends
+at the decide stage — so `wind_decision_log` is replaced, not kept beside it.
+
+**Purpose:**
+1. **Debugging** — what each Turn perceived, recalled and decided, why, and
+   what failed.
+2. **Measuring** — the evaluation harness compares behaviour before and after
+   a change from these records.
+3. **Answering "why"** — "why did you message me?", "why so quiet?". Joi
+   answers from the record instead of inventing a reason.
+
+| Contract rule | Meaning |
+|---------------|---------|
+| Behaviour never depends on the log | Anything Joi needs about its own past to *behave* (failed attempts, pending Turns) lives in state. Reading the log to *explain* itself is allowed. Debug mode and retention therefore never change behaviour |
+| References, not context | Rows hold ids (messages, memory items), reason codes, outcomes, timings, model. The full context is never logged |
+| Two levels of detail | **Always:** a compact core, identical in every mode. **Privacy off + debug on:** extra human-readable detail — gate values, impulse factors, detected mood and commands, the sitrep, prompt section sizes, possibly the sent text |
+| Full prompts stay out | Complete prompts remain brain debug's job, in its separate opt-in files |
+| Quiet Wind ticks | A skipped Wind tick is written only when the outcome changes; anything sent is always logged |
+
+*Open:* debug detail can contain content (e.g. a fact quoted in the sitrep), so
+"forget" does not reach it unless debug detail has a short retention.
+Retention for both levels is to be decided.
+
 ## Phases
 
 | Phase | Meaning |
@@ -345,6 +377,7 @@ the seam from day one. Behaviour built on it ships with the reply-path work.
 | 2026-10-04 | One open reply per (conversation, person), built late. Restarts on every new message from that person (abort while generating, drop before mesh), no cap; a restarted reply goes behind other people's waiting replies. |
 | 2026-10-04 | Typing tracked per (conversation, person); mesh forwards STARTED and STOPPED. In groups only the reply's own person can hold or restart it; group behaviour tuned separately later. |
 | 2026-10-04 | Reminders run on a time-critical line above the owner line, never merged into another message, plain-text fallback if not rendered by the deadline. Merging into queued replies rejected: unpredictable under load. |
+| 2026-10-04 | Decision log: one `turn_log` table is the main log, replacing `wind_decision_log`. Purpose: debugging, measuring, answering "why". Behaviour never depends on it. References not context; compact core always, extra detail only with privacy off and debug on. |
 | 2026-10-04 | Recall returns typed items with "why it matched", never text. Purpose profiles replace per-caller knobs; scope enforced inside recall; current-only by default; degraded retrieval is flagged, never silent. First version reproduces v2.0 ranking. |
 
 ## Related Documents
