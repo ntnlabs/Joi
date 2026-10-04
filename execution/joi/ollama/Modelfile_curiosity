@@ -1,7 +1,7 @@
 # Joi Curiosity Model - for tension mining (conversation thread analysis)
 #
 # USAGE:
-#   1. Build: docker exec joi-brain ollama create joi-curiosity -f /opt/Joi/execution/joi/ollama/Modelfile_curiosity
+#   1. Build: docker exec joi-brain ollama create joi-curiosity -f /opt/joi/execution/joi/ollama/Modelfile_curiosity
 #   2. Test:  docker exec -it joi-brain ollama run joi-curiosity "User: I might try rock climbing soon\nJoi: That sounds fun!\n\n{\"title\": \"Rock climbing plans\", \"summary\": \"User mentioned interest in trying rock climbing\", \"confidence\": 0.7}"
 #   3. Use:   Set JOI_CURIOSITY_MODEL=joi-curiosity in /etc/default/joi-api
 #

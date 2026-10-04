@@ -161,7 +161,7 @@ ufw allow out 80/tcp
 
 apt-get update
 apt-get install -y chrony
-pip3 install -r /opt/Joi/sysprep/mesh/requirements.txt --break-system-packages
+pip3 install -r /opt/joi/sysprep/mesh/requirements.txt --break-system-packages
 
 # Close HTTP egress again; later updates are controlled via update.sh.
 printf 'y\n' | ufw delete allow out 80/tcp >/dev/null 2>&1 || true
@@ -188,7 +188,7 @@ systemctl restart chrony
 ###########################################
 echo ""
 echo "[+] Installing mesh-signal-worker systemd service..."
-ln -sf /opt/Joi/execution/mesh/proxy/systemd/mesh-signal-worker.service /etc/systemd/system/mesh-signal-worker.service
+ln -sf /opt/joi/execution/mesh/proxy/systemd/mesh-signal-worker.service /etc/systemd/system/mesh-signal-worker.service
 systemctl daemon-reload
 systemctl enable mesh-signal-worker
 

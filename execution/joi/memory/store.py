@@ -60,7 +60,7 @@ def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
     Returns None if key file not found — MemoryStore enforces via JOI_REQUIRE_ENCRYPTED_DB.
 
     Generate the key file with:
-        sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh
+        sudo /opt/joi/execution/joi/scripts/generate-memory-key.sh
     """
     key_file_path = key_file or os.getenv("JOI_MEMORY_KEY_FILE", DEFAULT_KEY_FILE)
 
@@ -70,7 +70,7 @@ def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
         if not key_path.exists():
             logger.warning(
                 "Key file %s not found — generate with: "
-                "sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh",
+                "sudo /opt/joi/execution/joi/scripts/generate-memory-key.sh",
                 key_path,
             )
             return None
@@ -95,7 +95,7 @@ def load_encryption_key(key_file: Optional[str] = None) -> Optional[str]:
         if not re.fullmatch(r"[0-9a-fA-F]+", key):
             logger.critical(
                 "Key file %s does not contain a valid hex string — "
-                "regenerate with: sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh",
+                "regenerate with: sudo /opt/joi/execution/joi/scripts/generate-memory-key.sh",
                 key_path,
                 extra={"action": "startup_fatal"},
             )
@@ -680,7 +680,7 @@ class MemoryStore:
                 logger.critical(
                     "Encrypted database required but no key available. "
                     "Set JOI_MEMORY_KEY_FILE or place key at %s. "
-                    "Generate: sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh",
+                    "Generate: sudo /opt/joi/execution/joi/scripts/generate-memory-key.sh",
                     DEFAULT_KEY_FILE,
                     extra={"action": "startup_fatal"},
                 )

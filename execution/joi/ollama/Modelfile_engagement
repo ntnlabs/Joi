@@ -2,7 +2,7 @@
 #
 # USAGE:
 #   1. Pull:  docker exec joi-brain ollama pull mannix/llama3.1-8b-abliterated
-#   2. Build: docker exec joi-brain ollama create joi-engagement -f /opt/Joi/execution/joi/ollama/Modelfile_engagement
+#   2. Build: docker exec joi-brain ollama create joi-engagement -f /opt/joi/execution/joi/ollama/Modelfile_engagement
 #   3. Test:  docker exec -it joi-brain ollama run joi-engagement
 #   4. Use:   Set JOI_ENGAGEMENT_MODEL=joi-engagement (default)
 #

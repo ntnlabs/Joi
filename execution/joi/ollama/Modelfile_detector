@@ -4,7 +4,7 @@
 #           note commands, agenda parsing, list/past/future detection.
 #
 # USAGE:
-#   1. Build: docker exec ollama ollama create joi-detector -f /opt/Joi/execution/joi/ollama/Modelfile_detector
+#   1. Build: docker exec ollama ollama create joi-detector -f /opt/joi/execution/joi/ollama/Modelfile_detector
 #   2. Test:  docker exec -it ollama ollama run joi-detector 'Analyze: "remember I drink coffee every morning"'
 #   3. Use:   Set JOI_DETECTOR_MODEL=joi-detector in /etc/default/joi-api
 #

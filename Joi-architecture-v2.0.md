@@ -563,9 +563,8 @@ group knowledge is a separate switch, default off).
 
 **Path convention:** all paths are lowercase (`/opt/joi`). Older installations
 keep a `/opt/Joi` → `/opt/joi` symlink because reinstalling is not an option;
-new installations must use lowercase only. Some repo files (systemd unit,
-`sysprep/joi/setup.sh`, `stage3.md`) still reference `/opt/Joi` and work on
-existing installs only through that symlink.
+new installations must use lowercase only. All repo files (systemd units,
+sysprep scripts and stages) use `/opt/joi`.
 
 ### Mesh
 

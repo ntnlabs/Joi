@@ -38,14 +38,14 @@ Install Python tooling and Mesh worker dependencies:
 ```bash
 apt update
 apt install -y python3-pip
-cd /opt/Joi/execution/mesh/proxy
+cd /opt/joi/execution/mesh/proxy
 pip install -r requirements.txt --break-system-packages --ignore-installed
 ```
 
 Install the shared package (HMAC core, used by both Joi and Mesh):
 
 ```bash
-pip install -e /opt/Joi/execution/shared --break-system-packages
+pip install -e /opt/joi/execution/shared --break-system-packages
 ```
 
 Close the update window if you do not need it for the next steps:
@@ -57,7 +57,7 @@ Close the update window if you do not need it for the next steps:
 ## 2. Install / Refresh Mesh Worker Service Unit(s)
 
 ```bash
-cp /opt/Joi/execution/mesh/proxy/systemd/mesh-signal-worker.service /etc/systemd/system/
+cp /opt/joi/execution/mesh/proxy/systemd/mesh-signal-worker.service /etc/systemd/system/
 systemctl daemon-reload
 ```
 

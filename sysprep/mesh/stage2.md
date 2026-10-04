@@ -71,7 +71,7 @@ install -m 0755 /root/nebula /usr/local/bin/nebula
 Copy the custom service file (simple `nebula.service`, not templated `nebula@config`):
 
 ```bash
-cp /opt/Joi/sysprep/nebula/nebula.service /etc/systemd/system/nebula.service
+cp /opt/joi/sysprep/nebula/nebula.service /etc/systemd/system/nebula.service
 systemctl daemon-reload
 ```
 
@@ -84,7 +84,7 @@ mkdir -p /etc/nebula
 Install the mesh config template (only if you do not already have a tuned config):
 
 ```bash
-cp /opt/Joi/sysprep/mesh/config.yml /etc/nebula/config.yml
+cp /opt/joi/sysprep/mesh/config.yml /etc/nebula/config.yml
 ```
 
 ## 3. Install Nebula Certificates

@@ -270,7 +270,7 @@ curiosity model to be built from its Modelfile:
 ```bash
 # Build the curiosity model (uses mannix/llama3.1-8b-abliterated as base)
 docker exec joi-brain ollama create joi-curiosity \
-  -f /opt/Joi/execution/joi/ollama/Modelfile_curiosity
+  -f /opt/joi/execution/joi/ollama/Modelfile_curiosity
 
 # Enable in /etc/default/joi-api
 echo 'JOI_CURIOSITY_MODEL=joi-curiosity' >> /etc/default/joi-api
@@ -295,7 +295,7 @@ not JSON extraction.
 ```bash
 # Build the detector model (uses mannix/llama3.1-8b-abliterated as base)
 docker exec ollama ollama create joi-detector \
-  -f /opt/Joi/execution/joi/ollama/Modelfile_detector
+  -f /opt/joi/execution/joi/ollama/Modelfile_detector
 
 # Enable in /etc/default/joi-api
 echo 'JOI_DETECTOR_MODEL=joi-detector' >> /etc/default/joi-api
@@ -319,9 +319,9 @@ docker exec ollama ollama pull translategemma:12b
 
 # Build SK->EN (inbound) and EN->SK (outbound) models
 docker exec ollama ollama create translategemma-sk-en \
-  -f /opt/Joi/execution/joi/ollama/Modelfile_translate_sk_en
+  -f /opt/joi/execution/joi/ollama/Modelfile_translate_sk_en
 docker exec ollama ollama create translategemma-en-sk \
-  -f /opt/Joi/execution/joi/ollama/Modelfile_translate_en_sk
+  -f /opt/joi/execution/joi/ollama/Modelfile_translate_en_sk
 
 # Enable per-user: write language code to .translate file
 echo 'sk' > /var/lib/joi/prompts/users/<user_id>.translate
@@ -369,7 +369,7 @@ Then re-ingest any existing knowledge documents so they get embedded:
 
 ```bash
 # Drop files into the watch directory, or run manually:
-/opt/Joi/execution/joi/scripts/ingest-knowledge.py yourfile.txt --scope +1234567890
+/opt/joi/execution/joi/scripts/ingest-knowledge.py yourfile.txt --scope +1234567890
 ```
 
 Verify via logs after sending a message that references a knowledge doc:

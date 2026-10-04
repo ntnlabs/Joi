@@ -113,7 +113,7 @@ if ! id -u joi >/dev/null 2>&1; then
 fi
 
 mkdir -p /var/lib/joi
-mkdir -p /opt/Joi
+mkdir -p /opt/joi
 
 # Data dir must be writable by the joi service user.
 chown joi:joi /var/lib/joi
@@ -193,7 +193,7 @@ echo "[5/5] Configuring NTP client (chrony)..."
 
 apt-get update
 apt-get install -y chrony
-pip3 install -r /opt/Joi/sysprep/joi/requirements.txt --break-system-packages
+pip3 install -r /opt/joi/sysprep/joi/requirements.txt --break-system-packages
 
 cat > /etc/chrony/chrony.conf << EOF
 # Use internal NTP server
@@ -217,7 +217,7 @@ systemctl restart chrony
 ###########################################
 echo ""
 echo "[+] Installing joi-api systemd service..."
-ln -sf /opt/Joi/execution/joi/systemd/joi-api.service /etc/systemd/system/joi-api.service
+ln -sf /opt/joi/execution/joi/systemd/joi-api.service /etc/systemd/system/joi-api.service
 systemctl daemon-reload
 systemctl enable joi-api
 

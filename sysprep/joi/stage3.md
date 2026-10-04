@@ -9,7 +9,7 @@ This stage remains manual on purpose. Joi is a physical host in this deployment 
 
 ## What Stage 3 Does
 
-- Deploy/update the Joi repository checkout on the host (`/opt/Joi`)
+- Deploy/update the Joi repository checkout on the host (`/opt/joi`)
 - Install Joi Python dependencies (current project method)
 - Install and configure `joi-api` systemd service
 - Run/update the Ollama container workload (GPU-enabled)
@@ -34,19 +34,19 @@ Use this only if you still need package installs or a fresh git clone on this se
 ./update.sh --enable
 ```
 
-## 2. Repository Checkout / Update (`/opt/Joi`)
+## 2. Repository Checkout / Update (`/opt/joi`)
 
 Initial clone (new host):
 
 ```bash
 cd /opt
-git clone https://github.com/ntnlabs/Joi.git Joi
+git clone https://github.com/ntnlabs/Joi.git joi
 ```
 
 Update existing checkout:
 
 ```bash
-cd /opt/Joi
+cd /opt/joi
 git pull
 ```
 
@@ -56,14 +56,14 @@ Current project method (system Python with pip, as used in lab):
 
 ```bash
 apt install -y python3-pip
-cd /opt/Joi/execution/joi
+cd /opt/joi/execution/joi
 pip install -r requirements.txt --break-system-packages --ignore-installed
 ```
 
 Install the shared package (HMAC core, used by both Joi and Mesh):
 
 ```bash
-pip install -e /opt/Joi/execution/shared --break-system-packages
+pip install -e /opt/joi/execution/shared --break-system-packages
 ```
 
 Install Go (needed for building `joi-setup`):
@@ -87,7 +87,7 @@ If additional packages are still needed in your current branch/runtime, install 
 Install the systemd unit from the repo:
 
 ```bash
-cp /opt/Joi/execution/joi/systemd/joi-api.service /etc/systemd/system/
+cp /opt/joi/execution/joi/systemd/joi-api.service /etc/systemd/system/
 systemctl daemon-reload
 ```
 
@@ -101,20 +101,20 @@ chmod 750 /var/lib/joi
 ## 4a. Build joi-setup TUI
 
 ```bash
-cd /opt/Joi/execution/joi/setup
+cd /opt/joi/execution/joi/setup
 go build -o joi-setup .
-mkdir -p /opt/Joi/bin
-install -m 0755 joi-setup /opt/Joi/bin/joi-setup
+mkdir -p /opt/joi/bin
+install -m 0755 joi-setup /opt/joi/bin/joi-setup
 ```
 
-Run later with `sudo /opt/Joi/bin/joi-setup` to edit runtime settings interactively.
+Run later with `sudo /opt/joi/bin/joi-setup` to edit runtime settings interactively.
 
 ## 5. Configure Joi Environment File
 
 Generate the memory encryption key (skip if already done):
 
 ```bash
-sudo /opt/Joi/execution/joi/scripts/generate-memory-key.sh
+sudo /opt/joi/execution/joi/scripts/generate-memory-key.sh
 ```
 
 Verify it exists and confirm `JOI_MEMORY_KEY_FILE=/etc/joi/memory.key` is set in `/etc/default/joi-api`.
@@ -278,7 +278,7 @@ Optional admin/debug checks:
 
 ```bash
 ufw status verbose
-cd /opt/Joi/execution/joi/scripts
+cd /opt/joi/execution/joi/scripts
 ```
 
 ## 13. Close Joi Update Window (If Opened)
@@ -301,6 +301,6 @@ cd /opt/Joi/execution/joi/scripts
 - If GNOME is active on Joi, `Xorg` / `gnome-shell` may consume VRAM on the NVIDIA GPU. That is separate from Ollama correctness, but relevant for capacity/performance.
 - Docker/NVIDIA runtime substrate setup belongs to stage 2.
 - Nebula installation/configuration belongs to stage 2. Do not repeat Nebula steps here.
-- Standard path in this repo is `/opt/Joi` (uppercase `J`).
+- Standard path is `/opt/joi` (all lowercase). Older installs may have a `/opt/Joi` → `/opt/joi` symlink; new installs must use lowercase only.
 - Current business-mode model target for this host: `phi4:14b-q4_K_M`.
 - Do not open ad-hoc UFW ports manually for package installs on Joi; use `./update.sh --enable` / `--disable` so temporary egress stays consistent.
