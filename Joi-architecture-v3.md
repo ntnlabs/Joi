@@ -198,6 +198,42 @@ in the last 7 days, marked as past".
 **First version reproduces v2.0 behaviour:** same per-kind budgets, same RRF
 fusion. Behaviour changes come later, as deliberate decisions.
 
+### Seam 3: Turn Pipeline — one pipeline for every message
+
+**v2.0 today.** Four separate paths produce messages, each with its own copy
+of "gather context → build prompt → generate → check → send":
+`receive_message` (≈720 lines, an ordered `if` chain whose order is only
+documented in comments), `_generate_proactive_message` (Wind, its own prompt
+assembly and a duplicated time injection), `_generate_reaction_response` and
+`_generate_reminder_message`. The reply prompt is extended in five separate
+ad-hoc places (reminder ack, shh awareness, morning-already-greeted, reminder
+list, agenda).
+
+**v3.** Every message Joi might send is a **Turn**, whatever triggered it:
+an inbound message, a reaction, a Wind tick or a reminder firing. A Turn
+passes through fixed stages; each stage adds its part:
+
+| Stage | Adds to the Turn | Replaces in v2.0 |
+|-------|------------------|------------------|
+| perceive | mood, detected commands, corrections, facts | the ordered `if` chain of handlers |
+| assemble | recalled items (seam 2), sitrep, notices | `_build_enriched_prompt` and the five ad-hoc prompt appends |
+| decide | reply, fixed command answer, stay silent, or Wind intent | scattered early returns |
+| render | the message text (LLM) | four separate generators |
+| validate | length, leak check, formatting, translation | per-path copies |
+| send + commit | send, then store and apply state changes | spread through each path |
+| log | decision record (seam 4) | ad-hoc log lines |
+
+Only **perceive** and **decide** differ by trigger; the rest is shared, so
+replies and Wind use the same context, sitrep and checks. Handlers (snooze,
+reminders, notes, tasks) become an explicit ordered list. The fast, no-LLM
+ingress before the queue (dedupe, store, addressing) stays fast.
+
+| Contract rule | Meaning |
+|---------------|---------|
+| Per conversation | A Turn carries its `conversation_id` end to end; every stage sees only that conversation's state |
+| Queue decides when, pipeline decides how | Turns run through the existing message queue: one worker, owner line first, then normal line, FIFO within a line. Priority is a Turn property, so another line can be added later without ripple |
+| Behaviour preserved first | First version keeps today's per-message LLM calls (mood, fact detection, reply). Folding them into fewer calls is a later, deliberate change |
+
 ## Phases
 
 | Phase | Meaning |
@@ -218,6 +254,7 @@ fusion. Behaviour changes come later, as deliberate decisions.
 | 2026-10-04 | Behavioural memory is the first feature; all other areas stay in scope. |
 | 2026-10-04 | Contracts first: memory record, recall, turn pipeline, decision log are designed before features. |
 | 2026-10-04 | Memory record = shared envelope table plus per-kind detail tables (not one flat table, not per-table column contracts). Corrections supersede, forgetting expires; history is kept. |
+| 2026-10-04 | Turn pipeline: every outgoing message (reply, reaction, Wind, reminder) is a Turn through shared stages perceive → assemble → decide → render → validate → send/commit → log. Per conversation; existing priority queue (owner line, normal line) kept. |
 | 2026-10-04 | Recall returns typed items with "why it matched", never text. Purpose profiles replace per-caller knobs; scope enforced inside recall; current-only by default; degraded retrieval is flagged, never silent. First version reproduces v2.0 ranking. |
 
 ## Related Documents
