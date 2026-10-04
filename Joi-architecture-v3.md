@@ -412,6 +412,30 @@ Not in the first v3 phases; recorded so the seams leave room for it. Origin:
   are per conversation, marked inferred with a confidence, and some kinds may
   require confirmation.
 
+## Build Order
+
+Each step is shipped and observed before the next. Each step gets its own
+design and implementation plan.
+
+| # | Step | Why here |
+|---|------|----------|
+| 0 | **Safety net** — automatic regression checks on the development machine against a small fake database (no Signal, no real data, no LLM) | Lets every later step show it did not break what worked |
+| 1 | Seam 1: memory envelope and migration | Foundation for recall, episodes and behavioural memory; the largest change |
+| 2 | Seam 2: recall on the envelope | Needs seam 1; must reproduce v2.0 ranking, checked by step 0 |
+| 3 | Seam 3: Turn pipeline | Fixes the scheduler freeze (gap 5); adds per-person replies, restarts and the time-critical line |
+| 4 | Seam 4: `turn_log` and `joi_log` writer | Needs the pipeline's emission points |
+| 5 | Behavioural memory (first feature) | Needs all four seams |
+
+The safety net answers one question — *did a change break something that
+worked?* — with deterministic checks: scope isolation, migration
+completeness, recall order before and after, pipeline decisions. Judging the
+*quality* of Joi's answers needs the real LLM and stays with the later
+evaluation harness.
+
+The remaining beta gaps (unlinked-device detection, STOPPED forwarding,
+config-sync cadence, hourly HMAC retry) are small and independent of the
+seams; they slot in between steps.
+
 ## Phases
 
 | Phase | Meaning |
@@ -425,7 +449,7 @@ Not in the first v3 phases; recorded so the seams leave room for it. Origin:
 
 | Question | Where |
 |----------|-------|
-| Implementation order of the "Later" scope rows | Scope |
+| Order of the "Later" scope rows after build step 5 | Scope, Build Order |
 | Phase criteria beyond beta | Phases |
 | Reminder deadline tolerance (how late is still "on time") | Seam 3, reminders |
 | Whether note reminders become Turns | Seam 3, reminders |
@@ -454,6 +478,7 @@ Not in the first v3 phases; recorded so the seams leave room for it. Origin:
 | 2026-10-04 | One emission point feeds two logs: `turn_log` for people (mode-dependent detail) and `joi_log` for Joi (meaning, mode-independent). `joi_log` entries are memory items of kind episode. v2.0's `wind_outcome` and `pause_marker` summaries become episodes — one implementation. |
 | 2026-10-04 | `joi_log`'s broad stream is off by default until self-improvement is built; `wind_outcome` and `pause_marker` episodes stay always on. Behaviour may depend only on always-on episodes. |
 | 2026-10-04 | End-of-day reflection (self-improvement) is planned for later: reads `joi_log` and the day's messages, writes auditable memory with provenance. |
+| 2026-10-04 | Build order: safety net (deterministic regression checks) first, then seams 1–4 in order, then behavioural memory. Remaining beta gaps slot in between steps. |
 
 ## Related Documents
 
