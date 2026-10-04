@@ -230,46 +230,93 @@ ingress before the queue (dedupe, store, addressing) stays fast.
 
 | Contract rule | Meaning |
 |---------------|---------|
-| Per conversation | A Turn carries its `conversation_id` end to end; every stage sees only that conversation's state |
-| Queue decides when, pipeline decides how | Turns run through the existing message queue: one worker, owner line first, then normal line, FIFO within a line. Priority is a Turn property, so another line can be added later without ripple |
+| Per conversation | A Turn carries its `conversation_id` (and, for a reply, the person it answers) end to end; every stage sees only that conversation's state |
+| Queue decides when, pipeline decides how | Turns run through the message queue: one worker, three lines — time-critical (reminders), owner, normal — FIFO within a line. v2.0 has only the owner and normal lines. Priority is a Turn property, so lines can change later without ripple |
 | Behaviour preserved first | First version keeps today's per-message LLM calls (mood, fact detection, reply). Folding them into fewer calls is a later, deliberate change |
 
-#### Multiple Turns and blending
+#### Multiple Turns, restarts and reminders
 
-**One Turn produces at most one message.** Several Turns can exist for the
-same conversation at once — a reply to the user and a reminder firing are two
-Turns. Each Turn has an id and an optional `related_to` link, and the
+Designed for load — many clients, long document searches, replies that take
+minutes — not for one user in a simple dialogue. No rule here depends on
+predicting how long another Turn's generation will take.
+
+**One Turn produces at most one message.** Several Turns can exist for a
+conversation at once. Each has an id and an optional `related_to` link. The
 assemble stage gets a "conversation right now" view: open dialogue and topic,
-Joi's last messages, and pending Turns for this conversation.
+Joi's last messages, and pending Turns for the conversation.
 
-**Sealing.** A Turn waiting in the queue has not built its prompt yet. It is
-**sealed** when the worker starts its assemble stage. Nothing is ever added to
-a sealed Turn; generation is never interrupted.
+**Perception per message, at arrival.** Each inbound message is perceived
+once, when it arrives — mood, facts, commands — and the results are stored
+immediately with that message. Replies only read them, so restarting a reply
+never repeats perception or duplicates side effects. Something the user asked
+for ("remind me at 5") takes effect even if Joi's reply later fails. This
+changes v2.0, which holds some writes until the reply is sent.
 
-**When a reminder fires:**
+**One open reply per person.** A reply Turn belongs to a (conversation,
+person) pair and answers everything that person said to Joi since Joi last
+answered them. In a DM the person is the conversation. In a group, each person
+who addressed Joi gets their own reply Turn.
 
-| Situation | Outcome |
-|-----------|---------|
-| A reply Turn for this conversation is queued, not sealed | The reminder attaches to it as a **notice**; one message carries both |
-| The reply Turn is already sealed (generating) | The reminder becomes its own Turn, queued right behind, `related_to` the reply; it renders after the reply is sent and bridges from it |
-| No reply pending, dialogue quiet | Standalone reminder Turn |
+**Late binding.** A reply builds its context when the worker starts it, from
+the conversation as it is at that moment — including anything Joi sent in the
+meantime (e.g. a reminder).
 
-Whether the dialogue is open comes from the Wind v2 dialogue classifier (Q3).
-A reminder is never delayed to wait for a conversation; it only joins a reply
-that will run anyway.
+**Restart on every new message from that person — no cap:**
 
-**Safety rules — a reminder must never vanish:**
-1. **Must-mention.** An attached reminder is a must-mention notice; the
-   validate stage checks the rendered reply contains it. If it was dropped,
-   the reminder goes out as its own Turn.
-2. **Release on failure.** If the host Turn fails or decides to stay silent,
-   its notices are released as their own Turn.
-3. **Atomic attach.** Attaching a notice and sealing a Turn are guarded by one
-   lock, so a notice cannot attach while the worker seals the Turn.
+| Reply state when the person's new message arrives | What happens |
+|---------------------------------------------------|--------------|
+| Waiting in the queue | The message joins it |
+| Generating | Generation is aborted (streamed request, connection closed) and the reply is rebuilt with the updated context |
+| Generated, not yet handed to mesh | Dropped and rebuilt |
+| Already handed to mesh | It goes out; the new message starts a new reply that sees it |
 
-The contract (Turn ids, `related_to`, sealing, notices, release) is part of
-the seam from day one. The blending behaviour itself ships with the reply-path
-work.
+The drop check and the hand-off to mesh share one lock: always one or the
+other, never half. A restarted reply goes **behind** other people's waiting
+replies in its line — nobody jumps the queue by typing a lot. Floods are
+bounded by mesh's inbound limits (20/min, 120/h per sender); context growth is
+handled by compaction. v2.0's LLM client does not stream, so aborting requires
+streaming reply generation (Ollama stopping on client disconnect to be
+verified on the pinned version).
+
+**Typing, per person.** Typing is tracked per (conversation, person). Mesh
+forwards both STARTED and STOPPED; v2.0 forwards only STARTED, and Joi
+receives the sender but keys typing by conversation only.
+- While the person is typing, their reply does not start; the worker serves
+  other Turns.
+- The person starts typing while their reply generates: generation is aborted.
+- Typing stopped without a message: the reply restarts with the same context.
+- Typing indicators can be disabled in Signal, so a new message always aborts
+  too; typing only makes it earlier.
+
+**Groups.** Only the person a reply belongs to can hold, abort or restart it.
+Other members' typing and messages never do; they are context for the next
+build. Like a group of people talking: when two write at once, whoever's reply
+goes out first is "now" and the other answers from slightly behind. Group
+typing behaviour is a separate policy point, deliberately simple in this first
+version and tuned separately later.
+
+**Reminders** run on the **time-critical line**, above the owner line:
+- A firing reminder goes out ahead of waiting replies; those replies include
+  it when they start (late binding).
+- It renders with a small, bounded context (open topic, last few messages,
+  whether a reply is being prepared), so it bridges into the conversation
+  rather than interrupting it.
+- The worker cannot interrupt a generation already running. If the reminder
+  cannot be rendered by its deadline, it is sent as **plain text without the
+  LLM, on time**. Deadline tolerance: to be decided.
+- A reminder is never merged into another message, never late because of
+  another Turn's cost, never lost.
+
+*Rejected:* merging a reminder into a queued reply. Under load it ties the
+reminder's delivery to that reply's generation time and queue position, which
+cannot be predicted.
+
+*Open:* note reminders. In v2.0 they are fixed text sent directly, bypassing
+the LLM and the queue; whether they become Turns is not decided.
+
+The contract — Turn ids, `related_to`, the person key, late binding, abort and
+restart hooks, the time-critical line, per-message perception — is part of
+the seam from day one. Behaviour built on it ships with the reply-path work.
 
 ## Phases
 
@@ -292,7 +339,10 @@ work.
 | 2026-10-04 | Contracts first: memory record, recall, turn pipeline, decision log are designed before features. |
 | 2026-10-04 | Memory record = shared envelope table plus per-kind detail tables (not one flat table, not per-table column contracts). Corrections supersede, forgetting expires; history is kept. |
 | 2026-10-04 | Turn pipeline: every outgoing message (reply, reaction, Wind, reminder) is a Turn through shared stages perceive → assemble → decide → render → validate → send/commit → log. Per conversation; existing priority queue (owner line, normal line) kept. |
-| 2026-10-04 | One Turn = at most one message; several Turns per conversation, linked by `related_to`. Reminders blend into a queued, unsealed reply as must-mention notices, else follow as a linked Turn; never interrupt generation, never lose a reminder. |
+| 2026-10-04 | One Turn = at most one message; several Turns per conversation, linked by `related_to`. Each inbound message is perceived once at arrival and its results stored immediately. |
+| 2026-10-04 | One open reply per (conversation, person), built late. Restarts on every new message from that person (abort while generating, drop before mesh), no cap; a restarted reply goes behind other people's waiting replies. |
+| 2026-10-04 | Typing tracked per (conversation, person); mesh forwards STARTED and STOPPED. In groups only the reply's own person can hold or restart it; group behaviour tuned separately later. |
+| 2026-10-04 | Reminders run on a time-critical line above the owner line, never merged into another message, plain-text fallback if not rendered by the deadline. Merging into queued replies rejected: unpredictable under load. |
 | 2026-10-04 | Recall returns typed items with "why it matched", never text. Purpose profiles replace per-caller knobs; scope enforced inside recall; current-only by default; degraded retrieval is flagged, never silent. First version reproduces v2.0 ranking. |
 
 ## Related Documents
