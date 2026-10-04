@@ -77,6 +77,8 @@ before v3 reaches beta:
 2. Unlinked Signal device not detected at runtime
 3. Failed proactive sends are silent (no retry, no awareness, no visibility)
 4. Failed HMAC rotations retry daily instead of hourly
+5. The scheduler freezes while a Wind or reminder message generates (no
+   tamper checks, other reminders or mesh contact meanwhile)
 
 ### Not in v3
 
