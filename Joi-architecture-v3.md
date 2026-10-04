@@ -63,6 +63,9 @@ limits.
 
 The order of the "Later" rows is not decided yet.
 
+Planned after these: **end-of-day reflection (self-improvement)** — see its
+section below.
+
 Scope limits in `wind-architecture-v2.md` ("Out of scope": no prompt-engine
 rewrite, no rework of Wind v1 phases 4a–5) are **lifted** where v3 needs it.
 That doc stays the detailed design for proactive behaviour.
@@ -352,6 +355,63 @@ at the decide stage — so `wind_decision_log` is replaced, not kept beside it.
 "forget" does not reach it unless debug detail has a short retention.
 Retention for both levels is to be decided.
 
+#### One emission point, two logs
+
+Each pipeline stage emits one event; two writers consume it, so the two logs
+can never drift apart:
+
+| Log | For | Content | Depends on mode |
+|-----|-----|---------|-----------------|
+| `turn_log` | People: debugging, measuring, answering "why" | Mechanics: ids, reason codes, outcomes, timings | Yes — detail grows with privacy off + debug on |
+| `joi_log` | Joi: something to build on | Meaning: moments worth remembering, in words an LLM can use | No — identical in every mode |
+
+`joi_log` records only real moments, not every tick — for example: "asked
+about the trip; he deflected", "he corrected me: the meeting is Tuesday",
+"the reminder went out as plain text, I was too busy to phrase it", "couldn't
+answer his question about X".
+
+**Stored as memory, not as a table.** `joi_log` entries are memory items of
+kind **episode** (seam 1) — Joi's memory of its own experiences. They are
+scoped per conversation, carry provenance (the messages and Turns they came
+from) so "forget" reaches episodes derived from forgotten items, and can be
+recalled like any memory. This is the start of the episodic memory in
+`ideas/memory-improvement-ideas.md`, beginning with Joi's own side.
+
+**One implementation, not two.** v2.0 already records two kinds of episode,
+stored as summaries with special types: `wind_outcome` (what a followed-up
+Wind topic resolved, plus the user's view) and `pause_marker` (a long-silence
+gap). Both reach reply context through summary search, and Wind's topic dedup
+reads `wind_outcome`. In v3 both become episodes written through `joi_log`.
+
+**Off by default.** The broad `joi_log` stream feeds the planned
+self-improvement, so it stays **off until that feature is built** — no data is
+collected for a consumer that does not exist yet. `wind_outcome` and
+`pause_marker` episodes stay **always on**, because v2.0 behaviour already
+uses them.
+
+**Rule:** behaviour may depend only on always-on episodes. The optional
+stream feeds self-improvement only, until a deliberate decision makes a kind
+always-on.
+
+### Planned: End-of-Day Reflection (self-improvement)
+
+Not in the first v3 phases; recorded so the seams leave room for it. Origin:
+`wind-architecture-v1.md`, "Self-Improvement (Autonomous)" (2026-03-13).
+
+- Runs in the existing end-of-day slot (per conversation, 03:00 local, after
+  the user has been quiet), out of pipeline, so it may spend LLM calls
+  generously.
+- Reads `joi_log` episodes and the day's messages — never `turn_log`, which is
+  for people and changes with the debug switch.
+- Writes its conclusions as ordinary, auditable memory: procedural rules
+  ("keep answers short", "don't bring up X"), fact confidence, topic
+  preferences — each with provenance to the episodes and messages behind it,
+  correctable and supersedable like any memory.
+- Safety: anything that changes Joi's behaviour automatically is a target for
+  manipulation (e.g. a group member steering Joi into a "rule"). Learned rules
+  are per conversation, marked inferred with a confidence, and some kinds may
+  require confirmation.
+
 ## Phases
 
 | Phase | Meaning |
@@ -378,6 +438,9 @@ Retention for both levels is to be decided.
 | 2026-10-04 | Typing tracked per (conversation, person); mesh forwards STARTED and STOPPED. In groups only the reply's own person can hold or restart it; group behaviour tuned separately later. |
 | 2026-10-04 | Reminders run on a time-critical line above the owner line, never merged into another message, plain-text fallback if not rendered by the deadline. Merging into queued replies rejected: unpredictable under load. |
 | 2026-10-04 | Decision log: one `turn_log` table is the main log, replacing `wind_decision_log`. Purpose: debugging, measuring, answering "why". Behaviour never depends on it. References not context; compact core always, extra detail only with privacy off and debug on. |
+| 2026-10-04 | One emission point feeds two logs: `turn_log` for people (mode-dependent detail) and `joi_log` for Joi (meaning, mode-independent). `joi_log` entries are memory items of kind episode. v2.0's `wind_outcome` and `pause_marker` summaries become episodes — one implementation. |
+| 2026-10-04 | `joi_log`'s broad stream is off by default until self-improvement is built; `wind_outcome` and `pause_marker` episodes stay always on. Behaviour may depend only on always-on episodes. |
+| 2026-10-04 | End-of-day reflection (self-improvement) is planned for later: reads `joi_log` and the day's messages, writes auditable memory with provenance. |
 | 2026-10-04 | Recall returns typed items with "why it matched", never text. Purpose profiles replace per-caller knobs; scope enforced inside recall; current-only by default; degraded retrieval is flagged, never silent. First version reproduces v2.0 ranking. |
 
 ## Related Documents
