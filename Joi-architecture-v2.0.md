@@ -635,6 +635,12 @@ Recorded so v3 can address them deliberately:
 4. **Failed HMAC rotations retry daily, not hourly.** The rotator supports an
    hourly retry interval, but it is only consulted from the once-per-day
    global tasks.
+5. **The scheduler freezes while a Wind or reminder message generates.** The
+   scheduler hands generation to the message queue and waits for the result
+   (600 s timeout, extended by heartbeats). Meanwhile no other scheduler work
+   runs: tamper detection, other reminders, config sync with mesh. Long
+   generations therefore also delay mesh contact (gap 1), and under load the
+   scheduler can be frozen most of the time.
 
 ---
 
