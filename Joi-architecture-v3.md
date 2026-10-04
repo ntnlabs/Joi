@@ -158,6 +158,46 @@ or operational state, not memory.
 envelope plus detail and reworking every read/write path in
 `memory/store.py`, in place.
 
+### Seam 2: Recall — items, not text
+
+**v2.0 today.** Each kind of memory has its own `*_as_context()` function
+that both searches and formats finished prompt text, each with its own token
+budget (facts 400, summaries 1500, knowledge 1500). `_build_enriched_prompt`
+in `api/server.py` concatenates those strings. Pinned facts, recently expired
+facts, notes and knowledge scopes are separate special cases; Wind calls the
+summary functions directly. Retrieval and formatting are coupled once per
+kind. The generic search core in `memory/hybrid.py` (eligible rows → vector +
+FTS → RRF fusion) is reused.
+
+**v3.** One recall call — roughly `recall(scope, query, purpose)` — returns a
+list of **items**, never text. Formatting moves to the turn pipeline's
+*assemble* stage (seam 3).
+
+Each item is a memory envelope (seam 1) plus **why it matched**: which
+retriever found it (words, meaning, or both) and its score.
+
+| Contract rule | Meaning |
+|---------------|---------|
+| Items, not text | Recall never formats prompts; callers decide presentation |
+| Purpose, not knobs | The caller states why it recalls (reply, Wind render, consolidation, debug). A purpose profile sets kinds, budgets, time windows and must-include items — "derive, don't tune" applied to memory |
+| Scope enforced inside | DM vs group, speaker attribution and knowledge scopes are applied in recall only, never by callers |
+| Current by default | Superseded and expired items are excluded unless the purpose asks for history; when included they are marked as past |
+| Visible degradation | If a retriever fails (e.g. embeddings unavailable), the result carries an explicit degraded flag and reason, logged via seam 4 — no silent fallback |
+
+v2.0 special cases become profile rules: pinned facts are "always include
+core facts"; the "past events" block is "include items whose validity ended
+in the last 7 days, marked as past".
+
+**What this buys:**
+- New metadata or new kinds reach every caller without changing any caller.
+- "Why it matched" separates direct answers from loosely related background.
+- Source on every item (stated vs inferred) is the basis for
+  anti-confabulation: "you told me" vs "I think".
+- Ranking can improve later (multi-signal, cross-kind) behind the same call.
+
+**First version reproduces v2.0 behaviour:** same per-kind budgets, same RRF
+fusion. Behaviour changes come later, as deliberate decisions.
+
 ## Phases
 
 | Phase | Meaning |
@@ -178,6 +218,7 @@ envelope plus detail and reworking every read/write path in
 | 2026-10-04 | Behavioural memory is the first feature; all other areas stay in scope. |
 | 2026-10-04 | Contracts first: memory record, recall, turn pipeline, decision log are designed before features. |
 | 2026-10-04 | Memory record = shared envelope table plus per-kind detail tables (not one flat table, not per-table column contracts). Corrections supersede, forgetting expires; history is kept. |
+| 2026-10-04 | Recall returns typed items with "why it matched", never text. Purpose profiles replace per-caller knobs; scope enforced inside recall; current-only by default; degraded retrieval is flagged, never silent. First version reproduces v2.0 ranking. |
 
 ## Related Documents
 
