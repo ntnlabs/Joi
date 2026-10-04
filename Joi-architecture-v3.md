@@ -234,6 +234,43 @@ ingress before the queue (dedupe, store, addressing) stays fast.
 | Queue decides when, pipeline decides how | Turns run through the existing message queue: one worker, owner line first, then normal line, FIFO within a line. Priority is a Turn property, so another line can be added later without ripple |
 | Behaviour preserved first | First version keeps today's per-message LLM calls (mood, fact detection, reply). Folding them into fewer calls is a later, deliberate change |
 
+#### Multiple Turns and blending
+
+**One Turn produces at most one message.** Several Turns can exist for the
+same conversation at once — a reply to the user and a reminder firing are two
+Turns. Each Turn has an id and an optional `related_to` link, and the
+assemble stage gets a "conversation right now" view: open dialogue and topic,
+Joi's last messages, and pending Turns for this conversation.
+
+**Sealing.** A Turn waiting in the queue has not built its prompt yet. It is
+**sealed** when the worker starts its assemble stage. Nothing is ever added to
+a sealed Turn; generation is never interrupted.
+
+**When a reminder fires:**
+
+| Situation | Outcome |
+|-----------|---------|
+| A reply Turn for this conversation is queued, not sealed | The reminder attaches to it as a **notice**; one message carries both |
+| The reply Turn is already sealed (generating) | The reminder becomes its own Turn, queued right behind, `related_to` the reply; it renders after the reply is sent and bridges from it |
+| No reply pending, dialogue quiet | Standalone reminder Turn |
+
+Whether the dialogue is open comes from the Wind v2 dialogue classifier (Q3).
+A reminder is never delayed to wait for a conversation; it only joins a reply
+that will run anyway.
+
+**Safety rules — a reminder must never vanish:**
+1. **Must-mention.** An attached reminder is a must-mention notice; the
+   validate stage checks the rendered reply contains it. If it was dropped,
+   the reminder goes out as its own Turn.
+2. **Release on failure.** If the host Turn fails or decides to stay silent,
+   its notices are released as their own Turn.
+3. **Atomic attach.** Attaching a notice and sealing a Turn are guarded by one
+   lock, so a notice cannot attach while the worker seals the Turn.
+
+The contract (Turn ids, `related_to`, sealing, notices, release) is part of
+the seam from day one. The blending behaviour itself ships with the reply-path
+work.
+
 ## Phases
 
 | Phase | Meaning |
@@ -255,6 +292,7 @@ ingress before the queue (dedupe, store, addressing) stays fast.
 | 2026-10-04 | Contracts first: memory record, recall, turn pipeline, decision log are designed before features. |
 | 2026-10-04 | Memory record = shared envelope table plus per-kind detail tables (not one flat table, not per-table column contracts). Corrections supersede, forgetting expires; history is kept. |
 | 2026-10-04 | Turn pipeline: every outgoing message (reply, reaction, Wind, reminder) is a Turn through shared stages perceive → assemble → decide → render → validate → send/commit → log. Per conversation; existing priority queue (owner line, normal line) kept. |
+| 2026-10-04 | One Turn = at most one message; several Turns per conversation, linked by `related_to`. Reminders blend into a queued, unsealed reply as must-mention notices, else follow as a linked Turn; never interrupt generation, never lose a reminder. |
 | 2026-10-04 | Recall returns typed items with "why it matched", never text. Purpose profiles replace per-caller knobs; scope enforced inside recall; current-only by default; degraded retrieval is flagged, never silent. First version reproduces v2.0 ranking. |
 
 ## Related Documents
