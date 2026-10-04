@@ -35,7 +35,7 @@ sysprep/                    # Deployment scripts (stage1-4)
 
 | Document | Description |
 |----------|-------------|
-| `Joi-architecture-v3.md` | **Current** - stateless mesh, config push |
+| `Joi-architecture-v2.0.md` | **Current** - architecture as shipped at tag v2.0 |
 | `Joi-threat-model.md` | Threat model and mitigations |
 | `api-contracts.md` | API specifications |
 | `policy-engine.md` | Security policy rules |

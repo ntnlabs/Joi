@@ -1,7 +1,7 @@
 # Joi Architecture v2 (Security-Hardened)
 
-> **SUPERSEDED:** This document has been superseded by `Joi-architecture-v3.md`.
-> Key changes in v3: stateless mesh, config push from Joi, HMAC rotation, privacy mode, kill switch, tamper detection.
+> **SUPERSEDED:** This document has been superseded by `Joi-architecture-v2.0.md` (as shipped at tag v2.0).
+> Key changes since this draft: stateless mesh, config push from Joi, HMAC rotation, privacy mode, kill switch, tamper detection.
 > This file is retained for historical reference only.
 
 ---

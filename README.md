@@ -184,7 +184,7 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 
 | Document | Description |
 |----------|-------------|
-| [Joi-architecture-v3.md](Joi-architecture-v3.md) | Current architecture (stateless mesh) |
+| [Joi-architecture-v2.0.md](Joi-architecture-v2.0.md) | Current architecture, as shipped at tag v2.0 |
 | [Joi-threat-model.md](Joi-threat-model.md) | Threat analysis and mitigations |
 | [commands.md](commands.md) | User-facing Signal commands |
 | [wind-config.md](wind-config.md) | Wind configuration reference & tuning guide |

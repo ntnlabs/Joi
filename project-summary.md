@@ -157,7 +157,7 @@ sysprep/                    # VM provisioning scripts (stage1–4)
 | `env-reference.md` | All environment variables with defaults |
 | `comms-matrix.md` | Network flows, ports, VM IPs |
 | `sensitive-config.md` | Secrets and deployment checklist (not in git) |
-| `Joi-architecture-v3.md` | Current architecture (security-hardened) |
+| `Joi-architecture-v2.0.md` | Current architecture, as shipped at tag v2.0 |
 | `wind-architecture-v1.md` | Wind proactive messaging full design |
 | `wind-config.md` | Wind config reference — all variables, formulas, tuning guide |
 | `system-channel.md` | System Channel & LLM Services specification |
