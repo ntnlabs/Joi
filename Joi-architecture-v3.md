@@ -59,7 +59,7 @@ limits.
 | Reply-path behaviour: sitrep, match/counter/mimic, mood drift on replies | `wind-architecture-v2.md` | Later |
 | Proactive rhythm: intent dispatcher, morning/evening, dialogue follow-up, topic carry, spark | `wind-architecture-v2.md` | Later |
 | Evaluation harness for memory and behaviour | `ideas/memory-improvement-ideas.md` | Later |
-| Deep memory rework: episodes, richer metadata, provenance, multi-signal retrieval | `ideas/memory-improvement-ideas.md`, `ideas/memory-scaling-ideas.md` | Later |
+| Deep memory rework: episodes about the user's life, richer metadata, broader provenance, multi-signal retrieval (seam 1 already provides the fields) | `ideas/memory-improvement-ideas.md`, `ideas/memory-scaling-ideas.md` | Later |
 
 The order of the "Later" rows is not decided yet.
 
@@ -86,7 +86,8 @@ before v3 reaches beta:
 ### Not in v3
 
 - New capabilities (see Principle 4)
-- Multi-user coordination of group-chat rhythm (per-conversation only)
+- Coordinating proactive (Wind) rhythm across the members of a group chat;
+  Wind stays per conversation
 
 ## Approach: Contracts First
 
@@ -105,12 +106,11 @@ depends on; what sits behind it can change without touching callers.
    inputs and outputs. Generalises the Wind v2 intent dispatcher to replies.
 4. **Decision log.** One structured, privacy-safe record of what was used,
    what was decided and why. Feeds the evaluation harness and Wind governance
-   ("why sent / why not sent").
+   ("why sent / why not sent"). The same emission point also feeds `joi_log`,
+   Joi's own episode memory.
 
 These seams reshape `execution/joi/memory/store.py` and the reply flow in
 `execution/joi/api/server.py` in place, into a few clear modules.
-
-*Each seam's detailed design is added below as it is agreed.*
 
 ### Seam 1: Memory Record — envelope plus per-kind detail
 
@@ -128,7 +128,7 @@ Envelope (common to all kinds):
 
 | Field | Purpose |
 |-------|---------|
-| kind | fact, summary, knowledge, note; later episode, rule |
+| kind | fact, summary, knowledge, note, episode; later rule |
 | scope | conversation the memory belongs to (or global) |
 | speaker | who it came from (first-class for group chats) |
 | source | stated, inferred, admin, ingested |
@@ -345,7 +345,7 @@ at the decide stage — so `wind_decision_log` is replaced, not kept beside it.
 
 | Contract rule | Meaning |
 |---------------|---------|
-| Behaviour never depends on the log | Anything Joi needs about its own past to *behave* (failed attempts, pending Turns) lives in state. Reading the log to *explain* itself is allowed. Debug mode and retention therefore never change behaviour |
+| Behaviour never depends on `turn_log` | Anything Joi needs about its own past to *behave* (failed attempts, pending Turns) lives in state or in always-on episodes (see `joi_log` below). Reading `turn_log` to *explain* itself is allowed. Debug mode and retention therefore never change behaviour |
 | References, not context | Rows hold ids (messages, memory items), reason codes, outcomes, timings, model. The full context is never logged |
 | Two levels of detail | **Always:** a compact core, identical in every mode. **Privacy off + debug on:** extra human-readable detail — gate values, impulse factors, detected mood and commands, the sitrep, prompt section sizes, possibly the sent text |
 | Full prompts stay out | Complete prompts remain brain debug's job, in its separate opt-in files |
@@ -421,6 +421,18 @@ Not in the first v3 phases; recorded so the seams leave room for it. Origin:
 
 *Further phase criteria to be defined.*
 
+## Open Questions
+
+| Question | Where |
+|----------|-------|
+| Implementation order of the "Later" scope rows | Scope |
+| Phase criteria beyond beta | Phases |
+| Reminder deadline tolerance (how late is still "on time") | Seam 3, reminders |
+| Whether note reminders become Turns | Seam 3, reminders |
+| Group typing and hold behaviour (tuned separately) | Seam 3, groups |
+| Does Ollama stop generating on client disconnect (pinned version)? | Seam 3, restarts |
+| Retention of `turn_log`, both levels of detail | Seam 4 |
+
 ## Decisions
 
 | Date | Decision |
@@ -432,7 +444,8 @@ Not in the first v3 phases; recorded so the seams leave room for it. Origin:
 | 2026-10-04 | Behavioural memory is the first feature; all other areas stay in scope. |
 | 2026-10-04 | Contracts first: memory record, recall, turn pipeline, decision log are designed before features. |
 | 2026-10-04 | Memory record = shared envelope table plus per-kind detail tables (not one flat table, not per-table column contracts). Corrections supersede, forgetting expires; history is kept. |
-| 2026-10-04 | Turn pipeline: every outgoing message (reply, reaction, Wind, reminder) is a Turn through shared stages perceive → assemble → decide → render → validate → send/commit → log. Per conversation; existing priority queue (owner line, normal line) kept. |
+| 2026-10-04 | Recall returns typed items with "why it matched", never text. Purpose profiles replace per-caller knobs; scope enforced inside recall; current-only by default; degraded retrieval is flagged, never silent. First version reproduces v2.0 ranking. |
+| 2026-10-04 | Turn pipeline: every outgoing message (reply, reaction, Wind, reminder) is a Turn through shared stages perceive → assemble → decide → render → validate → send/commit → log. Per conversation; the priority queue is kept and gains a time-critical line (below). |
 | 2026-10-04 | One Turn = at most one message; several Turns per conversation, linked by `related_to`. Each inbound message is perceived once at arrival and its results stored immediately. |
 | 2026-10-04 | One open reply per (conversation, person), built late. Restarts on every new message from that person (abort while generating, drop before mesh), no cap; a restarted reply goes behind other people's waiting replies. |
 | 2026-10-04 | Typing tracked per (conversation, person); mesh forwards STARTED and STOPPED. In groups only the reply's own person can hold or restart it; group behaviour tuned separately later. |
@@ -441,7 +454,6 @@ Not in the first v3 phases; recorded so the seams leave room for it. Origin:
 | 2026-10-04 | One emission point feeds two logs: `turn_log` for people (mode-dependent detail) and `joi_log` for Joi (meaning, mode-independent). `joi_log` entries are memory items of kind episode. v2.0's `wind_outcome` and `pause_marker` summaries become episodes — one implementation. |
 | 2026-10-04 | `joi_log`'s broad stream is off by default until self-improvement is built; `wind_outcome` and `pause_marker` episodes stay always on. Behaviour may depend only on always-on episodes. |
 | 2026-10-04 | End-of-day reflection (self-improvement) is planned for later: reads `joi_log` and the day's messages, writes auditable memory with provenance. |
-| 2026-10-04 | Recall returns typed items with "why it matched", never text. Purpose profiles replace per-caller knobs; scope enforced inside recall; current-only by default; degraded retrieval is flagged, never silent. First version reproduces v2.0 ranking. |
 
 ## Related Documents
 
