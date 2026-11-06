@@ -14,7 +14,7 @@
 
 services:
   ollama:
-    image: ollama/ollama:0.30.7
+    image: ollama/ollama:0.40.14
     container_name: ollama
     restart: unless-stopped
     # Use the default docker0 bridge network (same as `docker run` without
@@ -24,7 +24,9 @@ services:
     # 10.42.0.10:11434 works fine. Pin to bridge so localhost routing works.
     network_mode: bridge
     ports:
-      - "11434:11434"
+      # Loopback only: joi-api is the only client. A plain "11434:11434"
+      # publishes on all interfaces, and Docker's iptables rules bypass UFW.
+      - "127.0.0.1:11434:11434"
     environment:
       # Bind to all interfaces inside the container so the published
       # port reaches the host.
