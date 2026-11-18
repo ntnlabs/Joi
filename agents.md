@@ -87,7 +87,7 @@ python -m py_compile execution/joi/api/server.py
 - Imperative mood: "Add feature" not "Added feature"
 - Co-author tag for AI assistance:
   ```
-  Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
+  Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
   ```
 
 ## Security
