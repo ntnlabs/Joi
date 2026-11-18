@@ -31,7 +31,7 @@ CORE_FACT_KEYS: frozenset[tuple[str, str]] = frozenset({
     ("health", "critical_condition"),
 })
 
-MAX_CORE_FACTS: int = 20
+MAX_CORE_FACTS: int = 40
 
 
 def is_pinned(
