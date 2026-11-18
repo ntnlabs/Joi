@@ -25,8 +25,9 @@ PARAMETER temperature 0.1
 # Top-p: low for focused, deterministic output
 PARAMETER top_p 0.3
 
-# Context window (tokens) - small context is fine for this task
-PARAMETER num_ctx 2048
+# Context window (tokens) - same as the other Modelfiles so switching to this
+# model doesn't make Ollama reload the shared base model
+PARAMETER num_ctx 8192
 
 # Max tokens to generate - we only need ~50 for JSON output
 PARAMETER num_predict 100
