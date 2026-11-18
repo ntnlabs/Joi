@@ -91,7 +91,7 @@ Prompts directory structure:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_FACTS_FTS_ENABLED` | `1` | Enable facts full-text search context injection |
-| `JOI_FACTS_FTS_MAX_TOKENS` | `300` | Max tokens for facts FTS context |
+| `JOI_FACTS_FTS_MAX_TOKENS` | `800` | Max tokens for facts FTS context |
 | `JOI_SUMMARIES_FTS_ENABLED` | `1` | Enable summaries full-text search context injection |
 | `JOI_SUMMARIES_FTS_MAX_TOKENS` | `400` | Max tokens for summaries FTS context |
 

@@ -318,7 +318,7 @@ RAG_MIN_BM25 = float(os.getenv("JOI_RAG_MIN_BM25", "-0.5"))             # bm25, 
 
 # FTS search settings for facts and summaries
 FACTS_FTS_ENABLED = os.getenv("JOI_FACTS_FTS_ENABLED", "1") == "1"  # Default: enabled
-FACTS_FTS_MAX_TOKENS = int(os.getenv("JOI_FACTS_FTS_MAX_TOKENS", "400"))
+FACTS_FTS_MAX_TOKENS = int(os.getenv("JOI_FACTS_FTS_MAX_TOKENS", "800"))
 SUMMARIES_FTS_ENABLED = os.getenv("JOI_SUMMARIES_FTS_ENABLED", "1") == "1"  # Default: enabled
 SUMMARIES_FTS_MAX_TOKENS = int(os.getenv("JOI_SUMMARIES_FTS_MAX_TOKENS", "1500"))
 FTS_CONTEXT_MESSAGES = int(os.getenv("JOI_FTS_CONTEXT_MESSAGES", "3"))  # Recent user turns used as FTS query
@@ -2544,7 +2544,7 @@ def _generate_proactive_message(
         )
         core_facts_text = ""
         if pinned_facts:
-            lines = [f"- {f.key}: {f.value}" for f in pinned_facts[:20]]
+            lines = [f"- {f.key}: {f.value}" for f in pinned_facts]
             core_facts_text = "What you know about them:\n" + "\n".join(lines) + "\n\n"
         mood_line = (
             f"Their last observed mood: {emotional_context}\n\n"
