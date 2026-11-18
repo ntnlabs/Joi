@@ -14,10 +14,12 @@ of these signals fire (in priority order):
   3. Hardcoded `(category, key)` whitelist (`CORE_FACT_KEYS`) — auto-pinning by
      category for things every conversation needs (name, language, allergies).
 
-Bounded by `MAX_CORE_FACTS` per conversation to prevent prompt-budget overflow.
+Bounded by `MAX_CORE_FACTS` (`JOI_MAX_PINNED_FACTS`) per conversation to prevent
+prompt-budget overflow.
 """
 
 from __future__ import annotations
+import os
 from typing import Optional
 
 
@@ -31,7 +33,10 @@ CORE_FACT_KEYS: frozenset[tuple[str, str]] = frozenset({
     ("health", "critical_condition"),
 })
 
-MAX_CORE_FACTS: int = 40
+MAX_CORE_FACTS: int = int(os.getenv("JOI_MAX_PINNED_FACTS", "40"))
+# SQLite treats a negative LIMIT as no limit, so reject it rather than run uncapped.
+if MAX_CORE_FACTS < 1:
+    raise ValueError(f"JOI_MAX_PINNED_FACTS must be >= 1, got {MAX_CORE_FACTS}")
 
 
 def is_pinned(

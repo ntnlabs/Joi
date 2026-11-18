@@ -91,7 +91,8 @@ Prompts directory structure:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `JOI_FACTS_FTS_ENABLED` | `1` | Enable facts full-text search context injection |
-| `JOI_FACTS_FTS_MAX_TOKENS` | `800` | Max tokens for facts FTS context |
+| `JOI_FACTS_FTS_MAX_TOKENS` | `800` | Max tokens for facts context; pinned facts use it first (raise with `JOI_MAX_PINNED_FACTS`) |
+| `JOI_MAX_PINNED_FACTS` | `40` | Max pinned facts injected per conversation (raise with `JOI_FACTS_FTS_MAX_TOKENS`) |
 | `JOI_SUMMARIES_FTS_ENABLED` | `1` | Enable summaries full-text search context injection |
 | `JOI_SUMMARIES_FTS_MAX_TOKENS` | `400` | Max tokens for summaries FTS context |
 

@@ -133,7 +133,11 @@ JOI_RAG_ENABLED=1
 # --- Facts & Summaries FTS ---
 # Full-text search context injection (facts and conversation summaries)
 #JOI_FACTS_FTS_ENABLED=1
+# Facts budget (tokens) and pinned facts cap work together: pinned facts are
+# injected first and use up the budget, search-matched facts only get what is
+# left. Beyond the cap the oldest pinned facts are dropped. Raise both together.
 #JOI_FACTS_FTS_MAX_TOKENS=800
+#JOI_MAX_PINNED_FACTS=40
 #JOI_SUMMARIES_FTS_ENABLED=1
 #JOI_SUMMARIES_FTS_MAX_TOKENS=1500
 #JOI_FTS_CONTEXT_MESSAGES=3
