@@ -21,8 +21,9 @@ PARAMETER temperature 0.8
 PARAMETER top_p 0.9
 
 # Context window (tokens the model can "see")
-# 4096 is good for GTX 1650 (4GB VRAM)
-PARAMETER num_ctx 4096
+# Same value in every Modelfile: models built from the same base share one
+# loaded copy only when num_ctx matches, otherwise Ollama reloads it
+PARAMETER num_ctx 8192
 
 # Stop sequences - model stops generating when it sees these
 PARAMETER stop "<|eot_id|>"
