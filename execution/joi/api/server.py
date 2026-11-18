@@ -64,6 +64,7 @@ configure_logging()
 from ingestion import run_auto_ingestion, INGESTION_DIR
 from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
+from memory.pinning import MAX_CORE_FACTS  # import here so a bad JOI_MAX_PINNED_FACTS fails at startup
 
 # Import Wind module (path already set above)
 from wind import WindOrchestrator, WindConfig
@@ -4550,6 +4551,8 @@ def main():
         "mesh_url": settings.mesh_url,
         "memory_db": os.getenv("JOI_MEMORY_DB", "/var/lib/joi/memory.db"),
         "context_messages": CONTEXT_MESSAGE_COUNT,
+        "facts_max_tokens": FACTS_FTS_MAX_TOKENS,
+        "max_pinned_facts": MAX_CORE_FACTS,
         "prompts_dir": str(PROMPTS_DIR),
         "cooldown_dm": RESPONSE_COOLDOWN_DM_SECONDS,
         "cooldown_group": RESPONSE_COOLDOWN_GROUP_SECONDS
