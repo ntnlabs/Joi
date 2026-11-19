@@ -117,6 +117,13 @@ def vec_search(
     """
     if not eligible:
         return []
+    # A single eligible row is its own nearest neighbour. Querying it would not
+    # work: SQLite rewrites `rowid IN (?)` to `rowid = ?`, which vec0 cannot
+    # combine with KNN. SQLite >= 3.47 then fails the query ("A LIMIT or
+    # 'k = ?' constraint is required"); older versions take the global top-N
+    # and filter after, so the row is usually missed.
+    if len(eligible) == 1:
+        return list(eligible)
     placeholders = ",".join("?" for _ in eligible)
     sql = f"""
         SELECT rowid
