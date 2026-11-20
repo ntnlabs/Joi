@@ -150,7 +150,8 @@ What that costs depends on how the GPU is connected:
   per role keeps more of the model in VRAM. Different values per Modelfile
   pay off.
 - **eGPU over Thunderbolt**: every reload crosses the Thunderbolt link and is
-  slow. Use one value in every Modelfile built from the same base.
+  slower. Prefer one value in every Modelfile built from the same base, and
+  reload only when a role has a real reason to need a different context.
 
 Models with a different base (translation, embeddings) always load
 separately, whatever their `num_ctx`. On a small card they push the main
