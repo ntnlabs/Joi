@@ -83,6 +83,28 @@ before v3 reaches beta:
 5. The scheduler freezes while a Wind or reminder message generates (no
    tamper checks, other reminders or mesh contact meanwhile)
 
+### Priority: memory that ages
+
+Reported from daily use on 2026-11-20. This is the priority for memory work.
+It is about how memories age and how Joi handles them over time, not about
+pinning.
+
+What Joi gets wrong:
+
+- **Old things resurface.** Memories that should have worn out long ago come
+  back in replies as if they were current.
+- **Joi doesn't follow the conversation.** Two exchanges after being told
+  something, Joi asks about it again.
+- **Events don't move through time.** "I have the tire exchange tomorrow"
+  must become "it happened" once the day passes. Then Joi may ask "how did
+  the tire exchange go?", never "when are you doing the tires?". Later it
+  fades.
+
+Not known yet: whether this is a v2.0 bug (possibly made more visible by the
+move to new hardware) or a gap in the design. The first step is to check
+v2.0 against production logs. A bug gets fixed on `main`; a design gap gets
+designed here.
+
 ### Not in v3
 
 - New capabilities (see Principle 4)
@@ -456,6 +478,7 @@ seams; they slot in between steps.
 | Group typing and hold behaviour (tuned separately) | Seam 3, groups |
 | Does Ollama stop generating on client disconnect (pinned version)? | Seam 3, restarts |
 | Retention of `turn_log`, both levels of detail | Seam 4 |
+| Where memory aging lands in the build order (depends on whether v2.0 has a bug) | Scope, Priority |
 
 ## Decisions
 
@@ -479,6 +502,7 @@ seams; they slot in between steps.
 | 2026-10-04 | `joi_log`'s broad stream is off by default until self-improvement is built; `wind_outcome` and `pause_marker` episodes stay always on. Behaviour may depend only on always-on episodes. |
 | 2026-10-04 | End-of-day reflection (self-improvement) is planned for later: reads `joi_log` and the day's messages, writes auditable memory with provenance. |
 | 2026-10-04 | Build order: safety net (deterministic regression checks) first, then seams 1–4 in order, then behavioural memory. Remaining beta gaps slot in between steps. |
+| 2026-11-20 | Memory that ages is the priority for memory work: old memories wear out, Joi follows what was just said, events move from planned to happened to faded. Not pinning. First step: find out whether v2.0 has a bug or a design gap. |
 
 ## Related Documents
 
