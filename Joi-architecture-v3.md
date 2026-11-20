@@ -91,8 +91,12 @@ pinning.
 
 What Joi gets wrong:
 
-- **Old things resurface.** Memories that should have worn out long ago come
-  back in replies as if they were current.
+- **Facts that stopped being true stay current.** When something changes,
+  the facts it makes untrue stay in memory as if nothing happened. Example:
+  someone says they sold their car; two conversations later Joi asks how the
+  car is running. Even a direct correction may not retire the old fact.
+  Age is not the test: an old fact can still be true and important (an
+  allergy) and must come back when it matters.
 - **Joi doesn't follow the conversation.** Two exchanges after being told
   something, Joi asks about it again.
 - **Events don't move through time.** "I have the tire exchange tomorrow"
@@ -100,10 +104,24 @@ What Joi gets wrong:
   the tire exchange go?", never "when are you doing the tires?". Later it
   fades.
 
-Not known yet: whether this is a v2.0 bug (possibly made more visible by the
-move to new hardware) or a gap in the design. The first step is to check
-v2.0 against production logs. A bug gets fixed on `main`; a design gap gets
-designed here.
+**Found in v2.0 (2026-11-20): stale facts are a design gap.** v2.0 changes a
+stored fact only when a new fact has the same category and key (it is
+overwritten) or when a fact saved with an expiry time expires. Nothing
+retires a fact because a newer fact makes it untrue. Seam 1 already has the
+mechanism (`superseded_by`, `valid_until`, history kept), and seam 2 recalls
+only current items by default, marking past ones as past. What is missing is
+deciding which old facts a new fact makes untrue: a direct correction ("I
+don't do that anymore") and a change with consequences (the car is sold, so
+facts about driving it end too).
+
+The move to new hardware did not cause this but made it more visible: the
+larger facts budget lets more facts into each reply, so stale ones show up
+more often.
+
+Not known yet for the other two symptoms (asking again, events not moving
+through time): whether they are v2.0 bugs or design gaps. The next step is
+to check v2.0 against production logs. A bug gets fixed on `main`; a design
+gap gets designed here.
 
 ### Not in v3
 
@@ -502,7 +520,7 @@ seams; they slot in between steps.
 | 2026-10-04 | `joi_log`'s broad stream is off by default until self-improvement is built; `wind_outcome` and `pause_marker` episodes stay always on. Behaviour may depend only on always-on episodes. |
 | 2026-10-04 | End-of-day reflection (self-improvement) is planned for later: reads `joi_log` and the day's messages, writes auditable memory with provenance. |
 | 2026-10-04 | Build order: safety net (deterministic regression checks) first, then seams 1–4 in order, then behavioural memory. Remaining beta gaps slot in between steps. |
-| 2026-11-20 | Memory that ages is the priority for memory work: old memories wear out, Joi follows what was just said, events move from planned to happened to faded. Not pinning. First step: find out whether v2.0 has a bug or a design gap. |
+| 2026-11-20 | Memory that ages is the priority for memory work: facts that stopped being true are retired (age alone is not the test; old true facts stay), Joi follows what was just said, events move from planned to happened to faded. Not pinning. Stale facts are a v2.0 design gap: nothing retires a fact that a newer one makes untrue. |
 
 ## Related Documents
 
