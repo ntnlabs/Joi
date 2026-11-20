@@ -54,8 +54,7 @@ limits.
 8. **Dynamic, not switches.** v3 works out at runtime what v2.0 leaves to
    manual settings: context sizes, prompt budgets, caps. Only a few settings
    remain. Swapping models is allowed, also over Thunderbolt, when there is a
-   reason. One idea: a VRAM planner that checks the GPU and picks a strategy
-   and how memory is split.
+   reason. One idea: a VRAM planner (see "Planned: VRAM planner").
 
 ## Scope
 
@@ -145,11 +144,15 @@ pinning and extends the core / non-core split already planned in
 | Tier | Like | Holds |
 |------|------|-------|
 | Core | Core memories | A few defining facts: names, birthplace, sexual orientation |
-| Today | Short-term memory | What was learned during the day, possibly without a size limit |
+| Day log | Short-term memory | Facts from the day's conversation, written late, as messages leave the context |
+| Buffer | Short-term plans | "Semi-now" facts within about 3–4 days of now: what will happen (plans for the weekend, the tire exchange tomorrow) or just happened |
 | Long-term | Long-term memory | What end-of-day processing makes of each day |
 
-At the end of the day the day's facts are processed into core and long-term
-memories, in the existing end-of-day slot. Details are still to be designed.
+The daily part has two jobs, day log and buffer, so this may become four
+tiers rather than three. At the end of the day the day's facts are processed
+into core and long-term memories, in the existing end-of-day slot. Tier
+names, count and the mapping from v2.0 pinning are still open; v3 does not
+need a simple path from v2.0.
 
 ### Not in v3
 
@@ -480,6 +483,23 @@ Not in the first v3 phases; recorded so the seams leave room for it. Origin:
   are per conversation, marked inferred with a confidence, and some kinds may
   require confirmation.
 
+### Planned: VRAM planner
+
+Recorded 2026-11-20; not designed yet. Serves principle 8.
+
+- **Runs once**, at install and after a hardware change, not at every service
+  start. It rewrites the Modelfiles, so the models are rebuilt.
+- **Looks at** the GPU and its VRAM; whether the GPU is internal or external
+  (e.g. a Thunderbolt eGPU), which decides whether to plan for model swaps;
+  and the models in use, read from the Modelfiles.
+- **Decides** the context size per Modelfile and how memory is split (prompt
+  budgets).
+- **Starts from** the two configurations Joi has run on
+  (`execution/joi/README.md`, "Context Size and GPU Memory"): a GTX 1650 4 GB
+  internal and an RTX 3080 12 GB over Thunderbolt.
+- `joi-setup` already reads model details from Ollama (`/api/tags`,
+  `/api/show`), so it is a natural home.
+
 ## Build Order
 
 Each step is shipped and observed before the next. Each step gets its own
@@ -525,8 +545,8 @@ seams; they slot in between steps.
 | Does Ollama stop generating on client disconnect (pinned version)? | Seam 3, restarts |
 | Retention of `turn_log`, both levels of detail | Seam 4 |
 | Where memory aging lands in the build order (depends on whether v2.0 has a bug) | Scope, Priority |
-| How the memory tiers map to superpinned / pinned / regular, and what each tier puts into a reply | Scope, Priority |
-| VRAM planner: what it measures and what it decides | Principle 8 |
+| Memory tiers: three or four, their names, how v2.0 pinning maps onto them, and what each puts into a reply | Scope, Priority |
+| VRAM planner: how it tells an internal GPU from an external one, and how it sizes models it has no known values for | Planned: VRAM planner |
 
 ## Decisions
 
@@ -555,6 +575,8 @@ seams; they slot in between steps.
 | 2026-11-20 | Pinning and recall join the memory priority (extends the first 2026-11-20 row, which excluded pinning): a mentioned subject must not pull in every related fact, and pinned facts must not all go into every reply. |
 | 2026-11-20 | Dynamic, not switches: v3 works out context sizes, prompt budgets and caps at runtime; only a few settings remain. Swapping models is allowed, also over Thunderbolt, when there is a reason. |
 | 2026-11-20 | Direction for memory: three tiers like human memory (core, today, long-term); end-of-day processing turns the day's facts into core and long-term memories. Replaces v2.0 pinning; details to design. |
+| 2026-11-20 | The daily part of memory has two jobs: a day log of facts (written late, as messages leave the context) and a buffer of semi-now facts (about 3–4 days around now). Possibly four tiers; names and mapping later. |
+| 2026-11-20 | The VRAM planner, if built, runs once (install or hardware change) and rewrites the Modelfiles; it does not run at every service start. |
 
 ## Related Documents
 
