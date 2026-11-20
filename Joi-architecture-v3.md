@@ -157,6 +157,28 @@ The rest carry an **age value**, higher meaning more important: buffer facts
 highest, then extended context facts, then facts. Extended context facts
 therefore resurface sooner than facts.
 
+**Direction for stale facts (2026-11-21).**
+
+- **Facts form a mesh, not a table.** Each fact links to the things it is
+  about (a company, a person, a place), so Joi knows which facts belong
+  together.
+- **A fact that stops being true becomes past.** It gets an end date
+  (`valid_until`, seam 1) and is kept. Recall leaves past facts out unless
+  the purpose asks for history (seam 2). Like Wind's topic undertaker: buried,
+  not deleted, and dug up in special cases.
+- **Endings cascade through the mesh.** When a new fact ends an old one ("the
+  company shut down" ends "I work at the company"), the end-of-day tasks go
+  through the facts linked to it and decide for each whether it ends too.
+  This is a judgment, not a rule: "I worked with John" ends, "John is my
+  friend" stays. It is LLM work, done off the reply path.
+- **Until the end-of-day run,** the new fact sits in the buffer with the
+  highest age value. That is enough to outweigh the old fact in replies; no
+  extra check when a fact is written.
+
+Graphiti, listed as an optional experiment in
+`ideas/memory-improvement-ideas.md`, uses the same model: facts as links
+between things, each valid for a time, ended by newer facts.
+
 Names settled 2026-11-21. The mapping from v2.0 pinning is still open; v3
 does not need a simple path from v2.0.
 
@@ -557,6 +579,7 @@ seams; they slot in between steps.
 | How v2.0 pinning maps onto the memory tiers | Scope, Priority |
 | How age value combines with relevance when recall picks facts | Scope, Priority |
 | What an extended context fact becomes after its 3–4 days (a fact, or it fades) | Scope, Priority |
+| How links between facts (the mesh) are found and stored | Scope, Priority |
 | VRAM planner: how autodetection tells an internal GPU from an external one, and how it sizes models it has no known values for | Planned: VRAM planner |
 
 ## Decisions
@@ -590,6 +613,7 @@ seams; they slot in between steps.
 | 2026-11-21 | Memory names: three tiers, **core facts**, **extended context facts** (about 3–4 days around now, to help context) and **facts** (the rest). Beside them the **buffer** holds a day's worth of possible facts, filled as messages leave the context, and the end-of-day tasks process it. Mapping from v2.0 pinning later. |
 | 2026-11-21 | VRAM planner autodetects internal vs external GPU and asks whether that is right; a command-line option skips detection and sets it. Every Modelfile is backed up before it is changed. |
 | 2026-11-21 | Core facts always go into the context. The other tiers carry an age value (higher = more important): buffer facts > extended context facts > facts, so extended context facts resurface sooner than facts. |
+| 2026-11-21 | Stale facts: facts form a mesh (links to the things they are about). A fact that stops being true becomes past: kept, recalled only for history, like the topic undertaker. The end-of-day tasks cascade an ending through linked facts, judging each one. Until then the buffer's age value is enough to outweigh the old fact; no extra check at write time. |
 
 ## Related Documents
 
