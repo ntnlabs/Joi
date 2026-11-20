@@ -137,6 +137,43 @@ JOI_OLLAMA_MODEL=joi
 
 Changes require re-running `ollama create` to take effect.
 
+### Context Size and GPU Memory
+
+Ollama keeps one loaded copy of a base model and reuses it for every
+Modelfile built from that base, but only while they all use the same
+`num_ctx`. A request with a different `num_ctx` makes Ollama unload the model
+and load it again with the new context.
+
+What that costs depends on how the GPU is connected:
+
+- **Internal GPU** (e.g. GTX 1650): reloads are quick, and a smaller context
+  per role keeps more of the model in VRAM. Different values per Modelfile
+  pay off.
+- **eGPU over Thunderbolt**: every reload crosses the Thunderbolt link and is
+  slow. Use one value in every Modelfile built from the same base.
+
+Models with a different base (translation, embeddings) always load
+separately, whatever their `num_ctx`. On a small card they push the main
+model out of VRAM.
+
+Values Joi has run with:
+
+| Modelfile | Role | GTX 1650, 4 GB, internal | RTX 3080, 12 GB, Thunderbolt eGPU |
+|-----------|------|--------------------------|-----------------------------------|
+| `Modelfile.example` | Main replies (template) | 4096 | 8192 |
+| `Modelfile_detector` | Intent and mood detection | 4096 | 8192 |
+| `Modelfile_curiosity` | Wind topics | 6144 | 8192 |
+| `Modelfile_consolidator` | Fact extraction and summaries | 8192 | 8192 |
+| `Modelfile_engagement` | Wind engagement | 2048 | 8192 |
+| `Modelfile_translate_*` | Translation (different base) | 2048 | 8192 |
+
+The prompt budgets were raised with the larger card: `JOI_FACTS_FTS_MAX_TOKENS`
+400 on the 1650, 800 on the 3080; `JOI_MAX_PINNED_FACTS` 20 and 40.
+
+The repo ships the 3080 values. For a 4 GB card, change `PARAMETER num_ctx`
+in each Modelfile and run `ollama create` again. `JOI_OLLAMA_NUM_CTX` in
+`/etc/default/joi-api` overrides every Modelfile with one value.
+
 ### Multiple Model Variants
 
 Create different models for different use cases:
