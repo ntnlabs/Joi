@@ -152,6 +152,11 @@ is filled late, as messages leave the context (until then the context still
 holds them). The end-of-day tasks (per conversation, at 03:00 local) process
 the buffer.
 
+**Weight in recall (2026-11-21).** Core facts always go into the context.
+The rest carry an **age value**, higher meaning more important: buffer facts
+highest, then extended context facts, then facts. Extended context facts
+therefore resurface sooner than facts.
+
 Names settled 2026-11-21. The mapping from v2.0 pinning is still open; v3
 does not need a simple path from v2.0.
 
@@ -549,7 +554,9 @@ seams; they slot in between steps.
 | Does Ollama stop generating on client disconnect (pinned version)? | Seam 3, restarts |
 | Retention of `turn_log`, both levels of detail | Seam 4 |
 | Where memory aging lands in the build order (depends on whether v2.0 has a bug) | Scope, Priority |
-| How v2.0 pinning maps onto the memory tiers, and what each tier puts into a reply | Scope, Priority |
+| How v2.0 pinning maps onto the memory tiers | Scope, Priority |
+| How age value combines with relevance when recall picks facts | Scope, Priority |
+| What an extended context fact becomes after its 3–4 days (a fact, or it fades) | Scope, Priority |
 | VRAM planner: how autodetection tells an internal GPU from an external one, and how it sizes models it has no known values for | Planned: VRAM planner |
 
 ## Decisions
@@ -582,6 +589,7 @@ seams; they slot in between steps.
 | 2026-11-20 | The VRAM planner, if built, runs once (install or hardware change) and rewrites the Modelfiles; it does not run at every service start. |
 | 2026-11-21 | Memory names: three tiers, **core facts**, **extended context facts** (about 3–4 days around now, to help context) and **facts** (the rest). Beside them the **buffer** holds a day's worth of possible facts, filled as messages leave the context, and the end-of-day tasks process it. Mapping from v2.0 pinning later. |
 | 2026-11-21 | VRAM planner autodetects internal vs external GPU and asks whether that is right; a command-line option skips detection and sets it. Every Modelfile is backed up before it is changed. |
+| 2026-11-21 | Core facts always go into the context. The other tiers carry an age value (higher = more important): buffer facts > extended context facts > facts, so extended context facts resurface sooner than facts. |
 
 ## Related Documents
 
