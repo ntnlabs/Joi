@@ -90,8 +90,8 @@ before v3 reaches beta:
 ### Priority: memory that ages
 
 Reported from daily use on 2026-11-20. This is the priority for memory work.
-It is about how memories age and how Joi handles them over time, not about
-pinning.
+It covers how memories age, how Joi handles them over time, and what gets
+into a reply at all (pinning and recall).
 
 What Joi gets wrong:
 
@@ -107,6 +107,12 @@ What Joi gets wrong:
   must become "it happened" once the day passes. Then Joi may ask "how did
   the tire exchange go?", never "when are you doing the tires?". Later it
   fades.
+- **Too much gets into a reply.** Mentioning a subject ("work") must not
+  pull every fact about it into the reply, and pinned facts must not all go
+  into every reply. In v2.0 pinned facts are always injected, facts pin
+  themselves (by category, or by a key such as `job` or `profession`), and
+  the meaning search always returns its 20 nearest facts with no minimum
+  similarity.
 
 **Found in v2.0 (2026-11-20): stale facts are a design gap.** v2.0 changes a
 stored fact only when a new fact has the same category and key (it is
@@ -526,6 +532,7 @@ seams; they slot in between steps.
 | 2026-10-04 | Build order: safety net (deterministic regression checks) first, then seams 1–4 in order, then behavioural memory. Remaining beta gaps slot in between steps. |
 | 2026-11-20 | Memory that ages is the priority for memory work: facts that stopped being true are retired (age alone is not the test; old true facts stay), Joi follows what was just said, events move from planned to happened to faded. Not pinning. Stale facts are a v2.0 design gap: nothing retires a fact that a newer one makes untrue. |
 | 2026-11-20 | v3 must still run reasonably on a GTX 1650 with 4 GB VRAM. Larger hardware may give Joi more room; it is never required. |
+| 2026-11-20 | Pinning and recall join the memory priority (extends the first 2026-11-20 row, which excluded pinning): a mentioned subject must not pull in every related fact, and pinned facts must not all go into every reply. |
 
 ## Related Documents
 
