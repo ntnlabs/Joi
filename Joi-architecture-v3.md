@@ -47,6 +47,10 @@ limits.
 6. **Wind v2 principles become Joi-wide.** "Derive, don't tune" and "signal
    pressure routes to intensity, not rate" (`wind-architecture-v2.md`) apply to
    the whole behaviour engine, not just proactive messaging.
+7. **Runs on small hardware.** v3 must still run reasonably on a GTX 1650
+   with 4 GB VRAM. Larger hardware may give Joi more room (more context, more
+   facts per reply); it is never required. Memory work uses that room with
+   restraint.
 
 ## Scope
 
@@ -521,6 +525,7 @@ seams; they slot in between steps.
 | 2026-10-04 | End-of-day reflection (self-improvement) is planned for later: reads `joi_log` and the day's messages, writes auditable memory with provenance. |
 | 2026-10-04 | Build order: safety net (deterministic regression checks) first, then seams 1–4 in order, then behavioural memory. Remaining beta gaps slot in between steps. |
 | 2026-11-20 | Memory that ages is the priority for memory work: facts that stopped being true are retired (age alone is not the test; old true facts stay), Joi follows what was just said, events move from planned to happened to faded. Not pinning. Stale facts are a v2.0 design gap: nothing retires a fact that a newer one makes untrue. |
+| 2026-11-20 | v3 must still run reasonably on a GTX 1650 with 4 GB VRAM. Larger hardware may give Joi more room; it is never required. |
 
 ## Related Documents
 
