@@ -51,6 +51,11 @@ limits.
    with 4 GB VRAM. Larger hardware may give Joi more room (more context, more
    facts per reply); it is never required. Memory work uses that room with
    restraint.
+8. **Dynamic, not switches.** v3 works out at runtime what v2.0 leaves to
+   manual settings: context sizes, prompt budgets, caps. Only a few settings
+   remain. Swapping models is allowed, also over Thunderbolt, when there is a
+   reason. One idea: a VRAM planner that checks the GPU and picks a strategy
+   and how memory is split.
 
 ## Scope
 
@@ -132,6 +137,19 @@ Not known yet for the other two symptoms (asking again, events not moving
 through time): whether they are v2.0 bugs or design gaps. The next step is
 to check v2.0 against production logs. A bug gets fixed on `main`; a design
 gap gets designed here.
+
+**Direction (2026-11-20): memory in tiers, like human memory.** Replaces v2.0
+pinning and extends the core / non-core split already planned in
+`ideas/memory-improvement-ideas.md` (#11, "Important Facts Budget"):
+
+| Tier | Like | Holds |
+|------|------|-------|
+| Core | Core memories | A few defining facts: names, birthplace, sexual orientation |
+| Today | Short-term memory | What was learned during the day, possibly without a size limit |
+| Long-term | Long-term memory | What end-of-day processing makes of each day |
+
+At the end of the day the day's facts are processed into core and long-term
+memories, in the existing end-of-day slot. Details are still to be designed.
 
 ### Not in v3
 
@@ -507,6 +525,8 @@ seams; they slot in between steps.
 | Does Ollama stop generating on client disconnect (pinned version)? | Seam 3, restarts |
 | Retention of `turn_log`, both levels of detail | Seam 4 |
 | Where memory aging lands in the build order (depends on whether v2.0 has a bug) | Scope, Priority |
+| How the memory tiers map to superpinned / pinned / regular, and what each tier puts into a reply | Scope, Priority |
+| VRAM planner: what it measures and what it decides | Principle 8 |
 
 ## Decisions
 
@@ -533,6 +553,8 @@ seams; they slot in between steps.
 | 2026-11-20 | Memory that ages is the priority for memory work: facts that stopped being true are retired (age alone is not the test; old true facts stay), Joi follows what was just said, events move from planned to happened to faded. Not pinning. Stale facts are a v2.0 design gap: nothing retires a fact that a newer one makes untrue. |
 | 2026-11-20 | v3 must still run reasonably on a GTX 1650 with 4 GB VRAM. Larger hardware may give Joi more room; it is never required. |
 | 2026-11-20 | Pinning and recall join the memory priority (extends the first 2026-11-20 row, which excluded pinning): a mentioned subject must not pull in every related fact, and pinned facts must not all go into every reply. |
+| 2026-11-20 | Dynamic, not switches: v3 works out context sizes, prompt budgets and caps at runtime; only a few settings remain. Swapping models is allowed, also over Thunderbolt, when there is a reason. |
+| 2026-11-20 | Direction for memory: three tiers like human memory (core, today, long-term); end-of-day processing turns the day's facts into core and long-term memories. Replaces v2.0 pinning; details to design. |
 
 ## Related Documents
 
