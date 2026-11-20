@@ -201,7 +201,7 @@ Being a digital entity implies autonomy: Joi has initiative, memory, and acts wi
 
 - **LLM**: Llama 3.1 8B (uncensored variant)
 - **Runtime**: Ollama (native API)
-- **Hardware**: Notebook with dedicated GFX card (like nVidia 1650)
+- **Hardware**: Notebook with dedicated GFX card (like nVidia 1650), or a GPU in a Thunderbolt eGPU dock; context sizes per GPU in [execution/joi/README.md](execution/joi/README.md#context-size-and-gpu-memory)
 - **Virtualization**: Proxmox VE (optional)
 - **Messaging**: Signal via signal-cli
 - **Mesh VPN**: Nebula
