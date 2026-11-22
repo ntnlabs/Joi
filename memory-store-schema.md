@@ -742,7 +742,7 @@ CREATE TABLE joi_alerts (
 
 **Behavior:**
 - `code_update`: added at startup when the running commit differs from the last start
-- `tamper`: added by tamper detection, which first sends the owner a plain-text message (no LLM) and then stops the service; the service does not restart by itself (exit 78). If that send fails, the alert goes out after a manual restart
+- `tamper`: added by tamper detection, which first sends the owner a plain-text message (no LLM; the send gets at most 2 s) and then stops the service; the service does not restart by itself (exit 78). If that send fails, the alert goes out after a manual restart
 - Highest priority: the scheduler delivers pending alerts right after the startup config push and then first thing every tick, ignoring quiet hours and Wind snooze and bypassing the outbound rate limit; several pending alerts become one message
 - The message is written by the conversation's model in Joi's voice, opening with her spider senses tingling, with plain text as fallback; stored in `messages` with the `[JOI-ALERT]` prefix
 - Never holds commit messages or file contents; logs record alert kinds only

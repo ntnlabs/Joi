@@ -17,6 +17,7 @@ logger = logging.getLogger("joi.api.scheduler")
 _TICKS_CONFIG_SYNC = 10      # Config sync every ~10 minutes
 _TICKS_HOURLY = 60           # Maintenance tasks every ~1 hour
 _TICKS_MEMBERSHIP = 15       # Membership cache check every ~15 minutes
+_TAMPER_ALERT_DEADLINE = 2.0  # Seconds the tamper alert may delay the stop, at most
 
 
 class Scheduler:
@@ -298,13 +299,18 @@ class Scheduler:
                     "tampered_count": len(changed),
                     "action": "tamper_detected"
                 })
-                # Tell the owner before stopping; the stored alert is the fallback
-                # if that send fails (delivered after a manual restart)
+                # Tell the owner before stopping, but never let the network delay the
+                # stop: the send gets a hard deadline, and the stored alert is the
+                # fallback (delivered after a manual restart)
                 if self._memory:
                     try:
                         names = sorted(os.path.basename(p) for p in changed)
                         alert_id = self._memory.add_alert("tamper", detail=", ".join(names))
-                        self._send_tamper_alert_now(alert_id, names)
+                        sender = threading.Thread(
+                            target=self._send_tamper_alert_now, args=(alert_id, names), daemon=True
+                        )
+                        sender.start()
+                        sender.join(timeout=_TAMPER_ALERT_DEADLINE)
                     except Exception as e:
                         logger.error("Could not record or send tamper alert", extra={"error": str(e)})
                 # Give logs time to flush, then terminate entire process
