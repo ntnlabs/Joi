@@ -573,8 +573,10 @@ of her own. How she notices each kind of change:
 
 **Reaction.** Each change becomes an alert that Joi delivers herself: a
 short message written by the conversation's model in her own voice, plain
-text if that fails, several alerts in one message. She waits through quiet
-hours and Wind snooze and sends at the first allowed moment. In v3 each
+text if that fails, several alerts in one message. She opens with her
+spider senses tingling ("My spider senses are tingling..."). Alerts are the
+highest priority: they ignore quiet hours and Wind snooze and go out right
+away. In v3 each
 alert is also a `joi_log` episode ("I was updated today", "someone removed
 one of my memories"), so she can answer from the record later instead of
 guessing.
@@ -592,9 +594,9 @@ conversation (in v3, its scope). Edits to a group's memories are announced
 to the group.
 
 **In v2.0 (2026-11-22, `bf6f43c`):** code updates and tampering. Alerts live
-in a `joi_alerts` table; the scheduler delivers them to the owner every
-tick, keeping the generated text so a failed send is retried without
-generating again. Replies in the owner's direct conversation also know about
+in a `joi_alerts` table; the scheduler delivers them to the owner right
+after startup and then first thing every tick, keeping the generated text so
+a failed send is retried without generating again. Replies in the owner's direct conversation also know about
 a code update for 24 hours.
 
 **Fixed from the original sketch:** it watches every kind of change, not
@@ -757,6 +759,7 @@ seams; they slot in between steps.
 | 2026-11-22 | Outside changes: code, config, key and model changes are logged under the owner; memory edits go to whoever the memories belong to (their conversation), so a group's edited memories are announced to the group. |
 | 2026-11-22 | Git commit messages never reach the LLM: text from outside the conversations is a side channel into the prompt. For a code update Joi learns only that she was updated, and when. |
 | 2026-11-22 | Outside changes become Joi's alert service: she tells the owner (or whoever the memories belong to) herself, with a message in her own voice, at the first moment allowed by quiet hours and snooze. Tamper still stops the service; the alert is recorded first and sent after the restart. The owner's message may name changed files; logs record alert kinds only. First version in v2.0: code update and tamper. |
+| 2026-11-22 | Alerts are the highest priority: they ignore quiet hours and Wind snooze and go out right away (replaces "at the first moment allowed by quiet hours and snooze" above). Joi opens with her spider senses tingling. |
 | 2026-11-22 | Planned: Joi's self-facts (working name cheat-sheet): facts about Joi herself, given by the owner or learned from her own replies (never from what others tell her about herself), recalled only when relevant and a few at a time. A memory kind in seam 1; content stays private. Not designed yet. |
 | 2026-11-22 | Self-facts are per conversation: each conversation's Joi is its own fork, and her self-facts never slide into another conversation on their own (copying only by explicit admin command). Two kinds: *almost always* (used when Wind writes) and *conversation driven* (found by search when the conversation touches them). |
 | 2026-11-22 | Almost-always self-facts reach replies as inner thoughts: a system note in the message history, `(Joi's own thought: ...)`, generated at prompt build and never stored, one fact per note, a new note every half window. Wind gets them directly in its prompt. Rejected: holding back repeats (did not work consistently in past tests). |
