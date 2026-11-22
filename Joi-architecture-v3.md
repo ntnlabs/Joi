@@ -610,12 +610,29 @@ pollen", "red hair", "laughs at jokes about animals".
 - **Per conversation.** Each conversation's Joi is its own fork. Her
   self-facts belong to that conversation and never slide into another one on
   their own; copying them would only ever be an explicit admin command.
-- **Two kinds.** *Almost always*: a few facts used whenever Wind writes a
-  proactive message. *Conversation driven*: found by search only when the
+- **Two kinds.** *Almost always*: a few facts present through the whole
+  conversation: as inner thoughts in replies (below), and directly in the
+  prompt when Wind writes. *Conversation driven*: found by search only when the
   conversation touches them, and only a few at a time: "allergic to pollen"
   comes up on a spring walk, not while coding. This needs a minimum
   relevance, which v2.0 has nowhere, so it is shared work with the memory
   priority ("Too much gets into a reply").
+- **Almost-always facts as inner thoughts.** Each reply's context is built
+  from scratch, so a fact injected once lives for that one reply only. These
+  facts therefore appear in the message history, as a system note holding
+  Joi's own thought: `(Joi's own thought: I'm allergic to pollen.)`.
+  - Generated when the prompt is built, never stored: it cannot reach
+    summaries, fact extraction, learned self-facts or the user's history.
+  - A new note every half window (every 25 turns with the 50-message
+    window), so about one is always in the window, slowly moving back and
+    fading. One fact per note, rotating.
+  - Wind gets these facts directly in its prompt, since the history is
+    compacted before a Wind message.
+  - A system note rather than Joi's own turn, so she does not copy the style
+    into her replies. To be confirmed on the real model.
+
+  *Rejected:* holding back repeats by tracking what Joi already mentioned;
+  it did not work consistently in past tests.
 - **Private.** Like the personality prompt, the content lives only in the
   encrypted database on Joi, never in the repo or in logs.
 
@@ -708,6 +725,7 @@ seams; they slot in between steps.
 | 2026-11-22 | Git commit messages never reach the LLM: text from outside the conversations is a side channel into the prompt. For a code update Joi learns only that she was updated, and when. |
 | 2026-11-22 | Planned: Joi's self-facts (working name cheat-sheet): facts about Joi herself, given by the owner or learned from her own replies (never from what others tell her about herself), recalled only when relevant and a few at a time. A memory kind in seam 1; content stays private. Not designed yet. |
 | 2026-11-22 | Self-facts are per conversation: each conversation's Joi is its own fork, and her self-facts never slide into another conversation on their own (copying only by explicit admin command). Two kinds: *almost always* (used when Wind writes) and *conversation driven* (found by search when the conversation touches them). |
+| 2026-11-22 | Almost-always self-facts reach replies as inner thoughts: a system note in the message history, `(Joi's own thought: ...)`, generated at prompt build and never stored, one fact per note, a new note every half window. Wind gets them directly in its prompt. Rejected: holding back repeats (did not work consistently in past tests). |
 
 ## Related Documents
 
