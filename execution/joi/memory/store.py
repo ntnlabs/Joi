@@ -2421,14 +2421,15 @@ class MemoryStore:
         row = cursor.fetchone()
         return row["value"] if row else default
 
-    def add_alert(self, kind: str, detail: Optional[str] = None, conversation_id: Optional[str] = None) -> None:
-        """Queue an alert about something that happened to Joi (None = for the owner)."""
+    def add_alert(self, kind: str, detail: Optional[str] = None, conversation_id: Optional[str] = None) -> int:
+        """Queue an alert about something that happened to Joi (None = for the owner). Returns its id."""
         conn = self._connect()
-        conn.execute(
+        cursor = conn.execute(
             "INSERT INTO joi_alerts (kind, detail, conversation_id, created_at) VALUES (?, ?, ?, ?)",
             (kind, detail, conversation_id, int(time.time() * 1000)),
         )
         conn.commit()
+        return cursor.lastrowid
 
     def get_pending_alerts(self) -> List[Dict[str, Any]]:
         """Return undelivered alerts, oldest first."""

@@ -4516,7 +4516,7 @@ def _generate_alert_message(conversation_id: str, alerts: List[dict]) -> str:
         elif alert["kind"] == "tamper":
             events.append(
                 f"Some of my files changed {when} ({alert['detail']}), "
-                "so I shut myself down and restarted to be safe."
+                "so I shut myself down to be safe until I was restarted."
             )
         else:
             events.append(f"Something happened to me {when} ({alert['kind']}).")
