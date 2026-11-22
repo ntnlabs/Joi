@@ -191,6 +191,9 @@ JOI_SCHEDULER_ENABLED=1
 JOI_SCHEDULER_INTERVAL=60
 # Seconds to wait after startup before first tick
 JOI_SCHEDULER_STARTUP_DELAY=10
+# Seconds the tamper alert to the owner may delay the tamper stop (1-5;
+# anything else falls back to 2)
+#JOI_TAMPER_ALERT_DEADLINE_SECONDS=2
 
 # --- Prompts ---
 # Directory for per-user and per-group system prompts

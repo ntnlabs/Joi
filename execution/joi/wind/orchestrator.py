@@ -1764,7 +1764,7 @@ class WindOrchestrator:
 
     def _deduplicate_topics(self, conversation_id: str) -> None:
         """LLM-based near-duplicate collapse for a single conversation."""
-        pending = self.topic_manager.get_pending_topics(conversation_id)
+        pending = self.topic_manager.get_all_pending_topics(conversation_id)
         awaiting = self.topic_manager.get_topics_awaiting_response(conversation_id)
         all_topics = pending + awaiting
         if len(all_topics) < 2:

@@ -17,7 +17,27 @@ logger = logging.getLogger("joi.api.scheduler")
 _TICKS_CONFIG_SYNC = 10      # Config sync every ~10 minutes
 _TICKS_HOURLY = 60           # Maintenance tasks every ~1 hour
 _TICKS_MEMBERSHIP = 15       # Membership cache check every ~15 minutes
-_TAMPER_ALERT_DEADLINE = 2.0  # Seconds the tamper alert may delay the stop, at most
+
+
+def _tamper_alert_deadline() -> float:
+    """Seconds the tamper alert may delay the stop: JOI_TAMPER_ALERT_DEADLINE_SECONDS, 1-5.
+
+    Anything outside 1-5, or not a number, falls back to 2 seconds.
+    """
+    raw = os.getenv("JOI_TAMPER_ALERT_DEADLINE_SECONDS", "2")
+    try:
+        value = float(raw)
+    except ValueError:
+        value = None
+    if value is None or not 1 <= value <= 5:
+        logger.warning("JOI_TAMPER_ALERT_DEADLINE_SECONDS out of range 1-5, using 2", extra={
+            "value": raw, "action": "config_fallback"
+        })
+        return 2.0
+    return value
+
+
+_TAMPER_ALERT_DEADLINE = _tamper_alert_deadline()
 
 
 class Scheduler:

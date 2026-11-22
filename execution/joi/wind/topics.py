@@ -345,6 +345,29 @@ class TopicManager:
             logger.info("Expired stale topics", extra={"count": expired_count})
         return expired_count
 
+    def get_all_pending_topics(self, conversation_id: str) -> List[PendingTopic]:
+        """All non-expired pending topics, including ones waiting out a retry delay.
+
+        No limit: end-of-day dedupe needs the whole queue, however long it is.
+        """
+        conn = self._connect()
+        now = datetime.now(timezone.utc).isoformat()
+        cursor = conn.execute(
+            """
+            SELECT id, conversation_id, topic_type, title, content, priority,
+                   status, created_at, expires_at, due_at, mentioned_at, novelty_key,
+                   source_event_id, outcome, outcome_at, retry_count, last_retry_at,
+                   sent_message_id, emotional_context
+            FROM pending_topics
+            WHERE conversation_id = ?
+              AND status = ?
+              AND (expires_at IS NULL OR expires_at > ?)
+            ORDER BY priority DESC, created_at ASC
+            """,
+            (conversation_id, self.STATUS_PENDING, now)
+        )
+        return [self._row_to_topic(row) for row in cursor.fetchall()]
+
     def get_topic_pressure(self, conversation_id: str) -> float:
         """
         Calculate topic pressure for a conversation.
