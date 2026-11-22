@@ -55,6 +55,18 @@ limits.
    manual settings: context sizes, prompt budgets, caps. Only a few settings
    remain. Swapping models is allowed, also over Thunderbolt, when there is a
    reason. One idea: a VRAM planner (see "Planned: VRAM planner").
+9. **Time is stored absolute and read relative.** Two rules, together:
+   - *Store absolute.* Everything Joi stores holds absolute times. An LLM
+     that writes memory gets the current date and each message's time, and
+     writes dates, never "today" or "tomorrow". Expiry counts from when
+     something was said, not from when it was extracted.
+   - *Read relative, computed fresh.* Code, not the LLM, turns stored times
+     into words relative to now ("this morning", "yesterday evening", "on
+     Thursday", "three weeks ago"), by calendar day in the conversation's
+     time zone, every time a prompt is built. Nothing relative is stored, so
+     nothing has to age.
+
+   Time awareness is always on; v2.0's per-conversation switch goes away.
 
 ## Scope
 
@@ -136,6 +148,15 @@ Not known yet for the other two symptoms (asking again, events not moving
 through time): whether they are v2.0 bugs or design gaps. The next step is
 to check v2.0 against production logs. A bug gets fixed on `main`; a design
 gap gets designed here.
+
+**Found in v2.0 (2026-11-22): relative time words were frozen into memory.**
+The fact extractor got no date and no message times, and its own example
+stored "appointment tomorrow". Summaries reached prompts with raw epoch
+timestamps the LLM cannot read. So "tomorrow" stayed "tomorrow", and a Wind
+message called a same-morning conversation "yesterday". This explains at
+least part of "events don't move through time". A v2.0 fix on `main`
+(`13562ac`) gives the writers dates and shows readable summary times; v3
+makes it a rule (principle 9).
 
 **Direction (2026-11-20): memory in tiers, like human memory.** Replaces v2.0
 pinning and extends the core / non-core split already planned in
@@ -614,6 +635,7 @@ seams; they slot in between steps.
 | 2026-11-21 | VRAM planner autodetects internal vs external GPU and asks whether that is right; a command-line option skips detection and sets it. Every Modelfile is backed up before it is changed. |
 | 2026-11-21 | Core facts always go into the context. The other tiers carry an age value (higher = more important): buffer facts > extended context facts > facts, so extended context facts resurface sooner than facts. |
 | 2026-11-21 | Stale facts: facts form a mesh (links to the things they are about). A fact that stops being true becomes past: kept, recalled only for history, like the topic undertaker. The end-of-day tasks cascade an ending through linked facts, judging each one. Until then the buffer's age value is enough to outweigh the old fact; no extra check at write time. |
+| 2026-11-22 | Time is stored absolute and read relative: memory writers get the date and message times and write dates; expiry counts from when something was said; code renders times relative to now by calendar day, fresh at every prompt build. Time awareness is always on. |
 
 ## Related Documents
 
