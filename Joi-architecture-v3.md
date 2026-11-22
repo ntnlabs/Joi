@@ -604,6 +604,11 @@ pollen", "red hair", "laughs at jokes about animals".
   *Learned*: taken from what Joi says about herself in her own replies, so
   she stays consistent instead of inventing a new answer each time. Never
   learned from what someone tells her about herself.
+- **Contradictions: Joi decides.** When she learns something new about
+  herself, Joi judges whether it contradicts a self-fact she already has.
+  Most do not: a pollen allergy and loving walks in the park can both be
+  true. A contradiction is only what cannot both be true: blue eyes and
+  brown eyes, "I can sing" and "I can't sing".
 - **A memory kind.** In seam 1 terms, `self` is one more kind (a detail table
   plus a `kind` value). Recall finds it like any other memory, with its
   source (given or learned) on every item.
@@ -687,6 +692,7 @@ seams; they slot in between steps.
 | How links between facts (the mesh) are found and stored | Scope, Priority |
 | VRAM planner: how autodetection tells an internal GPU from an external one, and how it sizes models it has no known values for | Planned: VRAM planner |
 | Minimum relevance for recall: its value, tuned on real data | Scope, Priority; Planned: Joi's self-facts |
+| Self-facts: in a real contradiction, which one stays (the existing one, the newer one, or Joi chooses), and can a learned fact ever replace one the owner gave | Planned: Joi's self-facts |
 ## Decisions
 
 | Date | Decision |
@@ -726,6 +732,7 @@ seams; they slot in between steps.
 | 2026-11-22 | Planned: Joi's self-facts (working name cheat-sheet): facts about Joi herself, given by the owner or learned from her own replies (never from what others tell her about herself), recalled only when relevant and a few at a time. A memory kind in seam 1; content stays private. Not designed yet. |
 | 2026-11-22 | Self-facts are per conversation: each conversation's Joi is its own fork, and her self-facts never slide into another conversation on their own (copying only by explicit admin command). Two kinds: *almost always* (used when Wind writes) and *conversation driven* (found by search when the conversation touches them). |
 | 2026-11-22 | Almost-always self-facts reach replies as inner thoughts: a system note in the message history, `(Joi's own thought: ...)`, generated at prompt build and never stored, one fact per note, a new note every half window. Wind gets them directly in its prompt. Rejected: holding back repeats (did not work consistently in past tests). |
+| 2026-11-22 | Joi judges whether a newly learned self-fact contradicts one she already has. Only what cannot both be true counts (blue vs brown eyes, can vs can't sing); compatible facts both stay. |
 
 ## Related Documents
 
