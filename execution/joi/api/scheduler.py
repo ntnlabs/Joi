@@ -187,6 +187,12 @@ class Scheduler:
         # Push config to mesh on startup
         self._startup_config_push()
 
+        # Deliver alerts from before the restart right away
+        try:
+            self._deliver_alerts()
+        except Exception as e:
+            logger.error("Alert startup delivery failed", extra={"error": str(e)})
+
         # Restore persisted global tasks date so restarts don't re-fire before 03:00
         if self._memory:
             stored = self._memory.get_state("last_global_tasks_date")
@@ -240,6 +246,9 @@ class Scheduler:
         # Tamper detection every tick (SHA256 is cheap)
         self._check_tamper()
 
+        # Deliver Joi's alerts (code update, tamper) first, highest priority
+        self._deliver_alerts()
+
         # Low-priority maintenance tasks every ~1 hour
         if self._tick_count % _TICKS_HOURLY == 0:
             self._cleanup_nonces()
@@ -275,8 +284,6 @@ class Scheduler:
         # Check for due note reminders every tick
         self._check_note_reminders()
 
-        # Deliver Joi's alerts (code update, tamper) every tick
-        self._deliver_alerts(now_utc)
 
     def _check_tamper(self):
         """Check for config file tampering. Shuts down service if detected."""
@@ -687,11 +694,12 @@ class Scheduler:
         end = config.quiet_hours_end
         return (current >= start or current < end) if start > end else (start <= current < end)
 
-    def _deliver_alerts(self, now: datetime) -> None:
+    def _deliver_alerts(self) -> None:
         """Send pending alerts as a message of Joi's own (owner unless set otherwise).
 
-        Waits through quiet hours and Wind snooze. The text is generated once and
-        reused if the send has to be retried. Logs kinds only, never the text.
+        Highest priority: ignores quiet hours and Wind snooze and bypasses the
+        outbound rate limit. The text is generated once and reused if the send has
+        to be retried. Logs kinds only, never the text.
         """
         if not self._memory or not self._generate_alert_message:
             return
@@ -707,13 +715,6 @@ class Scheduler:
                 by_target.setdefault(target, []).append(alert)
 
         for conversation_id, batch in by_target.items():
-            if self._wind_orchestrator:
-                state = self._wind_orchestrator.state_manager.get_state(conversation_id)
-                if state and state.wind_snooze_until and state.wind_snooze_until > now:
-                    continue
-                if self._in_quiet_hours(conversation_id, now):
-                    continue
-
             ids = [a["id"] for a in batch]
             text = batch[0]["message_text"] if all(a["message_text"] for a in batch) else None
             if text is None:
@@ -730,7 +731,7 @@ class Scheduler:
                 conversation=conversation,
                 text=text,
                 reply_to=None,
-                is_critical=False,
+                is_critical=True,
             )
             kinds = sorted({a["kind"] for a in batch})
             if not success:
