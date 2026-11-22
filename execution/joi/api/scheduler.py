@@ -62,6 +62,7 @@ class Scheduler:
         self._note_manager = None
         self._message_queue = None
         self._translate_outbound: Optional[Callable] = None
+        self._generate_alert_message: Optional[Callable] = None
 
     def set_dependencies(
         self,
@@ -85,6 +86,7 @@ class Scheduler:
         note_manager=None,
         message_queue=None,
         translate_outbound: Optional[Callable] = None,
+        generate_alert_message: Optional[Callable] = None,
     ):
         """Set dependencies after construction to avoid circular imports."""
         self._memory = memory
@@ -107,6 +109,7 @@ class Scheduler:
         self._note_manager = note_manager
         self._message_queue = message_queue
         self._translate_outbound = translate_outbound
+        self._generate_alert_message = generate_alert_message
 
     def _get_conversation_tz(self, conversation_id: str):
         """Per-conversation timezone, falls back to UTC."""
@@ -272,6 +275,9 @@ class Scheduler:
         # Check for due note reminders every tick
         self._check_note_reminders()
 
+        # Deliver Joi's alerts (code update, tamper) every tick
+        self._deliver_alerts(now_utc)
+
     def _check_tamper(self):
         """Check for config file tampering. Shuts down service if detected."""
         if not self._check_fingerprints:
@@ -279,15 +285,21 @@ class Scheduler:
         try:
             changed = self._check_fingerprints()
             if changed:
+                # Only the count here: _check_fingerprints already logged each file
+                # (redacted in privacy mode)
                 logger.critical("SECURITY: config files tampered - SHUTTING DOWN", extra={
                     "tampered_count": len(changed),
                     "action": "tamper_detected"
                 })
-                for path in changed:
-                    logger.critical("SECURITY: Tampered file", extra={"path": path})
+                # Tell the owner after the restart: the alert survives the shutdown
+                if self._memory:
+                    try:
+                        names = sorted(os.path.basename(p) for p in changed)
+                        self._memory.add_alert("tamper", detail=", ".join(names))
+                    except Exception as e:
+                        logger.error("Could not record tamper alert", extra={"error": str(e)})
                 # Give logs time to flush, then terminate entire process
                 time.sleep(1)
-                import os
                 os._exit(78)  # EX_CONFIG - must use _exit to kill process, not just thread
         except Exception as e:
             logger.warning("Scheduler: tamper check failed", extra={"error": str(e)})
@@ -654,20 +666,90 @@ class Scheduler:
             return False
         if now < state.wakeup_send_at:
             return False
-        # Quiet hours check (replicated inline — ImpulseEngine method not accessible here)
+        return not self._in_quiet_hours(conversation_id, now, tz)
+
+    def _in_quiet_hours(self, conversation_id: str, now: datetime, tz=None) -> bool:
+        """True if now is inside the conversation's quiet hours (learned start when known).
+
+        Replicates the ImpulseEngine check, which is not accessible here.
+        """
         config = self._wind_orchestrator.config
+        state = self._wind_orchestrator.state_manager.get_state(conversation_id)
         if tz is None:
             tz = self._get_conversation_tz(conversation_id)
         local = now.astimezone(tz)
         current = local.hour * 60 + local.minute
         start = (
             state.learned_quiet_start_minutes
-            if state.learned_quiet_start_minutes is not None
+            if state and state.learned_quiet_start_minutes is not None
             else config.quiet_hours_start
         )
         end = config.quiet_hours_end
-        in_quiet = (current >= start or current < end) if start > end else (start <= current < end)
-        return not in_quiet
+        return (current >= start or current < end) if start > end else (start <= current < end)
+
+    def _deliver_alerts(self, now: datetime) -> None:
+        """Send pending alerts as a message of Joi's own (owner unless set otherwise).
+
+        Waits through quiet hours and Wind snooze. The text is generated once and
+        reused if the send has to be retried. Logs kinds only, never the text.
+        """
+        if not self._memory or not self._generate_alert_message:
+            return
+        alerts = self._memory.get_pending_alerts()
+        if not alerts:
+            return
+        owner_id = self._policy_manager.get_owner_id() if self._policy_manager else None
+
+        by_target: dict = {}
+        for alert in alerts:
+            target = alert["conversation_id"] or owner_id
+            if target:
+                by_target.setdefault(target, []).append(alert)
+
+        for conversation_id, batch in by_target.items():
+            if self._wind_orchestrator:
+                state = self._wind_orchestrator.state_manager.get_state(conversation_id)
+                if state and state.wind_snooze_until and state.wind_snooze_until > now:
+                    continue
+                if self._in_quiet_hours(conversation_id, now):
+                    continue
+
+            ids = [a["id"] for a in batch]
+            text = batch[0]["message_text"] if all(a["message_text"] for a in batch) else None
+            if text is None:
+                text = self._generate_alert_message(conversation_id, batch)
+                self._memory.set_alert_message(ids, text)
+
+            conv_type = "direct" if conversation_id.startswith("+") else "group"
+            conversation = self._InboundConversation(type=conv_type, id=conversation_id)
+            original_en = text
+            text = self._translate_if_needed(text, conversation_id)
+            success = self._send_to_mesh(
+                recipient_id="owner" if conversation_id == owner_id else conversation_id,
+                recipient_transport_id=conversation_id,
+                conversation=conversation,
+                text=text,
+                reply_to=None,
+                is_critical=False,
+            )
+            kinds = sorted({a["kind"] for a in batch})
+            if not success:
+                logger.warning("Alert send failed, will retry", extra={"kinds": kinds, "action": "alert_retry"})
+                continue
+
+            self._memory.mark_alerts_delivered(ids)
+            msg_id = str(uuid.uuid4())
+            self._memory.store_message(
+                message_id=msg_id,
+                direction="outbound",
+                content_type="text",
+                content_text=f"[JOI-ALERT] {text}",
+                timestamp=int(time.time() * 1000),
+                conversation_id=conversation_id,
+            )
+            if text != original_en:
+                self._memory.update_translated_text(msg_id, f"[JOI-ALERT] {original_en}")
+            logger.info("Alert delivered", extra={"kinds": kinds, "count": len(batch), "action": "alert_delivered"})
 
     def _send_wakeup_proactive(self, conversation_id: str, now: datetime, tz=None) -> None:
         """Send the scheduled proactive re-engagement message after long silence."""

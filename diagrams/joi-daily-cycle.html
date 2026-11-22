@@ -215,7 +215,7 @@
         <span class="kv-key">reads</span><span class="kv-val">current commit from the checkout's .git files (no git binary)</span>
         <span class="kv-key">compares</span><span class="kv-val">with <em>code_commit</em> in system_state from the last start</span>
         <span class="kv-key">logs</span><span class="kv-val">one line: "Code version recorded (first start)" · "Code version unchanged" · "Code updated since last start"</span>
-        <span class="kv-key">if updated</span><span class="kv-val"><em>code_updated_at</em> stored · the owner's replies know for <em>24 h</em> that Joi was updated, and when</span>
+        <span class="kv-key">if updated</span><span class="kv-val"><em>code_updated_at</em> stored · a <em>code_update</em> alert queued (Joi messages the owner herself) · the owner's replies also know for <em>24 h</em> that Joi was updated, and when</span>
       </div>
     </div>
   </div>
@@ -234,7 +234,7 @@
     <div class="block-body">
       <div class="kv">
         <span class="kv-key">source</span><span class="kv-val">daemon thread · <em>scheduler.py:_tick()</em> · 10 s startup grace period</span>
-        <span class="kv-key">every tick</span><span class="kv-val">auto-ingestion of knowledge files · tamper detection (SHA256) · Wind impulse check · wake-up proactive check · due reminders · due note reminders</span>
+        <span class="kv-key">every tick</span><span class="kv-val">auto-ingestion of knowledge files · tamper detection (SHA256 — on change: queue a <em>tamper</em> alert, then stop the service) · Wind impulse check · wake-up proactive check · due reminders · due note reminders · Joi's alerts (sent to the owner outside quiet hours and snooze, in her own words)</span>
         <span class="kv-key">every 10 ticks</span><span class="kv-val">config sync push to Mesh VM (only if local config changed or Mesh has drifted)</span>
         <span class="kv-key">every 15 ticks</span><span class="kv-val">group membership cache refresh (business mode only)</span>
         <span class="kv-key">every 60 ticks</span><span class="kv-val">nonce cleanup · send-cache pruning · FTS index integrity check</span>

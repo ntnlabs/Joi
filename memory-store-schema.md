@@ -723,6 +723,30 @@ CREATE TABLE conversation_settings (
 - Default is UTC when no row exists (all code falls back gracefully)
 - Replaces the removed `JOI_TIMEZONE` and `JOI_TIME_AWARENESS` global env vars
 
+### 14. joi_alerts (Joi's Alerts)
+
+Things that happened to Joi herself, delivered as a message of her own.
+Created with `CREATE TABLE IF NOT EXISTS` at startup, so existing databases get it without a migration.
+
+```sql
+CREATE TABLE joi_alerts (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind             TEXT NOT NULL,       -- 'code_update', 'tamper'
+    detail           TEXT,                -- e.g. which files changed
+    conversation_id  TEXT,                -- NULL = the owner
+    created_at       INTEGER NOT NULL,    -- epoch ms
+    message_text     TEXT,                -- generated once, reused if sending is retried
+    delivered_at     INTEGER              -- epoch ms; NULL = pending
+);
+```
+
+**Behavior:**
+- `code_update`: added at startup when the running commit differs from the last start
+- `tamper`: added by tamper detection just before it stops the service, so it survives the restart
+- The scheduler delivers pending alerts every tick, waiting through quiet hours and Wind snooze; several pending alerts become one message
+- The message is written by the conversation's model in Joi's voice, with plain text as fallback; stored in `messages` with the `[JOI-ALERT]` prefix
+- Never holds commit messages or file contents; logs record alert kinds only
+
 ---
 
 ## Queries for Common Operations

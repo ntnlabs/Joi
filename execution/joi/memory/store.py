@@ -551,6 +551,18 @@ CREATE TABLE IF NOT EXISTS conversation_settings (
     updated_at TEXT NOT NULL
 );
 
+-- Joi's alerts: things that happened to Joi herself (code update, tamper),
+-- delivered as a message of her own. conversation_id NULL = the owner.
+CREATE TABLE IF NOT EXISTS joi_alerts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,               -- 'code_update', 'tamper'
+    detail TEXT,                      -- e.g. which files changed
+    conversation_id TEXT,
+    created_at INTEGER NOT NULL,      -- epoch ms
+    message_text TEXT,                -- generated once, reused if sending is retried
+    delivered_at INTEGER              -- epoch ms; NULL = pending
+);
+
 -- sqlite-vec virtual tables: dense vector index per surface, keyed by main-table rowid.
 -- Created here for fresh installs; migration code creates them for existing DBs.
 CREATE VIRTUAL TABLE IF NOT EXISTS vec_user_facts USING vec0(embedding float[1024]);
@@ -2408,6 +2420,39 @@ class MemoryStore:
         )
         row = cursor.fetchone()
         return row["value"] if row else default
+
+    def add_alert(self, kind: str, detail: Optional[str] = None, conversation_id: Optional[str] = None) -> None:
+        """Queue an alert about something that happened to Joi (None = for the owner)."""
+        conn = self._connect()
+        conn.execute(
+            "INSERT INTO joi_alerts (kind, detail, conversation_id, created_at) VALUES (?, ?, ?, ?)",
+            (kind, detail, conversation_id, int(time.time() * 1000)),
+        )
+        conn.commit()
+
+    def get_pending_alerts(self) -> List[Dict[str, Any]]:
+        """Return undelivered alerts, oldest first."""
+        conn = self._connect()
+        rows = conn.execute(
+            """
+            SELECT id, kind, detail, conversation_id, created_at, message_text
+            FROM joi_alerts WHERE delivered_at IS NULL ORDER BY id
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_alert_message(self, alert_ids: List[int], text: str) -> None:
+        """Store the generated message so a retried send reuses it."""
+        conn = self._connect()
+        conn.executemany("UPDATE joi_alerts SET message_text = ? WHERE id = ?", [(text, i) for i in alert_ids])
+        conn.commit()
+
+    def mark_alerts_delivered(self, alert_ids: List[int]) -> None:
+        """Mark alerts as delivered."""
+        conn = self._connect()
+        now_ms = int(time.time() * 1000)
+        conn.executemany("UPDATE joi_alerts SET delivered_at = ? WHERE id = ?", [(now_ms, i) for i in alert_ids])
+        conn.commit()
 
     def set_state(self, key: str, value: str) -> None:
         """Set a system state value."""

@@ -1360,6 +1360,7 @@ def _check_code_update() -> None:
         return
     if previous:
         memory.set_state("code_updated_at", str(int(time.time() * 1000)))
+        memory.add_alert("code_update")
         logger.info("Code updated since last start", extra={
             "from_commit": previous[:12],
             "to_commit": commit[:12],
@@ -1404,6 +1405,7 @@ def startup_event():
             note_manager=note_manager,
             message_queue=message_queue,
             translate_outbound=_translate_text,
+            generate_alert_message=_generate_alert_message,
         )
         scheduler.start()
     wind_config = _get_wind_config()
@@ -2819,7 +2821,7 @@ def _translate_text(text: str, lang: str, direction: str) -> Optional[str]:
 # Storage prefixes used by Wind/reminder scheduler — strip before sending to LLM.
 # Module-level so both _build_chat_messages and _generate_proactive_message
 # (evening context block) can reference the same list.
-_STORAGE_PREFIXES = ("[JOI-WIND] ", "[JOI-REMINDER] ")
+_STORAGE_PREFIXES = ("[JOI-WIND] ", "[JOI-REMINDER] ", "[JOI-ALERT] ")
 
 
 def _build_chat_messages(messages: List, is_group: bool = False) -> List[Dict[str, str]]:
@@ -4488,6 +4490,67 @@ Just the message, nothing else."""
     except Exception as e:
         logger.error("Reminder: message generation error", extra={"error": str(e)})
         return None
+
+
+def _generate_alert_message(conversation_id: str, alerts: List[dict]) -> str:
+    """Write Joi's alert in her own voice; plain text if generation fails.
+
+    Alerts are about Joi herself (code update, tamper). They may name files for
+    the owner, but never carry commit messages or file contents.
+    """
+    tz = _get_tz(conversation_id)
+    now = datetime.now(timezone.utc)
+    events = []
+    for alert in alerts:
+        when = ago_label(alert["created_at"], tz, now)
+        if alert["kind"] == "code_update":
+            events.append(f"I was updated {when}.")
+        elif alert["kind"] == "tamper":
+            events.append(
+                f"Some of my files changed {when} ({alert['detail']}), "
+                "so I shut myself down and restarted to be safe."
+            )
+        else:
+            events.append(f"Something happened to me {when} ({alert['kind']}).")
+    plain = " ".join(events)
+
+    conv_type = "direct" if conversation_id.startswith("+") else "group"
+    sender_id = conversation_id if conv_type == "direct" else ""
+    custom_model = get_model_for_conversation(
+        conversation_type=conv_type, conversation_id=conversation_id, sender_id=sender_id,
+    )
+    if custom_model:
+        base_prompt = get_prompt_for_conversation_optional(
+            conversation_type=conv_type, conversation_id=conversation_id, sender_id=sender_id,
+        ) or ""
+    else:
+        base_prompt = get_prompt_for_conversation(
+            conversation_type=conv_type, conversation_id=conversation_id, sender_id=sender_id,
+        )
+
+    user_prompt = (
+        "Something happened to you, and you want to tell them yourself:\n"
+        + "\n".join(f"- {e}" for e in events)
+        + "\n\nTell them in one or two short sentences, in your own voice. "
+        "Don't make it dramatic, and don't add details beyond what is listed here.\n\n"
+        "Just the message, nothing else."
+    )
+    try:
+        response = llm.chat(
+            messages=[{"role": "user", "content": user_prompt}],
+            system=base_prompt,
+            model=custom_model,
+        )
+        if not response.error and response.text and response.text.strip():
+            is_valid, text = validate_output(response.text.strip())
+            if is_valid:
+                return text[:500]
+        logger.warning("Alert: generation failed, sending plain text", extra={"action": "alert_plain_fallback"})
+    except Exception as e:
+        logger.warning("Alert: generation error, sending plain text", extra={
+            "error": str(e), "action": "alert_plain_fallback",
+        })
+    return plain
 
 
 def _send_to_mesh(
