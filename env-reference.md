@@ -143,6 +143,7 @@ Prompts directory structure:
 | `JOI_SCHEDULER_ENABLED` | `1` | Enable background scheduler |
 | `JOI_SCHEDULER_INTERVAL` | `60` | Tick interval in seconds |
 | `JOI_SCHEDULER_STARTUP_DELAY` | `10` | Seconds to wait before first tick |
+| `JOI_TAMPER_ALERT_DEADLINE_SECONDS` | `2` | Seconds the tamper alert to the owner may delay the tamper stop (1-5; anything else falls back to 2) |
 
 ---
 
