@@ -53,8 +53,11 @@ limits.
    restraint.
 8. **Dynamic, not switches.** v3 works out at runtime what v2.0 leaves to
    manual settings: context sizes, prompt budgets, caps. Only a few settings
-   remain. Swapping models is allowed, also over Thunderbolt, when there is a
-   reason. One idea: a VRAM planner (see "Planned: VRAM planner").
+   remain, and changing one never forces adjusting others: dependent values
+   (for example how many waiting topics dedupe looks at, or how topic pressure
+   is scaled when the mining cap changes) derive from the few that remain.
+   Swapping models is allowed, also over Thunderbolt, when there is a reason.
+   One idea: a VRAM planner (see "Planned: VRAM planner").
 9. **Time is stored absolute and read relative.** Two rules, together:
    - *Store absolute.* Everything Joi stores holds absolute times. An LLM
      that writes memory gets the current date and each message's time, and
@@ -568,7 +571,7 @@ of her own. How she notices each kind of change:
 | Change | How Joi notices | Status |
 |--------|-----------------|--------|
 | Code update (`git pull`, then restart) | At startup, compare the running commit (read from the checkout's `.git` files) with the last one she recorded. She learns only that she was updated, and when | In v2.0 |
-| Config, key or prompt changed | Tamper detection stops the service, as before. Just before stopping it records an alert, so she can tell the owner after the restart | In v2.0 |
+| Config, key or prompt changed | Tamper detection stops the service, as before, and it stays down until restarted by hand. Before stopping, she tells the owner right away in plain text; if that fails, the alert goes out after the restart | In v2.0 |
 | Memory edited by admin tools (`joi-admin`, `joi-scramble`) | The tools record that they changed something: kind of change, conversation, count. Joi's own changes (expiry purge, consolidation) do not count | Planned |
 | Model rebuilt (Modelfile change, VRAM planner) | The model's digest in Ollama differs from the one she recorded | Planned |
 
@@ -754,6 +757,8 @@ seams; they slot in between steps.
 | 2026-11-21 | Memory names: three tiers, **core facts**, **extended context facts** (about 3–4 days around now, to help context) and **facts** (the rest). Beside them the **buffer** holds a day's worth of possible facts, filled as messages leave the context, and the end-of-day tasks process it. Mapping from v2.0 pinning later. |
 | 2026-11-21 | VRAM planner autodetects internal vs external GPU and asks whether that is right; a command-line option skips detection and sets it. Every Modelfile is backed up before it is changed. |
 | 2026-11-22 | The VRAM planner also sets the default model and default context size (`JOI_OLLAMA_MODEL`, `JOI_OLLAMA_NUM_CTX`). |
+| 2026-11-22 | Tamper: the service must stop, as before, with no automatic restart. Before stopping, Joi tells the owner right away in plain text. |
+| 2026-11-22 | v3 is reconfigured from a few values: changing one setting never forces adjusting others; dependent values derive from the few that remain. |
 | 2026-11-21 | Core facts always go into the context. The other tiers carry an age value (higher = more important): buffer facts > extended context facts > facts, so extended context facts resurface sooner than facts. |
 | 2026-11-21 | Stale facts: facts form a mesh (links to the things they are about). A fact that stops being true becomes past: kept, recalled only for history, like the topic undertaker. The end-of-day tasks cascade an ending through linked facts, judging each one. Until then the buffer's age value is enough to outweigh the old fact; no extra check at write time. |
 | 2026-11-22 | Time is stored absolute and read relative: memory writers get the date and message times and write dates; expiry counts from when something was said; code renders times relative to now by calendar day, fresh at every prompt build. Time awareness is always on. |
