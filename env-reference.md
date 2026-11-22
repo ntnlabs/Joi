@@ -101,7 +101,8 @@ Prompts directory structure:
 > **Removed:** `JOI_TIME_AWARENESS` and `JOI_TIMEZONE` are no longer used.
 > Timezone and time awareness are now per-conversation settings stored in the
 > `conversation_settings` database table. Set timezone via Signal command
-> (`timezone Europe/Prague`), toggle time awareness via `joi-admin time-awareness`.
+> (`timezone Europe/Prague`). Time awareness is on by default; switch it off via
+> `joi-admin time-awareness <conversation_id> off`.
 
 ### Response Cooldown
 

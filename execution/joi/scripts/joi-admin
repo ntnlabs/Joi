@@ -4491,6 +4491,7 @@ cmd_time_awareness() {
     if [[ -z "$conv_id" || "$conv_id" == "--help" || "$conv_id" == "-h" ]]; then
         cat << 'TAEOF'
 Toggle per-conversation time awareness (inject current datetime into LLM prompts).
+Time awareness is ON by default; switch it off only for a conversation that needs it.
 
 USAGE:
     joi-admin time-awareness <conversation_id> on|off
@@ -4502,7 +4503,7 @@ DESCRIPTION:
     Uses the conversation's configured timezone (set via Signal 'timezone' command).
 
 EXAMPLES:
-    joi-admin time-awareness abc123 on     Enable time awareness
+    joi-admin time-awareness abc123 on     Enable time awareness (the default)
     joi-admin time-awareness abc123 off    Disable time awareness
     joi-admin time-awareness abc123        Show current setting
 TAEOF
@@ -4512,11 +4513,11 @@ TAEOF
     if [[ -z "$toggle" ]]; then
         # Show current setting
         local current
-        current=$(db_scalar "SELECT COALESCE(time_awareness, 0) FROM conversation_settings WHERE conversation_id = '${conv_id//\'/\'\'}';")
+        current=$(db_scalar "SELECT CASE WHEN time_awareness = -1 THEN 'off' WHEN time_awareness = 1 THEN 'on' ELSE 'on (default)' END FROM conversation_settings WHERE conversation_id = '${conv_id//\'/\'\'}';")
         local tz_val
         tz_val=$(db_scalar "SELECT COALESCE(timezone, 'UTC (not set)') FROM conversation_settings WHERE conversation_id = '${conv_id//\'/\'\'}';")
         echo "conversation_id: $conv_id"
-        echo "time_awareness:  ${current:-0 (no settings row)}"
+        echo "time_awareness:  ${current:-on (default, no settings row)}"
         echo "timezone:        ${tz_val:-UTC (not set)}"
         return
     fi
@@ -4524,7 +4525,7 @@ TAEOF
     local value
     case "$toggle" in
         on|1|true)   value=1 ;;
-        off|0|false) value=0 ;;
+        off|0|false) value=-1 ;;
         *)
             error "Invalid toggle value '$toggle'. Use 'on' or 'off'."
             ;;

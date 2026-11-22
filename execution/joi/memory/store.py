@@ -547,7 +547,7 @@ CREATE TABLE IF NOT EXISTS wind_quiet_samples (
 CREATE TABLE IF NOT EXISTS conversation_settings (
     conversation_id TEXT PRIMARY KEY,
     timezone TEXT,
-    time_awareness INTEGER DEFAULT 0,
+    time_awareness INTEGER DEFAULT 0,  -- 0/NULL = not set (on), 1 = on, -1 = off
     updated_at TEXT NOT NULL
 );
 
@@ -2493,7 +2493,9 @@ class MemoryStore:
         """
         conn = self._connect()
         now_ms = int(time.time() * 1000)
-        expires_at = int(now_ms + ttl_hours * 3_600_000) if ttl_hours else None
+        # Expiry counts from when the fact was said, not from when it was extracted
+        # (extraction can run hours later, at compaction).
+        expires_at = int((detected_at or now_ms) + ttl_hours * 3_600_000) if ttl_hours else None
 
         # Embed first — fails loud if Ollama is down (no partial state persisted).
         vec_bytes = self._embed_or_fail(
@@ -4217,15 +4219,16 @@ class MemoryStore:
         conn.commit()
 
     def get_time_awareness(self, conversation_id: str) -> bool:
-        """Return whether time awareness is enabled for a conversation (default False)."""
+        """Return whether time awareness is on for a conversation (default on).
+
+        Stored value: 0/NULL = not set (on), 1 = on, -1 = switched off.
+        """
         conn = self._connect()
         row = conn.execute(
             "SELECT time_awareness FROM conversation_settings WHERE conversation_id = ?",
             (conversation_id,),
         ).fetchone()
-        if row:
-            return bool(row["time_awareness"])
-        return False
+        return not (row and row["time_awareness"] == -1)
 
     def set_time_awareness(self, conversation_id: str, enabled: bool) -> None:
         """Set time awareness toggle for a conversation."""
@@ -4237,7 +4240,7 @@ class MemoryStore:
             VALUES (?, ?, ?)
             ON CONFLICT(conversation_id) DO UPDATE SET time_awareness = excluded.time_awareness, updated_at = excluded.updated_at
             """,
-            (conversation_id, int(enabled), now_iso),
+            (conversation_id, 1 if enabled else -1, now_iso),
         )
         conn.commit()
 
