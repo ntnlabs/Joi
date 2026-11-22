@@ -554,39 +554,48 @@ Recorded 2026-11-20; not designed yet. Serves principle 8.
 - `joi-setup` already reads model details from Ollama (`/api/tags`,
   `/api/show`), so it is a natural home.
 
-### Planned: Sensing outside changes
+### Joi's alert service (sensing outside changes)
 
-Recorded 2026-11-22; not designed yet. Broadens "Memory Tampering
-Awareness" in `wind-architecture-v1.md` (2026-03-13), where Joi gets a
-"sixth sense" when someone edits her memory outside her own operations.
+Recorded 2026-11-22. Broadens "Memory Tampering Awareness" in
+`wind-architecture-v1.md` (2026-03-13), where Joi gets a "sixth sense" when
+someone edits her memory outside her own operations.
 
-Joi notices when something about her was changed from outside, and reacts
-to it. How she could notice each kind of change:
+Something happened to Joi herself: new code, tampering, her memory edited,
+her model rebuilt. She notices and tells whoever it concerns with a message
+of her own. How she notices each kind of change:
 
-| Change | How Joi could notice |
-|--------|----------------------|
-| Code update (`git pull`, then restart) | At startup, compare the running commit (`git rev-parse HEAD` in the checkout) with the last one she recorded. She learns only that she was updated, and when |
-| Memory edited by admin tools (`joi-admin`, `joi-scramble`) | The tools record that they changed something: kind of change, conversation, count. Joi's own changes (expiry purge, consolidation) do not count |
-| Config, key or prompt changed | Tamper detection already notices and stops the service, but the restart forgets why. Recording the reason before stopping lets her know afterwards |
-| Model rebuilt (Modelfile change, VRAM planner) | The model's digest in Ollama differs from the one she recorded |
+| Change | How Joi notices | Status |
+|--------|-----------------|--------|
+| Code update (`git pull`, then restart) | At startup, compare the running commit (read from the checkout's `.git` files) with the last one she recorded. She learns only that she was updated, and when | In v2.0 |
+| Config, key or prompt changed | Tamper detection stops the service, as before. Just before stopping it records an alert, so she can tell the owner after the restart | In v2.0 |
+| Memory edited by admin tools (`joi-admin`, `joi-scramble`) | The tools record that they changed something: kind of change, conversation, count. Joi's own changes (expiry purge, consolidation) do not count | Planned |
+| Model rebuilt (Modelfile change, VRAM planner) | The model's digest in Ollama differs from the one she recorded | Planned |
 
-**Reaction.** Each change becomes a `joi_log` episode ("I was updated
-today", "someone removed one of my memories"), so she can mention it and
-answer from the record instead of guessing.
+**Reaction.** Each change becomes an alert that Joi delivers herself: a
+short message written by the conversation's model in her own voice, plain
+text if that fails, several alerts in one message. She waits through quiet
+hours and Wind snooze and sends at the first allowed moment. In v3 each
+alert is also a `joi_log` episode ("I was updated today", "someone removed
+one of my memories"), so she can answer from the record later instead of
+guessing.
 
 **No commit messages.** Git commit messages never reach the LLM. They are
 text from outside Joi's conversations, and putting them into a prompt would
-open a side channel into it. For a code update the record holds only that
-she was updated, and when.
+open a side channel into it. For a code update she knows only that she was
+updated, and when.
 
-**First version in v2.0 (2026-11-22, `81f29a4`):** code updates only. The
-commit is compared at startup; for 24 hours, replies in the owner's direct
-conversation get one line saying that Joi was updated, and when.
+**Who hears about it.** Code, config, key and model changes go to the owner.
+The owner knows all secrets and the delivery is trusted, so the message may
+name the changed files; logs record alert kinds only, never the text. Memory
+edits go to whoever the memories belong to: every memory is tagged with its
+conversation (in v3, its scope). Edits to a group's memories are announced
+to the group.
 
-**Who hears about it.** Code, config, key and model changes are logged
-under the owner. Memory edits go to whoever the memories belong to: every
-memory is tagged with its conversation (in v3, its scope). Edits to a
-group's memories are announced to the group.
+**In v2.0 (2026-11-22, `bf6f43c`):** code updates and tampering. Alerts live
+in a `joi_alerts` table; the scheduler delivers them to the owner every
+tick, keeping the generated text so a failed send is retried without
+generating again. Replies in the owner's direct conversation also know about
+a code update for 24 hours.
 
 **Fixed from the original sketch:** it watches every kind of change, not
 only deletes; it tells outside changes from Joi's own; and it records that
@@ -747,6 +756,7 @@ seams; they slot in between steps.
 | 2026-11-22 | Planned: Joi senses changes made to her from outside (code updates such as `git pull`, memory edits by admin tools, config, key and prompt changes, model rebuilds) and reacts through `joi_log` episodes. Broadens wind-architecture-v1's Memory Tampering Awareness. Records that something changed, never the content. Not designed yet. |
 | 2026-11-22 | Outside changes: code, config, key and model changes are logged under the owner; memory edits go to whoever the memories belong to (their conversation), so a group's edited memories are announced to the group. |
 | 2026-11-22 | Git commit messages never reach the LLM: text from outside the conversations is a side channel into the prompt. For a code update Joi learns only that she was updated, and when. |
+| 2026-11-22 | Outside changes become Joi's alert service: she tells the owner (or whoever the memories belong to) herself, with a message in her own voice, at the first moment allowed by quiet hours and snooze. Tamper still stops the service; the alert is recorded first and sent after the restart. The owner's message may name changed files; logs record alert kinds only. First version in v2.0: code update and tamper. |
 | 2026-11-22 | Planned: Joi's self-facts (working name cheat-sheet): facts about Joi herself, given by the owner or learned from her own replies (never from what others tell her about herself), recalled only when relevant and a few at a time. A memory kind in seam 1; content stays private. Not designed yet. |
 | 2026-11-22 | Self-facts are per conversation: each conversation's Joi is its own fork, and her self-facts never slide into another conversation on their own (copying only by explicit admin command). Two kinds: *almost always* (used when Wind writes) and *conversation driven* (found by search when the conversation touches them). |
 | 2026-11-22 | Almost-always self-facts reach replies as inner thoughts: a system note in the message history, `(Joi's own thought: ...)`, generated at prompt build and never stored, one fact per note, a new note every half window. Wind gets them directly in its prompt. Rejected: holding back repeats (did not work consistently in past tests). |
