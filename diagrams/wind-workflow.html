@@ -310,7 +310,7 @@
         <span class="kv-key">tension mining</span><span class="kv-val"><span class="tag t-llm" style="font-size:10px;">joi-curiosity</span> open threads from recent messages · two triggers: before compaction (oldest batch) and after <em>20 min</em> of user silence (JOI_TENSION_SILENCE_MINUTES) · already-resolved topics (wind_outcome) passed in to avoid repeats</span>
         <span class="kv-key">followups</span><span class="kv-val">upcoming events found by the same call (interview, flight, appointment …) with an exact <em>event_time</em></span>
         <span class="kv-key">time</span><span class="kv-val">each transcript line starts with its local date and time · titles and summaries use dates, never "today" / "tomorrow"</span>
-        <span class="kv-key">storage</span><span class="kv-val">written to <em>pending_topics</em> table · deduplicated before insert · pending mined topics per conversation capped by max_pending_mined_topics (default 1, configurable)</span>
+        <span class="kv-key">storage</span><span class="kv-val">written to <em>pending_topics</em> table · deduplicated before insert · pending mined topics per conversation capped by max_pending_mined_topics (default 1, configurable) · mined tension topics expire after <em>14 days</em></span>
       </div>
     </div>
   </div>

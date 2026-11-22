@@ -1247,7 +1247,7 @@ class WindOrchestrator:
                     title=title,
                     content=summary,
                     priority=40,
-                    expires_at=now + timedelta(days=30),
+                    expires_at=now + timedelta(days=14),
                     novelty_key=novelty_key,
                 )
                 logger.info("Tension topic created from conversation mining", extra={
