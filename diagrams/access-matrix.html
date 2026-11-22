@@ -145,6 +145,13 @@
       <td class="c-grp"><span class="cond">if not addressed</span><span class="note">group messages not to Joi</span></td>
     </tr>
 
+    <tr>
+      <td><div class="fn-name">Translation</div><div class="fn-detail">Message translated in, reply translated out (translategemma)</div></td>
+      <td class="c-own"><span class="cond">if configured</span><span class="note">.translate file per user</span></td>
+      <td><span class="cond">if configured</span><span class="note">.translate file per user</span></td>
+      <td class="c-grp"><span class="cond">if configured</span><span class="note">.translate file per group</span></td>
+    </tr>
+
     <!-- MEMORY -->
     <tr class="section-row"><td colspan="4">Memory</td></tr>
 
@@ -283,10 +290,24 @@
     </tr>
 
     <tr>
-      <td><div class="fn-name">Facts / Summaries / RAG</div><div class="fn-detail">Context enrichment in system prompt</div></td>
+      <td><div class="fn-name">Facts / Summaries / RAG</div><div class="fn-detail">Context enrichment in system prompt · meaning + word search</div></td>
       <td class="c-own"><span class="yes">✓</span></td>
       <td><span class="yes">✓</span></td>
       <td class="c-grp"><span class="yes">✓</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Date &amp; Time Context</div><div class="fn-detail">Current local time in the prompt; remembered times shown by calendar day · on by default, off per conversation via joi-admin</div></td>
+      <td class="c-own"><span class="yes">✓</span></td>
+      <td><span class="yes">✓</span></td>
+      <td class="c-grp"><span class="yes">✓</span></td>
+    </tr>
+
+    <tr>
+      <td><div class="fn-name">Code Update Notice</div><div class="fn-detail">Joi knows she was updated, and when (never what changed)</div></td>
+      <td class="c-own"><span class="yes">✓</span><span class="note">for 24 h after an update</span></td>
+      <td><span class="no">✗</span></td>
+      <td class="c-grp"><span class="no">✗</span></td>
     </tr>
 
   </tbody>

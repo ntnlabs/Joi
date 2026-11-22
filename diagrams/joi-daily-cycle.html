@@ -203,6 +203,27 @@
 
 
 <!-- ═══════════════════════════════════════════════════════ -->
+<p class="section-heading">Service Start</p>
+<!-- ═══════════════════════════════════════════════════════ -->
+
+<div class="pipeline">
+
+  <div class="block c-entry">
+    <div class="block-title">Code Version Check <span class="tag t-always">every start</span></div>
+    <div class="block-body">
+      <div class="kv">
+        <span class="kv-key">reads</span><span class="kv-val">current commit from the checkout's .git files (no git binary)</span>
+        <span class="kv-key">compares</span><span class="kv-val">with <em>code_commit</em> in system_state from the last start</span>
+        <span class="kv-key">logs</span><span class="kv-val">one line: "Code version recorded (first start)" · "Code version unchanged" · "Code updated since last start"</span>
+        <span class="kv-key">if updated</span><span class="kv-val"><em>code_updated_at</em> stored · the owner's replies know for <em>24 h</em> that Joi was updated, and when</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
 <p class="section-heading">Continuous — Every 60 Seconds</p>
 <!-- ═══════════════════════════════════════════════════════ -->
 
@@ -248,7 +269,7 @@
     <div class="block-body">
       <ul class="gates">
         <li><span class="gate-n">1</span><span class="gate-l">enabled</span><span class="gate-d">Wind globally enabled and conversation on allowlist</span></li>
-        <li><span class="gate-n">2</span><span class="gate-l">not snoozed</span><span class="gate-d"><em>wind_snooze_until</em> is NULL or in the past · "shh" → 8 h snooze · "shhh" → 24 h</span></li>
+        <li><span class="gate-n">2</span><span class="gate-l">not snoozed</span><span class="gate-d"><em>wind_snooze_until</em> is NULL or in the past · "shh" → 4 h snooze by default · or a given duration ("shh 2h", minutes, up to 7 days)</span></li>
         <li><span class="gate-n">3</span><span class="gate-l">quiet hours</span><span class="gate-d">current local time outside <em>23:00–07:00</em> window</span></li>
         <li><span class="gate-n">4</span><span class="gate-l">cooldown</span><span class="gate-d">≥ <em>1 h</em> since last proactive sent</span></li>
         <li><span class="gate-n">5</span><span class="gate-l">daily cap</span><span class="gate-d">proactives in rolling 24 h window &lt; cap (base <em>3</em>, boosted for active conversations)</span></li>
@@ -313,10 +334,11 @@
           <span class="kv-key">day gate</span><span class="kv-val">shifted date since <em>last_daily_tasks_at</em> has advanced (3-hour shift · same convention as daily cap)</span>
           <span class="kv-key">silence gate</span><span class="kv-val">conversation quiet ≥ <em>30 min</em> · each conversation waits independently — one active conversation does not block others</span>
           <span class="kv-key">deduplication</span><span class="kv-val"><span class="tag t-llm" style="font-size:10px;">joi-curiosity</span> LLM pass over pending topics · near-duplicates merged · best combined title + content kept</span>
+          <span class="kv-key">emotional depth</span><span class="kv-val"><span class="tag t-llm" style="font-size:10px;">main LLM</span> reads the day's messages for sarcasm, subtext, implied emotions and future events · creates <em>emotional</em> check-in and long-horizon <em>followup</em> topics</span>
           <span class="kv-key">mood rollup</span><span class="kv-val">Joi's mood intensity decayed toward middle — <em>intensity × 0.85 + 0.5 × 0.15</em> — prevents permanent emotional extremes</span>
           <span class="kv-key">feedback decay</span><span class="kv-val">rejection_weight and interest_weight on topic families gradually forgiven — old data loses influence over time</span>
-          <span class="kv-key">learned quiet</span><span class="kv-val">quiet start inferred from last 10 inbound message timestamps · stored as <em>learned_quiet_start_minutes</em></span>
-          <span class="kv-key">priority decay</span><span class="kv-val">pending topics decayed toward minimum priority using sqrt scaling by queue depth · affinity-protected topics (high interest_weight) decay more slowly</span>
+          <span class="kv-key">learned quiet</span><span class="kv-val">each day's last inbound message time is recorded · quiet start = circular mean of these samples (needs ≥ 3 days, capped at 03:00) · stored as <em>learned_quiet_start_minutes</em></span>
+          <span class="kv-key">priority decay</span><span class="kv-val">pending topics decayed toward minimum priority using sqrt scaling by queue depth · affinity-protected topics (high interest_weight) decay more slowly · skipped if the user has been silent ≥ 2 days</span>
           <span class="kv-key">persisted</span><span class="kv-val"><em>last_daily_tasks_at</em> written to wind_state · survives service restart</span>
         </div>
       </div>
@@ -331,6 +353,7 @@
           <span class="kv-key">HMAC rotation</span><span class="kv-val">mesh authentication key rotation check — rotates if weekly interval elapsed · uses grace period for in-flight messages</span>
           <span class="kv-key">purge messages</span><span class="kv-val">hard-delete fully-archived messages older than <em>JOI_MESSAGE_RETENTION_DAYS</em> (default: disabled · max cap: 90 days)</span>
           <span class="kv-key">purge reminders</span><span class="kv-val">archive terminal reminders older than <em>JOI_REMINDER_RETENTION_DAYS</em> (default: 180 days)</span>
+          <span class="kv-key">purge samples</span><span class="kv-val">quiet-time samples older than 60 days</span>
         </div>
       </div>
     </div>
@@ -367,6 +390,8 @@
           <span class="kv-key">schema_version</span><span class="kv-val">migration tracking</span>
           <span class="kv-key">last_interaction_at</span><span class="kv-val">epoch ms of last user message (any conversation)</span>
           <span class="kv-key">agent_state</span><span class="kv-val">idle / busy</span>
+          <span class="kv-key">code_commit</span><span class="kv-val">commit the service last started on</span>
+          <span class="kv-key">code_updated_at</span><span class="kv-val">epoch ms of the last code update · drives the owner's 24 h notice</span>
         </div>
       </div>
     </div>
