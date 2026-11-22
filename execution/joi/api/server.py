@@ -65,6 +65,7 @@ from ingestion import run_auto_ingestion, INGESTION_DIR
 from llm import OllamaClient
 from memory import MemoryConsolidator, MemoryStore
 from memory.pinning import MAX_CORE_FACTS  # import here so a bad JOI_MAX_PINNED_FACTS fails at startup
+from memory.store import ago_label
 
 # Import Wind module (path already set above)
 from wind import WindOrchestrator, WindConfig
@@ -2820,25 +2821,12 @@ def _build_enriched_prompt(
     if conversation_id:
         expired_facts = memory.get_recently_expired_facts(days=7, conversation_id=conversation_id)
         if expired_facts:
-            now_ms_ctx = int(time.time() * 1000)
+            tz = _get_tz(conversation_id)
+            now = datetime.now(timezone.utc)
             exp_lines = ["Past events (last 7 days):"]
             for ef in expired_facts:
-                age_h = (now_ms_ctx - ef.expires_at) / 3_600_000  # type: ignore[operator]
-                if age_h < 24:
-                    when = f"expired {int(age_h)}h ago"
-                elif age_h < 48:
-                    when = "expired yesterday"
-                else:
-                    when = f"expired {int(age_h / 24)} days ago"
-                mentioned = ""
-                if ef.detected_at:
-                    det_h = (now_ms_ctx - ef.detected_at) / 3_600_000
-                    if det_h < 24:
-                        mentioned = f", mentioned {int(det_h)}h ago"
-                    elif det_h < 48:
-                        mentioned = ", mentioned yesterday"
-                    else:
-                        mentioned = f", mentioned {int(det_h / 24)} days ago"
+                when = f"expired {ago_label(ef.expires_at, tz, now)}"  # type: ignore[arg-type]
+                mentioned = f", mentioned {ago_label(ef.detected_at, tz, now)}" if ef.detected_at else ""
                 exp_lines.append(f"  - {ef.key}: {ef.value} ({when}{mentioned})")
             parts.append("\n\n" + "\n".join(exp_lines))
 

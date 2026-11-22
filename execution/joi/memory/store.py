@@ -619,20 +619,28 @@ def _when_label(start_ms: int, end_ms: int, tz: ZoneInfo, now: datetime) -> str:
     return f"{day(start)} {start:%H:%M} to {day(end)} {end:%H:%M}"
 
 
-def _fact_temporal_suffix(fact: "UserFact", now_ms: int) -> str:
+def ago_label(ts_ms: int, tz: ZoneInfo, now: datetime) -> str:
+    """How long ago ts_ms was, by calendar day in tz: "3h ago", "yesterday", "4 days ago".
+
+    Hours within the same day; "yesterday" means the previous calendar day,
+    not 24-48 hours ago.
+    """
+    then = datetime.fromtimestamp(ts_ms / 1000, tz)
+    days = (now.astimezone(tz).date() - then.date()).days
+    if days <= 0:
+        hours = int((now - then).total_seconds() // 3600)
+        return "just now" if hours < 1 else f"{hours}h ago"
+    if days == 1:
+        return "yesterday"
+    return f"{days} days ago"
+
+
+def _fact_temporal_suffix(fact: "UserFact", now_ms: int, tz: ZoneInfo) -> str:
     """Return a parenthetical temporal annotation for a fact, or empty string if none."""
     parts = []
     if fact.detected_at:
-        age_ms = now_ms - fact.detected_at
-        age_h = age_ms / 3_600_000
-        if age_h < 1:
-            parts.append("mentioned just now")
-        elif age_h < 24:
-            parts.append(f"mentioned {int(age_h)}h ago")
-        elif age_h < 48:
-            parts.append("mentioned yesterday")
-        else:
-            parts.append(f"mentioned {int(age_h / 24)} days ago")
+        now = datetime.fromtimestamp(now_ms / 1000, timezone.utc)
+        parts.append(f"mentioned {ago_label(fact.detected_at, tz, now)}")
     if fact.expires_at:
         ttl_ms = fact.expires_at - now_ms
         if ttl_ms <= 0:
@@ -2664,6 +2672,7 @@ class MemoryStore:
             return ""
 
         now_ms = int(time.time() * 1000)
+        tz = self.get_conversation_zoneinfo(conversation_id)
         lines = ["Known facts about the user:"]
         by_category: Dict[str, List[UserFact]] = {}
         for fact in facts:
@@ -2672,7 +2681,7 @@ class MemoryStore:
         for category, cat_facts in sorted(by_category.items()):
             lines.append(f"\n{category.title()}:")
             for fact in cat_facts:
-                suffix = _fact_temporal_suffix(fact, now_ms)
+                suffix = _fact_temporal_suffix(fact, now_ms, tz)
                 lines.append(f"  - {fact.key}: {fact.value}{suffix}")
 
         return "\n".join(lines)
