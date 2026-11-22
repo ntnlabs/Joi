@@ -908,8 +908,13 @@ def _detect_and_extract_fact(
     else:
         keys_hint = ""
 
+    sent_at = (
+        datetime.fromtimestamp(detected_at / 1000, timezone.utc) if detected_at else datetime.now(timezone.utc)
+    ).astimezone(_get_tz(conversation_id)).strftime("%A %Y-%m-%d %H:%M")
+
     # Ask LLM to detect and extract in one call
     prompt = f"""Analyze this message: "{text}"
+It was sent on {sent_at}.
 
 Is the user TELLING me a fact about themselves that I should store?
 This includes: their name, preferences, facts about them, things they like/dislike,
@@ -925,6 +930,9 @@ Rules:
 
 If YES, extract the fact as JSON:
 {{"remember": true, "category": "personal|preference|work|health|skill|goal|routine|opinion|event|technical", "key": "short_id", "value": "the fact"}}
+
+In the value, never use relative time words (today, tomorrow, yesterday, tonight,
+next week). Work out the date from when the message was sent and write it.
 
 If NO, return:
 {{"remember": false}}

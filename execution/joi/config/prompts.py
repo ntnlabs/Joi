@@ -524,13 +524,17 @@ KEY REUSE: If updating a fact you already know, reuse the exact existing key.
 Include the person's name in value (never "User" or "the user").
 If truly no facts, return: []
 
+DATES: Now is {now}. Each message starts with its local date and time.
+Never write relative time words (today, tomorrow, yesterday, tonight, next week)
+in a value. Work out the date from the message's own date and write it.
+
 Examples:
 [
   {{"category": "personal", "key": "name", "value": "TestUser's real name is TestName", "confidence": 1.0, "core": true}},
   {{"category": "work", "key": "profession", "value": "TestName is a developer", "confidence": 1.0, "core": true}},
   {{"category": "routine", "key": "wake_up_time", "value": "TestUser wakes up at 6:45 every morning", "confidence": 0.9, "core": false}},
-  {{"category": "event", "key": "tire_service", "value": "TestUser has a tire service appointment tomorrow", "confidence": 0.9, "core": false, "ttl_hours": 24}},
-  {{"category": "event", "key": "lunch_plan", "value": "TestUser will have lunch at Vapiano today", "confidence": 0.9, "core": false, "ttl_hours": 12}},
+  {{"category": "event", "key": "tire_service", "value": "TestUser has a tire service appointment on Saturday 2026-03-14", "confidence": 0.9, "core": false, "ttl_hours": 24}},
+  {{"category": "event", "key": "lunch_plan", "value": "TestUser will have lunch at Vapiano on Friday 2026-03-13", "confidence": 0.9, "core": false, "ttl_hours": 12}},
   {{"category": "personal", "key": "birthday", "value": "TestUser's birthday is February 28th", "confidence": 1.0, "core": true}},
   {{"category": "health", "key": "current_mood", "value": "TestUser is feeling exhausted", "confidence": 0.9, "core": false, "ttl_hours": 12}},
   {{"category": "opinion", "key": "ai_view", "value": "TestUser thinks most AI assistants are too generic", "confidence": 0.8, "core": false, "ttl_hours": 168}},

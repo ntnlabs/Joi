@@ -11,6 +11,7 @@ import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -592,6 +593,30 @@ def _embed_input_for_chunk(title: str, content: str) -> str:
 def _embed_input_for_note(title: str, content: str) -> str:
     """Text passed to bge-m3 for note embedding."""
     return f"{title}\n\n{content}"
+
+
+def _when_label(start_ms: int, end_ms: int, tz: ZoneInfo, now: datetime) -> str:
+    """Readable local time span by calendar day, e.g. "today 09:10-10:40".
+
+    Computed at read time and never stored, so it stays right as days pass.
+    """
+    today = now.astimezone(tz).date()
+
+    def day(dt: datetime) -> str:
+        delta = (today - dt.date()).days
+        if delta == 0:
+            return "today"
+        if delta == 1:
+            return "yesterday"
+        if 1 < delta < 7:
+            return dt.strftime("%A")
+        return dt.strftime("%A %Y-%m-%d")
+
+    start = datetime.fromtimestamp(start_ms / 1000, tz)
+    end = datetime.fromtimestamp(end_ms / 1000, tz)
+    if start.date() == end.date():
+        return f"{day(start)} {start:%H:%M}-{end:%H:%M}"
+    return f"{day(start)} {start:%H:%M} to {day(end)} {end:%H:%M}"
 
 
 def _fact_temporal_suffix(fact: "UserFact", now_ms: int) -> str:
@@ -3370,6 +3395,10 @@ class MemoryStore:
         # so we must NOT add ORDER BY (which would discard the semantic ranking).
         by_id = {row["id"]: row for row in rows}
 
+        # Readable local time per summary (raw epoch ms meant nothing to the LLM)
+        tz = self.get_conversation_zoneinfo(conversation_id)
+        now = datetime.now(timezone.utc)
+
         # Format respecting token budget, in fused-rank order
         out_parts: list[str] = []
         used_tokens = 0
@@ -3377,7 +3406,8 @@ class MemoryStore:
             row = by_id.get(rid)
             if row is None:
                 continue
-            chunk = f"[{row['summary_type']} {row['period_start']}-{row['period_end']}]\n{row['summary_text']}"
+            when = _when_label(row['period_start'], row['period_end'], tz, now)
+            chunk = f"[{row['summary_type']}, {when}]\n{row['summary_text']}"
             cost = self._estimate_tokens(chunk)
             if used_tokens + cost > max_tokens:
                 break
@@ -4161,6 +4191,16 @@ class MemoryStore:
         if row and row["timezone"]:
             return row["timezone"]
         return None
+
+    def get_conversation_zoneinfo(self, conversation_id: Optional[str]) -> ZoneInfo:
+        """Conversation timezone as ZoneInfo; UTC when unset or invalid."""
+        tz_name = self.get_conversation_tz(conversation_id) if conversation_id else None
+        if tz_name:
+            try:
+                return ZoneInfo(tz_name)
+            except Exception:
+                pass
+        return ZoneInfo("UTC")
 
     def set_conversation_timezone(self, conversation_id: str, tz_name: str) -> None:
         """Set IANA timezone for a conversation."""

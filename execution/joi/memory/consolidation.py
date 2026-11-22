@@ -17,7 +17,9 @@ import logging
 import re
 import sys
 import time
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 from .store import MemoryStore, Message
 
@@ -34,8 +36,12 @@ from config import (
 logger = logging.getLogger("joi.memory.consolidation")
 
 
-def format_messages_for_llm(messages: List[Message]) -> str:
-    """Format messages as conversation text for LLM."""
+def format_messages_for_llm(messages: List[Message], tz: Optional[ZoneInfo] = None) -> str:
+    """Format messages as conversation text for LLM.
+
+    With tz, each line starts with the message's local date and time, so the
+    LLM can turn "tomorrow" into a date.
+    """
     lines = []
     for msg in messages:
         if msg.direction == "outbound":
@@ -44,7 +50,8 @@ def format_messages_for_llm(messages: List[Message]) -> str:
             # Use actual name/ID so LLM can attribute facts correctly
             role = msg.sender_name or msg.sender_id or "Someone"
         text = msg.content_text or "(no text)"
-        lines.append(f"{role}: {text}")
+        stamp = f"[{datetime.fromtimestamp(msg.timestamp / 1000, tz):%a %Y-%m-%d %H:%M}] " if tz else ""
+        lines.append(f"{stamp}{role}: {text}")
     return "\n".join(lines)
 
 
@@ -269,7 +276,9 @@ class MemoryConsolidator:
         model = self._get_model_for_conversation(convo_id)
         prompt_template = get_fact_extraction_prompt_for_conversation(convo_id)
 
-        conversation_text = format_messages_for_llm(inbound_messages)
+        tz = self.memory.get_conversation_zoneinfo(convo_id)
+        conversation_text = format_messages_for_llm(inbound_messages, tz)
+        now_text = datetime.now(tz).strftime("%A %Y-%m-%d %H:%M")
 
         # Fetch existing fact keys for dedup — LLM reuses these instead of inventing variants
         existing = self.memory.get_fact_keys(convo_id) if convo_id else []
@@ -281,9 +290,9 @@ class MemoryConsolidator:
         # Try with existing_keys placeholder; fall back to without if template lacks it
         # (custom .fact_prompt files may not have {existing_keys})
         try:
-            prompt = prompt_template.format(conversation=conversation_text, existing_keys=keys_block)
+            prompt = prompt_template.format(conversation=conversation_text, existing_keys=keys_block, now=now_text)
         except KeyError:
-            prompt = prompt_template.format(conversation=conversation_text)
+            prompt = prompt_template.format(conversation=conversation_text, now=now_text)
 
         try:
             response = self.llm.generate(prompt=prompt, model=model)
@@ -441,7 +450,7 @@ Corrected JSON:"""
         model = self._get_model_for_conversation(convo_id)
         prompt_template = get_summarization_prompt_for_conversation(convo_id)
 
-        conversation_text = format_messages_for_llm(messages)
+        conversation_text = format_messages_for_llm(messages, self.memory.get_conversation_zoneinfo(convo_id))
         prompt = prompt_template.format(conversation=conversation_text)
 
         response = self.llm.generate(prompt=prompt, model=model)
