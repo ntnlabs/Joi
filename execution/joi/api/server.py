@@ -1189,14 +1189,15 @@ def _redact_filename_pii(filename: str) -> str:
 
     Examples:
         +123456789.txt -> +***6789.txt
+        -123456789.txt -> +***6789.txt   (prompt files store "+" as "-")
         XDtVV+4Nz0pW9WCRi00QgY7E5hd29DGPmyKF6i-Z6bY=.txt -> [GRP:XDtV...].txt
     """
     # Get extension if present
     name, ext = (filename.rsplit('.', 1) + [''])[:2]
     ext = f'.{ext}' if ext else ''
 
-    # Phone number pattern
-    if re.match(r'^\+\d+$', name):
+    # Phone number pattern ("+" or "-": sanitize_scope turns "+" into "-")
+    if re.match(r'^[+-]\d+$', name):
         if len(name) > 5:
             return f"+***{name[-4:]}{ext}"
         return f"+***{ext}"
@@ -1254,18 +1255,19 @@ def _init_fingerprints():
         # Check privacy mode for log redaction
         privacy_mode = policy_manager.is_privacy_mode()
 
-        def format_entry(path, hash):
-            name = os.path.basename(path)
-            if privacy_mode:
-                name = _redact_filename_pii(name)
-            return f"{name}:{hash}"
-
-        summary = " | ".join(format_entry(p, h) for p, h in sorted(_startup_fingerprints.items()))
         logger.info("Runtime fingerprint initialized", extra={
-            "files": summary,
+            "file_count": len(_startup_fingerprints),
             "privacy_mode": privacy_mode,
             "action": "fingerprint_init"
         })
+        # One line per file, so the journal stays readable
+        for path, file_hash in sorted(_startup_fingerprints.items()):
+            name = os.path.basename(path)
+            logger.info("Runtime fingerprint", extra={
+                "file": _redact_filename_pii(name) if privacy_mode else name,
+                "hash": file_hash,
+                "action": "fingerprint_file"
+            })
 
 
 def _check_fingerprints() -> List[str]:
