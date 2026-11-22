@@ -1354,6 +1354,7 @@ def _check_code_update() -> None:
         return
     previous = memory.get_state("code_commit")
     if previous == commit:
+        logger.info("Code version unchanged", extra={"commit": commit[:12], "action": "code_version"})
         return
     if previous:
         memory.set_state("code_updated_at", str(int(time.time() * 1000)))
@@ -1362,6 +1363,8 @@ def _check_code_update() -> None:
             "to_commit": commit[:12],
             "action": "code_updated",
         })
+    else:
+        logger.info("Code version recorded (first start)", extra={"commit": commit[:12], "action": "code_version"})
     memory.set_state("code_commit", commit)
 
 
