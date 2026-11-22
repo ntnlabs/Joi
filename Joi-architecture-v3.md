@@ -563,18 +563,24 @@ to it. How she could notice each kind of change:
 
 | Change | How Joi could notice |
 |--------|----------------------|
-| Code update (`git pull`, then restart) | At startup, compare the running commit (`git rev-parse HEAD` in the checkout) with the last one she recorded. The commit subjects in between, read locally, say what changed. After a history rewrite the range is gone; she then only knows that she was updated |
+| Code update (`git pull`, then restart) | At startup, compare the running commit (`git rev-parse HEAD` in the checkout) with the last one she recorded. She learns only that she was updated, and when |
 | Memory edited by admin tools (`joi-admin`, `joi-scramble`) | The tools record that they changed something: kind of change, conversation, count. Joi's own changes (expiry purge, consolidation) do not count |
 | Config, key or prompt changed | Tamper detection already notices and stops the service, but the restart forgets why. Recording the reason before stopping lets her know afterwards |
 | Model rebuilt (Modelfile change, VRAM planner) | The model's digest in Ollama differs from the one she recorded |
 
 **Reaction.** Each change becomes a `joi_log` episode ("I was updated
 today", "someone removed one of my memories"), so she can mention it and
-answer "what changed?" from the record instead of guessing.
+answer from the record instead of guessing.
+
+**No commit messages.** Git commit messages never reach the LLM. They are
+text from outside Joi's conversations, and putting them into a prompt would
+open a side channel into it. For a code update the record holds only that
+she was updated, and when.
 
 **Who hears about it.** Code, config, key and model changes are logged
 under the owner. Memory edits go to whoever the memories belong to: every
-memory is tagged with its conversation (in v3, its scope).
+memory is tagged with its conversation (in v3, its scope). Edits to a
+group's memories are announced to the group.
 
 **Fixed from the original sketch:** it watches every kind of change, not
 only deletes; it tells outside changes from Joi's own; and it records that
@@ -665,7 +671,8 @@ seams; they slot in between steps.
 | 2026-11-21 | Stale facts: facts form a mesh (links to the things they are about). A fact that stops being true becomes past: kept, recalled only for history, like the topic undertaker. The end-of-day tasks cascade an ending through linked facts, judging each one. Until then the buffer's age value is enough to outweigh the old fact; no extra check at write time. |
 | 2026-11-22 | Time is stored absolute and read relative: memory writers get the date and message times and write dates; expiry counts from when something was said; code renders times relative to now by calendar day, fresh at every prompt build. Time awareness is always on. |
 | 2026-11-22 | Planned: Joi senses changes made to her from outside (code updates such as `git pull`, memory edits by admin tools, config, key and prompt changes, model rebuilds) and reacts through `joi_log` episodes. Broadens wind-architecture-v1's Memory Tampering Awareness. Records that something changed, never the content. Not designed yet. |
-| 2026-11-22 | Outside changes: code, config, key and model changes are logged under the owner; memory edits go to whoever the memories belong to (their conversation). |
+| 2026-11-22 | Outside changes: code, config, key and model changes are logged under the owner; memory edits go to whoever the memories belong to (their conversation), so a group's edited memories are announced to the group. |
+| 2026-11-22 | Git commit messages never reach the LLM: text from outside the conversations is a side channel into the prompt. For a code update Joi learns only that she was updated, and when. |
 
 ## Related Documents
 
