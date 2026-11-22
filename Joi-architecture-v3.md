@@ -572,6 +572,10 @@ to it. How she could notice each kind of change:
 today", "someone removed one of my memories"), so she can mention it and
 answer "what changed?" from the record instead of guessing.
 
+**Who hears about it.** Code, config, key and model changes are logged
+under the owner. Memory edits go to whoever the memories belong to: every
+memory is tagged with its conversation (in v3, its scope).
+
 **Fixed from the original sketch:** it watches every kind of change, not
 only deletes; it tells outside changes from Joi's own; and it records that
 something changed, never what it said, so a deleted memory does not survive
@@ -627,9 +631,6 @@ seams; they slot in between steps.
 | What an extended context fact becomes after its 3–4 days (a fact, or it fades) | Scope, Priority |
 | How links between facts (the mesh) are found and stored | Scope, Priority |
 | VRAM planner: how autodetection tells an internal GPU from an external one, and how it sizes models it has no known values for | Planned: VRAM planner |
-| Outside changes: which ones Joi mentions and to whom (owner only, or every conversation), and whether these episodes are always on | Planned: Sensing outside changes |
-| Code updates: commit subjects as they are, or an LLM summary of what changed for Joi | Planned: Sensing outside changes |
-
 ## Decisions
 
 | Date | Decision |
@@ -664,6 +665,7 @@ seams; they slot in between steps.
 | 2026-11-21 | Stale facts: facts form a mesh (links to the things they are about). A fact that stops being true becomes past: kept, recalled only for history, like the topic undertaker. The end-of-day tasks cascade an ending through linked facts, judging each one. Until then the buffer's age value is enough to outweigh the old fact; no extra check at write time. |
 | 2026-11-22 | Time is stored absolute and read relative: memory writers get the date and message times and write dates; expiry counts from when something was said; code renders times relative to now by calendar day, fresh at every prompt build. Time awareness is always on. |
 | 2026-11-22 | Planned: Joi senses changes made to her from outside (code updates such as `git pull`, memory edits by admin tools, config, key and prompt changes, model rebuilds) and reacts through `joi_log` episodes. Broadens wind-architecture-v1's Memory Tampering Awareness. Records that something changed, never the content. Not designed yet. |
+| 2026-11-22 | Outside changes: code, config, key and model changes are logged under the owner; memory edits go to whoever the memories belong to (their conversation). |
 
 ## Related Documents
 
