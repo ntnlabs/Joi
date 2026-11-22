@@ -128,7 +128,9 @@ What Joi gets wrong:
   into every reply. In v2.0 pinned facts are always injected, facts pin
   themselves (by category, or by a key such as `job` or `profession`), and
   the meaning search always returns its 20 nearest facts with no minimum
-  similarity.
+  similarity. The document search has no minimum either: its
+  `JOI_RAG_MIN_SIMILARITY` and `JOI_RAG_MIN_BM25` settings are accepted but
+  unused.
 
 **Found in v2.0 (2026-11-20): stale facts are a design gap.** v2.0 changes a
 stored fact only when a new fact has the same category and key (it is
@@ -591,6 +593,29 @@ only deletes; it tells outside changes from Joi's own; and it records that
 something changed, never what it said, so a deleted memory does not survive
 in the log.
 
+### Planned: Joi's self-facts ("cheat-sheet", working name)
+
+Recorded 2026-11-22; not designed yet.
+
+Facts about Joi herself, the personal side of the companion: "allergic to
+pollen", "red hair", "laughs at jokes about animals".
+
+- **Two sources.** *Given*: the owner adds them with an admin command.
+  *Learned*: taken from what Joi says about herself in her own replies, so
+  she stays consistent instead of inventing a new answer each time. Never
+  learned from what someone tells her about herself.
+- **A memory kind.** In seam 1 terms, `self` is one more kind (a detail table
+  plus a `kind` value). Recall finds it like any other memory, with its
+  source (given or learned) on every item.
+- **Only when relevant.** Unlike core facts about the user, self-facts are
+  never always in the context. Recall includes one only when it clearly fits
+  the moment, and only a few at a time: "allergic to pollen" comes up on a
+  spring walk, not while coding. This needs a minimum relevance, which v2.0
+  has nowhere, so it is shared work with the memory priority ("Too much gets
+  into a reply").
+- **Private.** Like the personality prompt, the content lives only in the
+  encrypted database on Joi, never in the repo or in logs.
+
 ## Build Order
 
 Each step is shipped and observed before the next. Each step gets its own
@@ -641,6 +666,9 @@ seams; they slot in between steps.
 | What an extended context fact becomes after its 3–4 days (a fact, or it fades) | Scope, Priority |
 | How links between facts (the mesh) are found and stored | Scope, Priority |
 | VRAM planner: how autodetection tells an internal GPU from an external one, and how it sizes models it has no known values for | Planned: VRAM planner |
+| Self-facts: one Joi for everyone, or per conversation like the per-user and per-group prompts | Planned: Joi's self-facts |
+| Self-facts: may a fact learned in one conversation reach others, and does that need the owner's confirmation | Planned: Joi's self-facts |
+| Minimum relevance for recall: its value, tuned on real data | Scope, Priority; Planned: Joi's self-facts |
 ## Decisions
 
 | Date | Decision |
@@ -677,6 +705,7 @@ seams; they slot in between steps.
 | 2026-11-22 | Planned: Joi senses changes made to her from outside (code updates such as `git pull`, memory edits by admin tools, config, key and prompt changes, model rebuilds) and reacts through `joi_log` episodes. Broadens wind-architecture-v1's Memory Tampering Awareness. Records that something changed, never the content. Not designed yet. |
 | 2026-11-22 | Outside changes: code, config, key and model changes are logged under the owner; memory edits go to whoever the memories belong to (their conversation), so a group's edited memories are announced to the group. |
 | 2026-11-22 | Git commit messages never reach the LLM: text from outside the conversations is a side channel into the prompt. For a code update Joi learns only that she was updated, and when. |
+| 2026-11-22 | Planned: Joi's self-facts (working name cheat-sheet): facts about Joi herself, given by the owner or learned from her own replies (never from what others tell her about herself), recalled only when relevant and a few at a time. A memory kind in seam 1; content stays private. Not designed yet. |
 
 ## Related Documents
 
