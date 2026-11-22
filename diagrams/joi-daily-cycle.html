@@ -269,7 +269,7 @@
     <div class="block-body">
       <ul class="gates">
         <li><span class="gate-n">1</span><span class="gate-l">enabled</span><span class="gate-d">Wind globally enabled and conversation on allowlist</span></li>
-        <li><span class="gate-n">2</span><span class="gate-l">not snoozed</span><span class="gate-d"><em>wind_snooze_until</em> is NULL or in the past · "shh" → 4 h snooze by default · or a given duration ("shh 2h", minutes, up to 7 days)</span></li>
+        <li><span class="gate-n">2</span><span class="gate-l">not snoozed</span><span class="gate-d"><em>wind_snooze_until</em> is NULL or in the past · "shh" → 4 h snooze by default · or a given duration ("shh 2h", minutes, up to 7 days) · "shh tonight" → until quiet hours end</span></li>
         <li><span class="gate-n">3</span><span class="gate-l">quiet hours</span><span class="gate-d">current local time outside <em>23:00–07:00</em> window</span></li>
         <li><span class="gate-n">4</span><span class="gate-l">cooldown</span><span class="gate-d">≥ <em>1 h</em> since last proactive sent</span></li>
         <li><span class="gate-n">5</span><span class="gate-l">daily cap</span><span class="gate-d">proactives in rolling 24 h window &lt; cap (base <em>3</em>, boosted for active conversations)</span></li>

@@ -3169,9 +3169,10 @@ def _handle_wind_snooze_command(text: str, conversation_id: str) -> Optional[str
 
     if _DURATION_TONIGHT.search(text):
         tz = _get_tz(conversation_id)
-        end_hour = wind_orchestrator.config.quiet_hours_end
+        # quiet_hours_end is minutes since midnight (e.g. 420 = 07:00), not an hour
+        end_hour, end_minute = divmod(wind_orchestrator.config.quiet_hours_end, 60)
         now_aware = datetime.now(tz)
-        candidate = now_aware.replace(hour=end_hour, minute=0, second=0, microsecond=0)
+        candidate = now_aware.replace(hour=end_hour, minute=end_minute, second=0, microsecond=0)
         if candidate <= now_aware:
             candidate += timedelta(days=1)
         until = candidate.astimezone(timezone.utc)

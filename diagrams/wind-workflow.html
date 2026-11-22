@@ -466,7 +466,7 @@
     <div class="block-title">User Message Arrives <span class="tag t-always">server.py:on_message()</span></div>
     <div class="block-body">
       <div class="kv">
-        <span class="kv-key">snooze check</span><span class="kv-val">snooze keywords (shh / quiet / hush / mute / pause) → snooze for configurable duration (default <em>4 h</em>) · wake / unsnooze / unmute / resume → clear immediately</span>
+        <span class="kv-key">snooze check</span><span class="kv-val">snooze keywords (shh / quiet / hush / mute / pause) → snooze for configurable duration (default <em>4 h</em>; "tonight" → until quiet hours end) · wake / unsnooze / unmute / resume → clear immediately</span>
         <span class="kv-key">record interaction</span><span class="kv-val"><em>record_user_interaction()</em> — updates last_user_interaction_at · resets unanswered_proactive_count = 0 · updates convo_gap_ema</span>
         <span class="kv-key">user mood</span><span class="kv-val">per-message mood classification <span class="tag t-detector" style="font-size:10px;">DETECTOR LLM · joi-detector</span> → stored as user_mood_state + user_mood_intensity in wind_state</span>
       </div>
