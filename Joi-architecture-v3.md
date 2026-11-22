@@ -611,7 +611,8 @@ pollen", "red hair", "laughs at jokes about animals".
   brown eyes, "I can sing" and "I can't sing". In a real contradiction Joi
   chooses: she is asked internally, "You know this about yourself, but
   something new came up. Do you want to change it, or keep what you had?"
-  This runs in the end-of-day tasks, as one more self-refining loop.
+  This runs in the end-of-day tasks, as one more self-refining loop. It
+  holds for facts the owner gave too: Joi may rewrite those as well.
 - **A memory kind.** In seam 1 terms, `self` is one more kind (a detail table
   plus a `kind` value). Recall finds it like any other memory, with its
   source (given or learned) on every item.
@@ -710,7 +711,6 @@ seams; they slot in between steps.
 | How links between facts (the mesh) are found and stored | Scope, Priority |
 | VRAM planner: how autodetection tells an internal GPU from an external one, and how it sizes models it has no known values for | Planned: VRAM planner |
 | Minimum relevance for recall: its value, tuned on real data | Scope, Priority; Planned: Joi's self-facts |
-| Self-facts: does Joi also choose when the old fact was given by the owner | Planned: Joi's self-facts |
 ## Decisions
 
 | Date | Decision |
@@ -752,6 +752,7 @@ seams; they slot in between steps.
 | 2026-11-22 | Almost-always self-facts reach replies as inner thoughts: a system note in the message history, `(Joi's own thought: ...)`, generated at prompt build and never stored, one fact per note, a new note every half window. Wind gets them directly in its prompt. Rejected: holding back repeats (did not work consistently in past tests). |
 | 2026-11-22 | Joi judges whether a newly learned self-fact contradicts one she already has. Only what cannot both be true counts (blue vs brown eyes, can vs can't sing); compatible facts both stay. |
 | 2026-11-22 | In a real self-fact contradiction Joi chooses, asked internally whether to change the fact or keep the old one; this runs in the end-of-day tasks as a self-refining loop. |
+| 2026-11-22 | Joi may rewrite owner-given self-facts too; the same choice applies to them. |
 | 2026-11-22 | Refining loop for self-facts: draft, then search self-facts with the message (or Wind topic) and the draft; a second, narrow pass only if a fact clears the minimum relevance. Same rule for every Turn, in the shared render stage; Wind first. |
 
 ## Related Documents
