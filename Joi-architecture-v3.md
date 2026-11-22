@@ -577,6 +577,10 @@ text from outside Joi's conversations, and putting them into a prompt would
 open a side channel into it. For a code update the record holds only that
 she was updated, and when.
 
+**First version in v2.0 (2026-11-22, `81f29a4`):** code updates only. The
+commit is compared at startup; for 24 hours, replies in the owner's direct
+conversation get one line saying that Joi was updated, and when.
+
 **Who hears about it.** Code, config, key and model changes are logged
 under the owner. Memory edits go to whoever the memories belong to: every
 memory is tagged with its conversation (in v3, its scope). Edits to a
