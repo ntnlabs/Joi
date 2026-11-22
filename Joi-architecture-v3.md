@@ -607,12 +607,15 @@ pollen", "red hair", "laughs at jokes about animals".
 - **A memory kind.** In seam 1 terms, `self` is one more kind (a detail table
   plus a `kind` value). Recall finds it like any other memory, with its
   source (given or learned) on every item.
-- **Only when relevant.** Unlike core facts about the user, self-facts are
-  never always in the context. Recall includes one only when it clearly fits
-  the moment, and only a few at a time: "allergic to pollen" comes up on a
-  spring walk, not while coding. This needs a minimum relevance, which v2.0
-  has nowhere, so it is shared work with the memory priority ("Too much gets
-  into a reply").
+- **Per conversation.** Each conversation's Joi is its own fork. Her
+  self-facts belong to that conversation and never slide into another one on
+  their own; copying them would only ever be an explicit admin command.
+- **Two kinds.** *Almost always*: a few facts used whenever Wind writes a
+  proactive message. *Conversation driven*: found by search only when the
+  conversation touches them, and only a few at a time: "allergic to pollen"
+  comes up on a spring walk, not while coding. This needs a minimum
+  relevance, which v2.0 has nowhere, so it is shared work with the memory
+  priority ("Too much gets into a reply").
 - **Private.** Like the personality prompt, the content lives only in the
   encrypted database on Joi, never in the repo or in logs.
 
@@ -666,8 +669,6 @@ seams; they slot in between steps.
 | What an extended context fact becomes after its 3–4 days (a fact, or it fades) | Scope, Priority |
 | How links between facts (the mesh) are found and stored | Scope, Priority |
 | VRAM planner: how autodetection tells an internal GPU from an external one, and how it sizes models it has no known values for | Planned: VRAM planner |
-| Self-facts: one Joi for everyone, or per conversation like the per-user and per-group prompts | Planned: Joi's self-facts |
-| Self-facts: may a fact learned in one conversation reach others, and does that need the owner's confirmation | Planned: Joi's self-facts |
 | Minimum relevance for recall: its value, tuned on real data | Scope, Priority; Planned: Joi's self-facts |
 ## Decisions
 
@@ -706,6 +707,7 @@ seams; they slot in between steps.
 | 2026-11-22 | Outside changes: code, config, key and model changes are logged under the owner; memory edits go to whoever the memories belong to (their conversation), so a group's edited memories are announced to the group. |
 | 2026-11-22 | Git commit messages never reach the LLM: text from outside the conversations is a side channel into the prompt. For a code update Joi learns only that she was updated, and when. |
 | 2026-11-22 | Planned: Joi's self-facts (working name cheat-sheet): facts about Joi herself, given by the owner or learned from her own replies (never from what others tell her about herself), recalled only when relevant and a few at a time. A memory kind in seam 1; content stays private. Not designed yet. |
+| 2026-11-22 | Self-facts are per conversation: each conversation's Joi is its own fork, and her self-facts never slide into another conversation on their own (copying only by explicit admin command). Two kinds: *almost always* (used when Wind writes) and *conversation driven* (found by search when the conversation touches them). |
 
 ## Related Documents
 
