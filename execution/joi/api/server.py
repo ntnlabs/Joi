@@ -4493,7 +4493,8 @@ Just the message, nothing else."""
 
 
 def _generate_alert_message(conversation_id: str, alerts: List[dict]) -> str:
-    """Write Joi's alert in her own voice; plain text if generation fails.
+    """Write Joi's alert in her own voice, opening with her spider senses tingling;
+    plain text if generation fails.
 
     Alerts are about Joi herself (code update, tamper). They may name files for
     the owner, but never carry commit messages or file contents.
@@ -4512,7 +4513,7 @@ def _generate_alert_message(conversation_id: str, alerts: List[dict]) -> str:
             )
         else:
             events.append(f"Something happened to me {when} ({alert['kind']}).")
-    plain = " ".join(events)
+    plain = "My spider senses are tingling. " + " ".join(events)
 
     conv_type = "direct" if conversation_id.startswith("+") else "group"
     sender_id = conversation_id if conv_type == "direct" else ""
@@ -4531,8 +4532,10 @@ def _generate_alert_message(conversation_id: str, alerts: List[dict]) -> str:
     user_prompt = (
         "Something happened to you, and you want to tell them yourself:\n"
         + "\n".join(f"- {e}" for e in events)
-        + "\n\nTell them in one or two short sentences, in your own voice. "
-        "Don't make it dramatic, and don't add details beyond what is listed here.\n\n"
+        + "\n\nOpen with your spider senses tingling, in your own words "
+        "(for example \"My spider senses are tingling...\"), then tell them in one or two "
+        "short sentences, in your own voice. Don't make it dramatic, and don't add details "
+        "beyond what is listed here.\n\n"
         "Just the message, nothing else."
     )
     try:
