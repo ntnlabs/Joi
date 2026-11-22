@@ -15,6 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
+from pathlib import Path
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1312,10 +1313,63 @@ def _check_fingerprints() -> List[str]:
 
 # --- Lifecycle Events ---
 
+# Joi senses a code update: the commit she runs on is compared with the one
+# from her last start. Only *that* and *when* reach the LLM, in the owner's
+# replies for CODE_UPDATE_NOTICE_HOURS; commit messages never do.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CODE_UPDATE_NOTICE_HOURS = 24
+
+
+def _read_git_head(repo: Path) -> Optional[str]:
+    """Commit the checkout is on, read from the .git files.
+
+    Not via the git binary: joi-api runs as `joi`, and git refuses a
+    repository owned by another user.
+    """
+    git_dir = repo / ".git"
+    head = (git_dir / "HEAD").read_text().strip()
+    if not head.startswith("ref: "):
+        return head or None  # detached HEAD
+    ref = head[len("ref: "):]
+    ref_file = git_dir / ref
+    if ref_file.exists():
+        return ref_file.read_text().strip() or None
+    packed = git_dir / "packed-refs"
+    if packed.exists():
+        for line in packed.read_text().splitlines():
+            if line.endswith(" " + ref):
+                return line.split()[0]
+    return None
+
+
+def _check_code_update() -> None:
+    """Record when the code was updated, if the commit differs from last start."""
+    try:
+        commit = _read_git_head(REPO_ROOT)
+    except OSError as e:
+        logger.warning("Code version check skipped", extra={"error": str(e), "action": "code_version_skip"})
+        return
+    if not commit:
+        logger.warning("Code version check skipped: no commit found", extra={"action": "code_version_skip"})
+        return
+    previous = memory.get_state("code_commit")
+    if previous == commit:
+        return
+    if previous:
+        memory.set_state("code_updated_at", str(int(time.time() * 1000)))
+        logger.info("Code updated since last start", extra={
+            "from_commit": previous[:12],
+            "to_commit": commit[:12],
+            "action": "code_updated",
+        })
+    memory.set_state("code_commit", commit)
+
+
 @app.on_event("startup")
 def startup_event():
     """Start the message queue worker and scheduler on app startup."""
     global scheduler
+    _check_code_update()
     message_queue.start()
 
     # Create and configure scheduler if enabled
@@ -2124,6 +2178,17 @@ def receive_message(msg: InboundMessage):
                     "this reply with another 'good morning' — they've already had "
                     "today's morning greeting from you. Other time-of-day greetings "
                     "(like 'good afternoon' later in the day) are fine."
+                )
+
+        # Code update awareness: for a day after an update, the owner's replies
+        # learn that Joi was updated, and when. Nothing else about the change.
+        if msg.conversation.type == "direct" and is_owner:
+            _updated_at = memory.get_state("code_updated_at")
+            if _updated_at and time.time() * 1000 - int(_updated_at) < CODE_UPDATE_NOTICE_HOURS * 3_600_000:
+                _when = ago_label(int(_updated_at), _get_tz(msg.conversation.id), datetime.now(timezone.utc))
+                enriched_prompt = (enriched_prompt or "") + (
+                    f"\n\nYour code was updated {_when}. "
+                    "Mention it only if it fits naturally or if you are asked."
                 )
 
         # Reminder list / agenda-set: both gated by _REMINDER_LIST_TRIGGER.
