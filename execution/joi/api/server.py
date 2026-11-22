@@ -12,6 +12,7 @@ import threading
 import time
 import unicodedata
 import uuid
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -232,7 +233,15 @@ scheduler: Optional[Scheduler] = None
 
 settings = load_settings()
 
-app = FastAPI(title="joi-api", version="0.1.0")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Run startup_event() before serving and shutdown_event() after (both defined below)."""
+    startup_event()
+    yield
+    shutdown_event()
+
+
+app = FastAPI(title="joi-api", version="0.1.0", lifespan=_lifespan)
 
 # Include admin routes (dependencies set up below after globals are defined)
 app.include_router(admin_routes.router)
@@ -1371,7 +1380,6 @@ def _check_code_update() -> None:
     memory.set_state("code_commit", commit)
 
 
-@app.on_event("startup")
 def startup_event():
     """Start the message queue worker and scheduler on app startup."""
     global scheduler
@@ -1421,7 +1429,6 @@ def startup_event():
     _init_fingerprints()
 
 
-@app.on_event("shutdown")
 def shutdown_event():
     """Stop the message queue worker, scheduler, and close connections on app shutdown."""
     if scheduler:
