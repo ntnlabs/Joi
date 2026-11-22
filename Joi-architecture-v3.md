@@ -546,8 +546,9 @@ Recorded 2026-11-20; not designed yet. Serves principle 8.
 - **Internal or external** is autodetected, then the planner asks whether
   that is right. A command-line option skips detection and sets it.
 - **Backs up** every Modelfile before changing it.
-- **Decides** the context size per Modelfile and how memory is split (prompt
-  budgets).
+- **Decides** the context size per Modelfile, the default model and default
+  context size (`JOI_OLLAMA_MODEL`, `JOI_OLLAMA_NUM_CTX`), and how memory is
+  split (prompt budgets).
 - **Starts from** the two configurations Joi has run on
   (`execution/joi/README.md`, "Context Size and GPU Memory"): a GTX 1650 4 GB
   internal and an RTX 3080 12 GB over Thunderbolt.
@@ -752,6 +753,7 @@ seams; they slot in between steps.
 | 2026-11-20 | The VRAM planner, if built, runs once (install or hardware change) and rewrites the Modelfiles; it does not run at every service start. |
 | 2026-11-21 | Memory names: three tiers, **core facts**, **extended context facts** (about 3–4 days around now, to help context) and **facts** (the rest). Beside them the **buffer** holds a day's worth of possible facts, filled as messages leave the context, and the end-of-day tasks process it. Mapping from v2.0 pinning later. |
 | 2026-11-21 | VRAM planner autodetects internal vs external GPU and asks whether that is right; a command-line option skips detection and sets it. Every Modelfile is backed up before it is changed. |
+| 2026-11-22 | The VRAM planner also sets the default model and default context size (`JOI_OLLAMA_MODEL`, `JOI_OLLAMA_NUM_CTX`). |
 | 2026-11-21 | Core facts always go into the context. The other tiers carry an age value (higher = more important): buffer facts > extended context facts > facts, so extended context facts resurface sooner than facts. |
 | 2026-11-21 | Stale facts: facts form a mesh (links to the things they are about). A fact that stops being true becomes past: kept, recalled only for history, like the topic undertaker. The end-of-day tasks cascade an ending through linked facts, judging each one. Until then the buffer's age value is enough to outweigh the old fact; no extra check at write time. |
 | 2026-11-22 | Time is stored absolute and read relative: memory writers get the date and message times and write dates; expiry counts from when something was said; code renders times relative to now by calendar day, fresh at every prompt build. Time awareness is always on. |
