@@ -1080,14 +1080,17 @@ class WindOrchestrator:
             )
             return
 
-        # Build transcript (oldest first, truncated)
+        # Build transcript (oldest first, truncated); each line carries its local
+        # date and time so the LLM knows when things were said
+        tz = self._get_conversation_tz(conversation_id)
         lines = []
         for m in user_messages:
             speaker = "User" if m.direction == "inbound" else "Joi"
             text = (m.content_text or "").strip()
             if len(text) > 150:
                 text = text[:147] + "..."
-            lines.append(f"{speaker}: {text}")
+            sent_at = datetime.fromtimestamp(m.timestamp / 1000, tz)
+            lines.append(f"[{sent_at:%a %Y-%m-%d %H:%M}] {speaker}: {text}")
         transcript = "\n".join(lines)
 
         # Undertaker families (permanently blocked)
@@ -1129,10 +1132,9 @@ class WindOrchestrator:
 
         resolved_block = "\n".join(f"- {_resolved_title(s)}" for s in resolved_summaries) or "(none)"
 
-        local_now = now.astimezone(self._get_conversation_tz(conversation_id))
-        today_str = local_now.strftime("%Y-%m-%d (%A)")
+        now_str = now.astimezone(tz).strftime("%A %Y-%m-%d %H:%M")
         prompt = (
-            f"Today is {today_str}.\n\n"
+            f"Now is {now_str}. Each message below starts with its local date and time.\n\n"
             f"Recent conversation (oldest first):\n{transcript}\n\n"
             "Identify the single most promising unfinished thread or open question worth "
             "following up on. Only pick something with real continuation potential — not "
@@ -1140,6 +1142,8 @@ class WindOrchestrator:
             "Also check: did the user mention a specific upcoming event with a known time "
             "(interview, flight, appointment, exam, meeting, trip, medical procedure, etc.) "
             "that hasn't happened yet? If so, capture it separately as a followup.\n\n"
+            "In titles and summaries, write dates (\"on Saturday 2026-03-14\") instead of "
+            "relative words like today, tomorrow or yesterday.\n\n"
             'Also assess Joi\'s current emotional state based on this conversation.\n'
             'Consider: how did the user engage? Was the exchange warm or cold? Did anything significant happen emotionally?\n\n'
             'Respond with JSON only:\n'

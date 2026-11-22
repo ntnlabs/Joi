@@ -711,14 +711,14 @@ Stores per-conversation timezone and time awareness settings. Added in migration
 CREATE TABLE conversation_settings (
     conversation_id  TEXT PRIMARY KEY,
     timezone         TEXT,                -- IANA timezone identifier (e.g. 'Europe/Prague')
-    time_awareness   INTEGER DEFAULT 0,   -- 1 = inject datetime into prompts
+    time_awareness   INTEGER DEFAULT 0,   -- 0/NULL = not set (on), 1 = on, -1 = off
     updated_at       TEXT NOT NULL
 );
 ```
 
 **Behavior:**
 - Timezone set by users via Signal command: `timezone Europe/Prague` or `timezone New York` (LLM-resolved fuzzy input)
-- Time awareness toggled by admin via `joi-admin time-awareness <conversation_id> on|off`
+- Time awareness is on by default (no row, or 0/NULL); `joi-admin time-awareness <conversation_id> off` stores -1
 - Both settings are independent — timezone affects all time operations (quiet hours, reminders, day buckets), time awareness only controls datetime injection into LLM prompts
 - Default is UTC when no row exists (all code falls back gracefully)
 - Replaces the removed `JOI_TIMEZONE` and `JOI_TIME_AWARENESS` global env vars
