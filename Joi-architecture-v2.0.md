@@ -325,8 +325,9 @@ Every scheduler tick (~60 s), Joi compares SHA256 fingerprints of:
   `users/*`, `groups/*`)
 
 On mismatch the service **exits immediately** (`os._exit(78)`, EX_CONFIG).
-systemd restarts it, which re-initializes the fingerprints from the current
-state.
+systemd does **not** restart it (`RestartPreventExitStatus=78`); it stays down
+until someone restarts it by hand, and that start re-initializes the
+fingerprints from the current state.
 
 ### Input / Output Validation
 

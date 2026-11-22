@@ -298,18 +298,55 @@ class Scheduler:
                     "tampered_count": len(changed),
                     "action": "tamper_detected"
                 })
-                # Tell the owner after the restart: the alert survives the shutdown
+                # Tell the owner before stopping; the stored alert is the fallback
+                # if that send fails (delivered after a manual restart)
                 if self._memory:
                     try:
                         names = sorted(os.path.basename(p) for p in changed)
-                        self._memory.add_alert("tamper", detail=", ".join(names))
+                        alert_id = self._memory.add_alert("tamper", detail=", ".join(names))
+                        self._send_tamper_alert_now(alert_id, names)
                     except Exception as e:
-                        logger.error("Could not record tamper alert", extra={"error": str(e)})
+                        logger.error("Could not record or send tamper alert", extra={"error": str(e)})
                 # Give logs time to flush, then terminate entire process
                 time.sleep(1)
                 os._exit(78)  # EX_CONFIG - must use _exit to kill process, not just thread
         except Exception as e:
             logger.warning("Scheduler: tamper check failed", extra={"error": str(e)})
+
+    def _send_tamper_alert_now(self, alert_id: int, names: list) -> None:
+        """Send the tamper alert to the owner right away, before the service stops.
+
+        Plain text and no translation: there is no time to wait for an LLM. The
+        service does not restart by itself after a tamper stop (exit 78).
+        """
+        owner_id = self._policy_manager.get_owner_id() if self._policy_manager else None
+        if not owner_id or not self._send_to_mesh:
+            return
+        text = (
+            f"My spider senses are tingling. Some of my files just changed ({', '.join(names)}), "
+            "so I'm shutting myself down to be safe. I stay off until someone restarts me."
+        )
+        success = self._send_to_mesh(
+            recipient_id="owner",
+            recipient_transport_id=owner_id,
+            conversation=self._InboundConversation(type="direct", id=owner_id),
+            text=text,
+            reply_to=None,
+            is_critical=True,
+        )
+        if not success:
+            logger.warning("Tamper alert not sent; will go out after a restart", extra={"action": "alert_retry"})
+            return
+        self._memory.mark_alerts_delivered([alert_id])
+        self._memory.store_message(
+            message_id=str(uuid.uuid4()),
+            direction="outbound",
+            content_type="text",
+            content_text=f"[JOI-ALERT] {text}",
+            timestamp=int(time.time() * 1000),
+            conversation_id=owner_id,
+        )
+        logger.info("Alert delivered", extra={"kinds": ["tamper"], "count": 1, "action": "alert_delivered"})
 
     def _cleanup_nonces(self):
         """Cleanup expired nonces from the replay protection store."""
