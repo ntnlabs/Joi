@@ -269,7 +269,7 @@
   <!-- QUEUE WRAPPER -->
   <div class="container q-wrap">
     <span class="container-label">Message Queue — single serialized slot per message</span>
-    <div class="q-note">PRIORITY_OWNER=0 (owner) · PRIORITY_NORMAL=1 (others) · max 100 items · timeout = LLM_TIMEOUT + 30s (default 210s)</div>
+    <div class="q-note">PRIORITY_OWNER=0 (owner) · PRIORITY_NORMAL=1 (others) · max 100 items · timeout = LLM_TIMEOUT + 30s (default 280s)</div>
 
     <!-- typing -->
     <div class="block c-queue" style="margin-bottom:8px;">
@@ -278,6 +278,19 @@
     </div>
 
     <hr class="div">
+
+    <!-- translation in -->
+    <div class="block c-small" style="margin-bottom:8px;">
+      <div class="block-title">Translation In <span class="tag t-llm">TRANSLATE LLM · translategemma</span> <span class="tag t-cond">if configured</span></div>
+      <div class="block-body">
+        <div class="kv">
+          <span class="kv-key">config</span><span class="kv-val">.translate file per user or group (language code, e.g. <em>sk</em>)</span>
+          <span class="kv-key">model</span><span class="kv-val">{JOI_TRANSLATE_MODEL_PREFIX}-{lang}-en · different base model, unloaded after each call (keep_alive 0)</span>
+          <span class="kv-key">output</span><span class="kv-val">English text for every later step · stored with the message as translated_text</span>
+          <span class="kv-key">on failure</span><span class="kv-val">user is told · processing of the message stops</span>
+        </div>
+      </div>
+    </div>
 
     <!-- small LLMs -->
     <div class="block c-small" style="margin-bottom:8px;">
@@ -361,9 +374,10 @@
         <div class="kv">
           <span class="kv-key">input</span><span class="kv-val"><em>user_text</em> (full, no truncation)</span>
           <span class="kv-key">gate</span><span class="kv-val">keyword filter first — skips LLM if no trigger words · entirely skipped if reminder_result, note_handled, or task_handled is set</span>
-          <span class="kv-key">prompt</span><span class="kv-val">"Analyze this message: &quot;{user_text}&quot;"</span>
+          <span class="kv-key">prompt</span><span class="kv-val">"Analyze this message: &quot;{user_text}&quot;" + "It was sent on {local date and time}"</span>
+          <span class="kv-key">dates</span><span class="kv-val">values use dates, never relative words (today · tomorrow · yesterday · tonight · next week)</span>
           <span class="kv-key">output</span><span class="kv-val">{remember, category, key, value} · confidence=0.95</span>
-          <span class="kv-key">side-effect</span><span class="kv-val">stores fact to DB immediately</span>
+          <span class="kv-key">side-effect</span><span class="kv-val">stores fact to DB immediately · pins it if category is <em>personal</em> / <em>relationship</em> or key is like name · job · profession · partner</span>
         </div>
       </div>
     </div>
@@ -376,8 +390,8 @@
       <div class="block-body">
         <div class="kv">
           <span class="kv-key">messages loaded</span><span class="kv-val"><em>50</em> recent messages (CONTEXT_MESSAGE_COUNT · JOI_CONTEXT_MESSAGES)</span>
-          <span class="kv-key">FTS query</span><span class="kv-val">last <em>3</em> inbound turns + current message, space-joined (FTS_CONTEXT_MESSAGES)</span>
-          <span class="kv-key">FTS boost</span><span class="kv-val">heated convo: +<em>2</em> turns (→5 total) · hot convo: +<em>1</em> turn (→4 total)</span>
+          <span class="kv-key">search query</span><span class="kv-val">last <em>3</em> inbound turns + current message, space-joined (FTS_CONTEXT_MESSAGES) · used for both meaning and word search</span>
+          <span class="kv-key">query boost</span><span class="kv-val">heated convo: +<em>2</em> turns (→5 total) · hot convo: +<em>1</em> turn (→4 total)</span>
           <span class="kv-key">selects</span><span class="kv-val">system prompt + model (default or per-conversation override) + knowledge scopes</span>
         </div>
       </div>
@@ -385,7 +399,7 @@
 
     <!-- enriched prompt container -->
     <div class="container e-wrap">
-      <span class="container-label">_build_enriched_prompt() — system prompt assembly (injections in order)</span>
+      <span class="container-label">_build_enriched_prompt() — system prompt assembly (final order)</span>
       <ul class="inj">
         <li>
           <span class="inj-n">1</span>
@@ -394,38 +408,48 @@
         </li>
         <li>
           <span class="inj-n">2</span>
-          <span class="inj-l">Mood jump <span class="tag t-cond" style="font-size:10px;">if jump ≥ 2</span></span>
-          <span class="inj-d"><em>"User's mood shifted from {old_word} to {new_word}. React naturally — don't announce it."</em></span>
+          <span class="inj-l">Clock <span class="tag t-cond" style="font-size:10px;">on by default</span></span>
+          <span class="inj-d"><em>"Current local datetime is Sunday, November 22, 2026, 3:10 PM."</em> + workday / weekend background mood · never mentioned unless asked · switch off per conversation: joi-admin time-awareness &lt;id&gt; off</span>
         </li>
         <li>
           <span class="inj-n">3</span>
-          <span class="inj-l">Facts <span class="tag t-fts" style="font-size:10px;">FTS/BM25</span></span>
-          <span class="inj-d">important facts (limit <em>20</em>, always included) + FTS matches (limit <em>20</em>, deduped) · min confidence <em>0.6</em> · max <em>400 tokens</em> (~1600 chars)</span>
+          <span class="inj-l">Wind mood <span class="tag t-cond" style="font-size:10px;">if not neutral</span></span>
+          <span class="inj-d"><em>"Your current mood: {word}. Let this naturally color your tone — don't announce it, just let it show."</em> (Joi's mood from WindState)</span>
         </li>
         <li>
           <span class="inj-n">4</span>
-          <span class="inj-l">Expired facts <span class="tag t-db" style="font-size:10px;">DB</span></span>
-          <span class="inj-d">temporal facts expired in last <em>7 days</em> · limit <em>20</em> · answers "what was my schedule yesterday?"</span>
+          <span class="inj-l">Mood jump <span class="tag t-cond" style="font-size:10px;">if jump ≥ 2</span></span>
+          <span class="inj-d"><em>"User's mood has shifted from {old_word} to {new_word}. React naturally to this change — don't announce it, just let it show."</em></span>
         </li>
         <li>
           <span class="inj-n">5</span>
-          <span class="inj-l">Summaries <span class="tag t-fts" style="font-size:10px;">FTS/BM25</span></span>
-          <span class="inj-d">query-relevant conversation summaries · limit <em>10</em> · window <em>100 days</em> · max <em>1500 tokens</em> (~6000 chars)</span>
+          <span class="inj-l">Facts <span class="tag t-vec" style="font-size:10px;">vectors</span> <span class="tag t-fts" style="font-size:10px;">FTS</span></span>
+          <span class="inj-d">pinned facts first (up to <em>40</em>, JOI_MAX_PINNED_FACTS, always included) + <em>20</em> nearest by meaning and <em>20</em> by words, fused (RRF) · min confidence <em>0.6</em> · shared budget <em>800 tokens</em> (JOI_FACTS_FTS_MAX_TOKENS) · no minimum similarity</span>
         </li>
         <li>
           <span class="inj-n">6</span>
-          <span class="inj-l">RAG knowledge <span class="tag t-vec" style="font-size:10px;">semantic</span> <span class="tag t-fts" style="font-size:10px;">FTS</span></span>
-          <span class="inj-d">semantic limit <em>10</em> (cosine ≥ <em>0.45</em>) + FTS limit <em>10</em> (BM25 ≥ <em>−0.5</em>) · deduped · scope-controlled · max <em>1500 tokens</em></span>
+          <span class="inj-l">Past events <span class="tag t-db" style="font-size:10px;">DB</span></span>
+          <span class="inj-d">temporal facts expired in last <em>7 days</em> · limit <em>20</em> · labels by calendar day (<em>"expired yesterday"</em> = previous calendar day) · answers "what was my schedule yesterday?"</span>
         </li>
         <li>
           <span class="inj-n">7</span>
-          <span class="inj-l">Wind mood <span class="tag t-cond" style="font-size:10px;">if not neutral</span></span>
-          <span class="inj-d"><em>"Your current mood: {word}. Let this naturally color your tone — don't announce it."</em> (Joi's mood from WindState)</span>
+          <span class="inj-l">Summaries <span class="tag t-vec" style="font-size:10px;">vectors</span> <span class="tag t-fts" style="font-size:10px;">FTS</span></span>
+          <span class="inj-d">query-relevant conversation summaries, fused (RRF) · window <em>100 days</em> · max <em>1500 tokens</em> · each headed with readable local time, e.g. <em>[conversation, today 09:10-10:40]</em></span>
         </li>
         <li>
           <span class="inj-n">8</span>
-          <span class="inj-l">Date / time <span class="tag t-cond" style="font-size:10px;">if enabled</span></span>
-          <span class="inj-d"><em>"Current date and time: Wednesday, March 29, 2026, 14:30, Europe/Bratislava"</em></span>
+          <span class="inj-l">RAG knowledge <span class="tag t-vec" style="font-size:10px;">vectors</span> <span class="tag t-fts" style="font-size:10px;">FTS</span></span>
+          <span class="inj-d">limit <em>10</em>, fused (RRF) · scope-controlled · max <em>1500 tokens</em> · JOI_RAG_MIN_SIMILARITY / JOI_RAG_MIN_BM25 accepted but unused</span>
+        </li>
+        <li>
+          <span class="inj-n">9</span>
+          <span class="inj-l">Notes <span class="tag t-cond" style="font-size:10px;">if any</span></span>
+          <span class="inj-d">note command result, or a hint <em>"You have a note that may be relevant: {title}"</em> (direct only · privacy mode off)</span>
+        </li>
+        <li>
+          <span class="inj-n">10</span>
+          <span class="inj-l">Tasks <span class="tag t-cond" style="font-size:10px;">if any</span></span>
+          <span class="inj-d">task command result (list display or operation)</span>
         </li>
       </ul>
     </div>
@@ -436,6 +460,9 @@
       <div class="block-body">
         <div class="kv">
           <span class="kv-key">reminder ack</span><span class="kv-val">if reminder just set → appends <em>"Note: reminder '{title}' due in {label}."</em></span>
+          <span class="kv-key">wind quiet</span><span class="kv-val">if Wind is snoozed → <em>"The user asked you to be quiet until {HH:MM} ({remaining} remaining), but they have messaged you anyway. Treat this as something they thought worth breaking the silence for."</em></span>
+          <span class="kv-key">morning greeted</span><span class="kv-val">if today's morning Wind greeting already went out → don't open with another "good morning"</span>
+          <span class="kv-key">code update</span><span class="kv-val">owner only · for <em>24 h</em> after an update → <em>"Your code was updated {3h ago}. Mention it only if it fits naturally or if you are asked."</em> · that and when only, never commit messages</span>
           <span class="kv-key">reminder list</span><span class="kv-val">DETECTOR LLM check → if list query, injects pending reminders · if past query (DETECTOR LLM check), injects pending + recently-fired instead</span>
           <span class="kv-key">agenda set</span><span class="kv-val">DETECTOR LLM check → if agenda query, parses + stores multiple reminders</span>
         </div>
@@ -450,7 +477,7 @@
       <div class="block-body">
         <div class="kv">
           <span class="kv-key">model</span><span class="kv-val">joi-personal (default) or per-conversation override</span>
-          <span class="kv-key">system</span><span class="kv-val">fully assembled enriched prompt (injections 1–8 + post-prompt)</span>
+          <span class="kv-key">system</span><span class="kv-val">fully assembled enriched prompt (injections 1–10 + post-prompt)</span>
           <span class="kv-key">messages</span><span class="kv-val">up to <em>50</em> recent turns in chat format (groups include sender prefix)</span>
           <span class="kv-key">debug</span><span class="kv-val">BRAIN_DEBUG=1 → dumps full call to YAML file</span>
         </div>
@@ -467,6 +494,15 @@
           <div class="kv">
             <span class="kv-key">checks</span><span class="kv-val">length truncation · leak marker detection</span>
             <span class="kv-key">format</span><span class="kv-val">**bold** → Unicode math bold for Signal</span>
+          </div>
+        </div>
+      </div>
+      <div class="block c-small">
+        <div class="block-title">Translation Out <span class="tag t-cond">if configured</span></div>
+        <div class="block-body">
+          <div class="kv">
+            <span class="kv-key">model</span><span class="kv-val">{prefix}-en-{lang}</span>
+            <span class="kv-key">on failure</span><span class="kv-val">service stops (os._exit 78)</span>
           </div>
         </div>
       </div>
@@ -507,6 +543,7 @@
         <span class="kv-key">trigger</span><span class="kv-val">message window exceeds CONTEXT_MESSAGE_COUNT (<em>50</em>)</span>
         <span class="kv-key">model</span><span class="kv-val">joi-consolidator · <em>8192</em> ctx · temp 0.3 · batch: oldest <em>20</em> messages</span>
         <span class="kv-key">does</span><span class="kv-val">extracts facts from old batch · generates conversation summary · skips current_mood (tracked per-message in WindState)</span>
+        <span class="kv-key">time</span><span class="kv-val">each transcript line starts with its local date and time · fact prompt gets the current date · values use dates, never "tomorrow" · expiry counts from when it was said</span>
         <span class="kv-key">cleanup</span><span class="kv-val">archives / deletes compacted messages</span>
       </div>
     </div>
@@ -518,8 +555,9 @@
   <div class="legend-item"><div class="legend-dot" style="background:#39c5cf;"></div>DETECTOR LLM (joi-detector) — facts, mood, reminders, notes, agenda</div>
   <div class="legend-item"><div class="legend-dot" style="background:#3fb950;"></div>CONSOLIDATION LLM (joi-consolidator) — batch fact extraction + summarization</div>
   <div class="legend-item"><div class="legend-dot" style="background:#ff7b72;"></div>Main LLM (joi-personal or per-conversation override)</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#f0883e;"></div>FTS / BM25 retrieval</div>
-  <div class="legend-item"><div class="legend-dot" style="background:#d2a8ff;"></div>Semantic vector search</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#f0883e;"></div>Word search (FTS / BM25)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#d2a8ff;"></div>Meaning search (bge-m3 vectors) — fused with word search (RRF)</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#56d364;"></div>Translation LLM (translategemma)</div>
   <div class="legend-item"><div class="legend-dot" style="background:#e3b341;"></div>Direct DB query</div>
   <div class="legend-item"><div class="legend-dot" style="background:#8b949e;"></div>Conditional / optional</div>
   <div class="legend-item"><div class="legend-dot" style="background:#a371f7;"></div>Queue boundary</div>
